@@ -1,0 +1,15 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Conformance / build artifacts
+/build
+*.bin
+*.fst
+*.vcd
+obj_dir/
+
+# Editor / OS
+.DS_Store
+*.swp

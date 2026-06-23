@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sinter-syntax",
+    "crates/sinter-compiler",
+    "crates/sinter-lang",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sinter-lang/sinter"
+authors = ["The Sinter Authors"]
+
+[workspace.dependencies]
+sinter-syntax = { path = "crates/sinter-syntax", version = "0.0.0" }
+sinter-compiler = { path = "crates/sinter-compiler", version = "0.0.0" }
+
+# Keep dependencies lean: per the Rust skill, prefer default-features = false
+# and enable only what we need.
+pest = "2"
+pest_derive = "2"
+thiserror = { version = "2", default-features = false }
+anyhow = "1"
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+log = "0.4"
+env_logger = { version = "0.11", default-features = false }
+
+[profile.release]
+# Stricter optimization for the emitted-and-compiled simulator path.
+lto = "thin"

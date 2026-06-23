@@ -1,0 +1,52 @@
+{
+  "name": "Sinter",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "OSS_CAD_SUITE_VERSION": "20260127",
+      "OSS_CAD_SUITE_DATE": "2026-01-27"
+    }
+  },
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "runArgs": ["--privileged"],
+  "mounts": [
+    "source=sinter-cargo-registry,target=/home/vscode/.cargo/registry,type=volume"
+  ],
+  "containerEnv": {
+    "OSS_CAD_SUITE_PATH": "/opt/oss-cad-suite",
+    "GIT_EDITOR": "code --wait"
+  },
+  "remoteEnv": {
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}"
+  },
+  "onCreateCommand": ".devcontainer/scripts/post-create.sh",
+  "postAttachCommand": ".devcontainer/scripts/post-attach.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "mshr-h.veriloghdl",
+        "streetsidesoftware.code-spell-checker",
+        "yzhang.markdown-all-in-one",
+        "bierner.markdown-mermaid"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": { "path": "bash", "args": ["-l"] }
+        },
+        "verilog.linting.linter": "verilator",
+        "files.associations": {
+          "*.snt": "rust",
+          "*.v": "verilog",
+          "*.sv": "systemverilog",
+          "*.lpf": "lpf"
+        }
+      }
+    }
+  }
+}

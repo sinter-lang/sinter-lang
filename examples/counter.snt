@@ -1,0 +1,14 @@
+// An 8-bit free-running counter with a synchronous enable.
+//
+// On each cycle of the `sys` clock, `value` increments when `en` is high and
+// holds otherwise. The current count is exposed combinationally on `count`.
+#[clock(domain = sys)]
+module counter {
+    in en: u1;
+    out count: u8;
+
+    reg value: u8 = 0;
+
+    value <= if en { value + 1 } else { value };
+    count = value;
+}

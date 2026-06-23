@@ -1,0 +1,21 @@
+[package]
+name = "sinter-lang"
+description = "The Sinter HDL compiler CLI (installs the `sinter` binary)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinter"
+path = "src/main.rs"
+
+[dependencies]
+sinter-syntax = { workspace = true }
+sinter-compiler = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
