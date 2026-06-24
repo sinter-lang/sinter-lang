@@ -1,0 +1,9 @@
+// The smallest well-formed unit: one module with no clock attribute (so the
+// clock domain defaults to `sys`), a single input, and a single combinational
+// output drive.
+module wire {
+    in a: u1;
+    out b: u1;
+
+    b = a;
+}

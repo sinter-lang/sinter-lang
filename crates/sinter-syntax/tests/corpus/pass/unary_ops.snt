@@ -1,0 +1,14 @@
+// The three unary operators: logical not (`!`), bitwise complement (`~`), and
+// arithmetic negation (`-`). Stacked prefixes apply right-to-left.
+module unaries {
+    in flag: u1;
+    in word: u8;
+    in val: i8;
+    out a: u1;
+    out b: u8;
+    out c: i8;
+
+    a = !flag;
+    b = ~word;
+    c = - -val;
+}

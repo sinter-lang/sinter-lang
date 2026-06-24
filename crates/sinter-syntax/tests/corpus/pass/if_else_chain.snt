@@ -1,0 +1,9 @@
+// A chained conditional (`else if`). The grammar allows the else-branch to be
+// another `if`, so this nests right-associatively into If { els: If { ... } }.
+module priority {
+    in a: u1;
+    in b: u1;
+    out sel: u8;
+
+    sel = if a { 1 } else if b { 2 } else { 0 };
+}

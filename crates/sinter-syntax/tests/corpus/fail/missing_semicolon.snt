@@ -1,0 +1,8 @@
+// Every statement terminates with `;`. Dropping it from the output drive leaves
+// the grammar unable to close the module body.
+//~ ERROR syntax error
+module bad {
+    in a: u1;
+    out b: u1;
+    b = a
+}

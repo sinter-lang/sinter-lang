@@ -1,0 +1,51 @@
+Program {
+    modules: [
+        Module {
+            name: "passthrough",
+            clock_domain: "video",
+            ports: [
+                Port {
+                    dir: In,
+                    name: "pixel",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 5,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: Out,
+                    name: "out_pixel",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 6,
+                        col: 5,
+                    },
+                },
+            ],
+            regs: [],
+            lets: [],
+            assigns: [
+                Assign {
+                    target: "out_pixel",
+                    kind: Drive,
+                    value: Ident(
+                        "pixel",
+                    ),
+                    pos: Pos {
+                        line: 8,
+                        col: 5,
+                    },
+                },
+            ],
+            pos: Pos {
+                line: 3,
+                col: 1,
+            },
+        },
+    ],
+}

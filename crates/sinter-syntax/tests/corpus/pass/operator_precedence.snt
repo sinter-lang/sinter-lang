@@ -1,0 +1,14 @@
+// Exercises every binary precedence level in one expression so the golden AST
+// pins down the associativity and nesting the grammar produces:
+//   `|` < `^` < `&` < `==`/`!=` < `<`/`>`/`<=`/`>=` < `+`/`-`.
+// The expected tree groups arithmetic tightest and `|` loosest.
+module precedence {
+    in a: u8;
+    in b: u8;
+    in c: u8;
+    out r: u1;
+
+    let mixed = a + b == c & a | b ^ c;
+
+    r = mixed;
+}

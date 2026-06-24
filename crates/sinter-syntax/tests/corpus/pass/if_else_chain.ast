@@ -1,0 +1,78 @@
+Program {
+    modules: [
+        Module {
+            name: "priority",
+            clock_domain: "sys",
+            ports: [
+                Port {
+                    dir: In,
+                    name: "a",
+                    ty: Uint(
+                        1,
+                    ),
+                    pos: Pos {
+                        line: 4,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: In,
+                    name: "b",
+                    ty: Uint(
+                        1,
+                    ),
+                    pos: Pos {
+                        line: 5,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: Out,
+                    name: "sel",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 6,
+                        col: 5,
+                    },
+                },
+            ],
+            regs: [],
+            lets: [],
+            assigns: [
+                Assign {
+                    target: "sel",
+                    kind: Drive,
+                    value: If {
+                        cond: Ident(
+                            "a",
+                        ),
+                        then: Literal(
+                            1,
+                        ),
+                        els: If {
+                            cond: Ident(
+                                "b",
+                            ),
+                            then: Literal(
+                                2,
+                            ),
+                            els: Literal(
+                                0,
+                            ),
+                        },
+                    },
+                    pos: Pos {
+                        line: 8,
+                        col: 5,
+                    },
+                },
+            ],
+            pos: Pos {
+                line: 3,
+                col: 1,
+            },
+        },
+    ],
+}
