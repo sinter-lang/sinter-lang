@@ -1,0 +1,175 @@
+//! End-to-end conformance oracle (DESIGN §7.4).
+//!
+//! For each example: compile to SystemVerilog + a Verilator harness, run the
+//! Rust reference model over a deterministic stimulus, and — when the tools are
+//! available — (1) synthesize the SV with Yosys and (2) simulate it with
+//! Verilator, asserting its output trace matches the reference bit-for-bit.
+//!
+//! Yosys/Verilator steps auto-skip when the tools are absent (e.g. a plain
+//! sandbox) and run in the devcontainer / CI where `oss-cad-suite` provides
+//! them. Set `SINTER_REQUIRE_TOOLS=1` to make their absence a failure.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use sinter_compiler::ir::Module;
+use sinter_compiler::sim::{gen_stimulus, run_reference, stimulus_to_bytes};
+use sinter_compiler::{compile_str, verilator, verilog};
+
+const CYCLES: usize = 64;
+
+struct Example {
+    name: &'static str,
+    source: &'static str,
+}
+
+const EXAMPLES: &[Example] = &[
+    Example {
+        name: "counter",
+        source: include_str!("../../../examples/counter.snt"),
+    },
+    Example {
+        name: "accumulator",
+        source: include_str!("../../../examples/accumulator.snt"),
+    },
+];
+
+fn tool_available(tool: &str) -> bool {
+    Command::new(tool)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn require_tools() -> bool {
+    std::env::var("SINTER_REQUIRE_TOOLS").is_ok_and(|v| v == "1")
+}
+
+fn workdir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("sinter-conf-{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create workdir");
+    dir
+}
+
+fn compile_one(source: &str) -> Module {
+    let design = compile_str(source).expect("example should compile");
+    design.modules.into_iter().next().expect("one module")
+}
+
+/// Synthesize with Yosys to confirm the emitted SV is synthesizable.
+fn run_yosys(sv: &Path, top: &str) {
+    let script = format!(
+        "read_verilog -sv {}; hierarchy -check -top {top}; proc; opt; synth -top {top}",
+        sv.display()
+    );
+    let out = Command::new("yosys")
+        .args(["-q", "-p", &script])
+        .output()
+        .expect("spawn yosys");
+    assert!(
+        out.status.success(),
+        "yosys failed for {top}:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Build and run the Verilator model, returning its output trace bytes.
+fn run_verilator(dir: &Path, sv: &Path, harness: &Path, top: &str, stim: &Path) -> Vec<u8> {
+    let obj = dir.join("obj");
+    let build = Command::new("verilator")
+        .args(["--cc", "--exe", "--build", "-Wall", "--x-assign", "unique"])
+        .arg("--top-module")
+        .arg(top)
+        .arg("--Mdir")
+        .arg(&obj)
+        .arg("-o")
+        .arg("sim")
+        .arg(sv)
+        .arg(harness)
+        .output()
+        .expect("spawn verilator");
+    assert!(
+        build.status.success(),
+        "verilator build failed for {top}:\n{}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let trace = dir.join("dut_trace.bin");
+    let run = Command::new(obj.join("sim"))
+        .arg(stim)
+        .arg(&trace)
+        .arg(CYCLES.to_string())
+        .output()
+        .expect("run verilated sim");
+    assert!(
+        run.status.success(),
+        "verilated sim failed for {top}:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    std::fs::read(&trace).expect("read dut trace")
+}
+
+#[test]
+fn examples_pass_the_oracle() {
+    let have_yosys = tool_available("yosys");
+    let have_verilator = tool_available("verilator");
+
+    if require_tools() {
+        assert!(have_yosys, "SINTER_REQUIRE_TOOLS=1 but yosys is missing");
+        assert!(
+            have_verilator,
+            "SINTER_REQUIRE_TOOLS=1 but verilator is missing"
+        );
+    }
+    if !have_yosys && !have_verilator {
+        eprintln!(
+            "skipping Yosys/Verilator conformance: neither tool found \
+             (install oss-cad-suite; set SINTER_REQUIRE_TOOLS=1 to enforce)"
+        );
+    }
+
+    for ex in EXAMPLES {
+        let module = compile_one(ex.source);
+        let dir = workdir(ex.name);
+
+        // Emit artifacts.
+        let sv = dir.join(format!("{}.sv", module.name));
+        std::fs::write(&sv, verilog::emit_module(&module)).expect("write sv");
+        let harness = dir.join(format!("{}_tb.cpp", module.name));
+        std::fs::write(&harness, verilator::emit_cpp_harness(&module)).expect("write harness");
+
+        // Stimulus + reference trace.
+        let stimulus = gen_stimulus(&module, CYCLES, 0xDEAD_BEEF);
+        let stim_path = dir.join("stimulus.bin");
+        std::fs::write(&stim_path, stimulus_to_bytes(&stimulus)).expect("write stimulus");
+        let reference = run_reference(&module, &stimulus);
+
+        if have_yosys {
+            run_yosys(&sv, &module.name);
+        }
+        if have_verilator {
+            let dut = run_verilator(&dir, &sv, &harness, &module.name, &stim_path);
+            assert_eq!(
+                dut.len(),
+                reference.len(),
+                "trace length mismatch for `{}`",
+                module.name
+            );
+            // Find the first differing 8-byte word for a useful message.
+            for (cycle, (a, b)) in reference
+                .chunks_exact(8)
+                .zip(dut.chunks_exact(8))
+                .enumerate()
+            {
+                assert_eq!(
+                    a, b,
+                    "trace mismatch for `{}` at output word {cycle}",
+                    module.name
+                );
+            }
+        }
+    }
+}

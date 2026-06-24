@@ -1,0 +1,17 @@
+// A signed accumulator.
+//
+// When `valid` is high, the signed input `x` is added into `acc`; otherwise the
+// accumulator holds. Arithmetic wraps at the declared 16-bit width (the MVP has
+// no width inference yet — see DESIGN.md §6.2). The running total is exposed on
+// `sum`.
+#[clock(domain = sys)]
+module accumulator {
+    in valid: u1;
+    in x: i16;
+    out sum: i16;
+
+    reg acc: i16 = 0;
+
+    acc <= if valid { acc + x } else { acc };
+    sum = acc;
+}

@@ -1,0 +1,28 @@
+# cargo-deny configuration. Part of the Rust skill's verification sequence
+# (cargo-deny for licenses, cargo-audit for vulnerabilities).
+
+[licenses]
+# Allow the permissive licenses common in the Rust ecosystem.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[advisories]
+# Fail on known security advisories for dependencies.
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

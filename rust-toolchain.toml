@@ -1,0 +1,5 @@
+[toolchain]
+# Sinter builds on stable. The devcontainer keeps nightly available for tooling
+# experiments, but the crates themselves must compile on stable.
+channel = "stable"
+components = ["rustfmt", "clippy"]

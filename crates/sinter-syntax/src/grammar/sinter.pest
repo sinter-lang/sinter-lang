@@ -1,0 +1,65 @@
+// Sinter concrete grammar (.snt) — minimal synchronous core.
+//
+// This file is the normative PEG for the current language subset. Per DESIGN
+// §7.1 the formal grammar is the spec/conformance oracle; this PEG also happens
+// to be the literal parser for the MVP. Keep it the single source of truth for
+// surface syntax and grow it alongside DESIGN.md.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
+
+program = { SOI ~ module* ~ EOI }
+
+// A module optionally declares the clock domain it belongs to. Default: `sys`.
+clock_attr = { "#[" ~ "clock" ~ "(" ~ "domain" ~ "=" ~ ident ~ ")" ~ "]" }
+module     = { clock_attr? ~ "module" ~ ident ~ "{" ~ body_item* ~ "}" }
+
+body_item = _{ port_decl | reg_decl | let_decl | assign_stmt }
+
+// Interface ports. `in` feeds the cycle; `out` is driven combinationally.
+port_decl = { dir ~ ident ~ ":" ~ ty ~ ";" }
+dir       = { "in" | "out" }
+
+// A register: persistent state with a declared width and a reset value.
+reg_decl = { "reg" ~ ident ~ ":" ~ ty ~ "=" ~ expr ~ ";" }
+
+// A combinational wire (single-assignment by construction).
+let_decl = { "let" ~ ident ~ (":" ~ ty)? ~ "=" ~ expr ~ ";" }
+
+// Assignments: `<=` schedules a register's next-state; `=` drives an output.
+assign_stmt = { ident ~ assign_op ~ expr ~ ";" }
+assign_op   = { "<=" | "=" }
+
+// Types: arbitrary-width unsigned (`uN`) and signed (`iN`).
+ty = @{ ("u" | "i") ~ ASCII_DIGIT+ }
+
+// Expression grammar, lowest precedence first.
+// Every binary operator is a captured rule so the parser can read it uniformly
+// as the alternating operand/op/operand sequence within each level.
+expr     = { or_expr }
+or_expr  = { xor_expr ~ (or_op ~ xor_expr)* }
+xor_expr = { and_expr ~ (xor_op ~ and_expr)* }
+and_expr = { eq_expr ~ (and_op ~ eq_expr)* }
+eq_expr  = { rel_expr ~ (eq_op ~ rel_expr)* }
+rel_expr = { add_expr ~ (rel_op ~ add_expr)* }
+add_expr = { unary ~ (add_op ~ unary)* }
+unary    = { unary_op* ~ primary }
+primary  = { if_expr | literal | ident | "(" ~ expr ~ ")" }
+
+if_expr    = { "if" ~ expr ~ block_expr ~ "else" ~ (if_expr | block_expr) }
+block_expr = { "{" ~ expr ~ "}" }
+
+or_op    = { "|" }
+xor_op   = { "^" }
+and_op   = { "&" }
+eq_op    = { "==" | "!=" }
+rel_op   = { "<=" | ">=" | "<" | ">" }
+add_op   = { "+" | "-" }
+unary_op = { "!" | "~" | "-" }
+
+// Integer literals: decimal or `0x` hex. Untyped; width resolved from context.
+literal = @{ ("0x" ~ ASCII_HEX_DIGIT+) | ASCII_DIGIT+ }
+
+// Identifiers, excluding reserved words.
+keyword = @{ ("module" | "in" | "out" | "reg" | "let" | "if" | "else") ~ !(ASCII_ALPHANUMERIC | "_") }
+ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
