@@ -1,0 +1,7 @@
+// A port declaration requires a type annotation after the colon.
+//~ ERROR syntax error
+module bad {
+    in a: ;
+    out b: u1;
+    b = a;
+}

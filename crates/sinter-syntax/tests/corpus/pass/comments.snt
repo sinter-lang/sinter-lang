@@ -1,0 +1,11 @@
+// Line and block comments are whitespace-equivalent and must not appear in the
+// parsed AST. This file is dense with both to prove they are stripped.
+module commented /* trailing block */ {
+    in a: u1; // an input
+    /* a
+       multi-line
+       block comment */
+    out b: u1;
+
+    b = a; // drive the output
+}

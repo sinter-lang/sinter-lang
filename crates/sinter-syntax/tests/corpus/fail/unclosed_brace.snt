@@ -1,0 +1,6 @@
+// A module whose body brace is never closed cannot reach the EOI the grammar
+// requires.
+//~ ERROR syntax error
+module bad {
+    in a: u1;
+    out b: u1;

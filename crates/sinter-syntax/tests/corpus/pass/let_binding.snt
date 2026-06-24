@@ -1,0 +1,12 @@
+// Combinational `let` wires: one with an explicit type annotation and one
+// without (its type is left to be inferred by a later pass).
+module adder {
+    in a: u8;
+    in b: u8;
+    out sum: u8;
+
+    let widened: u8 = a + b;
+    let doubled = widened + widened;
+
+    sum = doubled;
+}

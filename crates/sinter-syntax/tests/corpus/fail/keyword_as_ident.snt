@@ -1,0 +1,8 @@
+// Reserved words may not be used as identifiers. Here `reg` is a keyword, so it
+// cannot name a port.
+//~ ERROR syntax error
+module bad {
+    in reg: u1;
+    out b: u1;
+    b = reg;
+}

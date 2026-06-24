@@ -1,0 +1,115 @@
+Program {
+    modules: [
+        Module {
+            name: "precedence",
+            clock_domain: "sys",
+            ports: [
+                Port {
+                    dir: In,
+                    name: "a",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 6,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: In,
+                    name: "b",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 7,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: In,
+                    name: "c",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 8,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: Out,
+                    name: "r",
+                    ty: Uint(
+                        1,
+                    ),
+                    pos: Pos {
+                        line: 9,
+                        col: 5,
+                    },
+                },
+            ],
+            regs: [],
+            lets: [
+                LetBinding {
+                    name: "mixed",
+                    ty: None,
+                    value: Binary {
+                        op: Or,
+                        lhs: Binary {
+                            op: And,
+                            lhs: Binary {
+                                op: Eq,
+                                lhs: Binary {
+                                    op: Add,
+                                    lhs: Ident(
+                                        "a",
+                                    ),
+                                    rhs: Ident(
+                                        "b",
+                                    ),
+                                },
+                                rhs: Ident(
+                                    "c",
+                                ),
+                            },
+                            rhs: Ident(
+                                "a",
+                            ),
+                        },
+                        rhs: Binary {
+                            op: Xor,
+                            lhs: Ident(
+                                "b",
+                            ),
+                            rhs: Ident(
+                                "c",
+                            ),
+                        },
+                    },
+                    pos: Pos {
+                        line: 11,
+                        col: 5,
+                    },
+                },
+            ],
+            assigns: [
+                Assign {
+                    target: "r",
+                    kind: Drive,
+                    value: Ident(
+                        "mixed",
+                    ),
+                    pos: Pos {
+                        line: 13,
+                        col: 5,
+                    },
+                },
+            ],
+            pos: Pos {
+                line: 5,
+                col: 1,
+            },
+        },
+    ],
+}

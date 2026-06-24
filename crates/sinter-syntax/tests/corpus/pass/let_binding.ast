@@ -1,0 +1,101 @@
+Program {
+    modules: [
+        Module {
+            name: "adder",
+            clock_domain: "sys",
+            ports: [
+                Port {
+                    dir: In,
+                    name: "a",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 4,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: In,
+                    name: "b",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 5,
+                        col: 5,
+                    },
+                },
+                Port {
+                    dir: Out,
+                    name: "sum",
+                    ty: Uint(
+                        8,
+                    ),
+                    pos: Pos {
+                        line: 6,
+                        col: 5,
+                    },
+                },
+            ],
+            regs: [],
+            lets: [
+                LetBinding {
+                    name: "widened",
+                    ty: Some(
+                        Uint(
+                            8,
+                        ),
+                    ),
+                    value: Binary {
+                        op: Add,
+                        lhs: Ident(
+                            "a",
+                        ),
+                        rhs: Ident(
+                            "b",
+                        ),
+                    },
+                    pos: Pos {
+                        line: 8,
+                        col: 5,
+                    },
+                },
+                LetBinding {
+                    name: "doubled",
+                    ty: None,
+                    value: Binary {
+                        op: Add,
+                        lhs: Ident(
+                            "widened",
+                        ),
+                        rhs: Ident(
+                            "widened",
+                        ),
+                    },
+                    pos: Pos {
+                        line: 9,
+                        col: 5,
+                    },
+                },
+            ],
+            assigns: [
+                Assign {
+                    target: "sum",
+                    kind: Drive,
+                    value: Ident(
+                        "doubled",
+                    ),
+                    pos: Pos {
+                        line: 11,
+                        col: 5,
+                    },
+                },
+            ],
+            pos: Pos {
+                line: 3,
+                col: 1,
+            },
+        },
+    ],
+}

@@ -1,0 +1,9 @@
+// An explicit clock-domain attribute. The `#[clock(domain = ...)]` name is
+// carried onto the module verbatim (here `video` instead of the default `sys`).
+#[clock(domain = video)]
+module passthrough {
+    in pixel: u8;
+    out out_pixel: u8;
+
+    out_pixel = pixel;
+}
