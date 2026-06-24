@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg \
         libtcl8.6 \
         locales \
+        openssh-client \
         pkg-config \
         python3 \
         python3-pip \
