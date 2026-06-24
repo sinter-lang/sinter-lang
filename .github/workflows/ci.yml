@@ -8,6 +8,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Keep in sync with .devcontainer/Dockerfile (ARG JUST_VERSION).
+  JUST_VERSION: 1.54.0
 
 jobs:
   build-and-test:
@@ -27,19 +29,29 @@ jobs:
           yosys --version
           verilator --version
 
+      - name: Install just
+        # Same task runner as the devcontainer, so every step below is exactly
+        # what a developer runs locally (`just <recipe>` / `just ci`).
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+            | bash -s -- --tag "${JUST_VERSION}" --to "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/just" --version
+
+      # Each step drives a just recipe so CI and local runs stay in lockstep.
+      # `just ci` runs all of these in one shot for local reproduction.
       - name: Format check
-        run: cargo fmt --all --check
+        run: just fmt
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features
+        run: just clippy
 
       - name: Unit + integration tests
-        run: cargo test --workspace
+        run: just test
 
       - name: Conformance oracle (Yosys synth + Verilator trace-diff, enforced)
-        env:
-          SINTER_REQUIRE_TOOLS: "1"
-        run: cargo test -p sinter-compiler --test conformance -- --nocapture
+        # require=1 -> fail if Yosys/Verilator are missing.
+        run: just conformance 1
 
       - name: Build release
-        run: cargo build --release
+        run: just build

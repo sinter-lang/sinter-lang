@@ -79,16 +79,29 @@ module counter {
 
 ## Development
 
-The [`.devcontainer`](.devcontainer) provides Rust (stable + nightly) and
-`oss-cad-suite` (Yosys + Verilator). The skill submodules under
-[`.claude/skills`](.claude/skills) carry the Rust/Verilog coding standards; run
-`git submodule update --init --recursive` to populate them (needs SSH access).
+The [`.devcontainer`](.devcontainer) provides Rust (stable + nightly),
+`oss-cad-suite` (Yosys + Verilator), and [`just`](https://just.systems). The
+skill submodules under [`.claude/skills`](.claude/skills) carry the Rust/Verilog
+coding standards; run `git submodule update --init --recursive` to populate them
+(needs SSH access).
+
+### Task runner
+
+All checks and builds are exposed as [`just`](https://just.systems) recipes,
+each a thin wrapper over a script in [`scripts/`](scripts). CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) drives the same
+recipes, so `just ci` reproduces the GitHub pipeline locally, step for step.
 
 ```sh
-cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test --workspace
+just              # list every recipe
+just check        # fast inner-loop gate: fmt + clippy + test
+just ci           # reproduce the CI pipeline exactly (conformance enforced)
+just verify       # full pre-push gate: ci + docs + license/advisory checks
+just fmt-fix      # apply rustfmt formatting in place
 ```
+
+Individual checks are recipes too — `just fmt`, `just clippy`, `just test`,
+`just conformance`, `just build`, `just doc`, `just deny`, `just audit`.
 
 ## License
 

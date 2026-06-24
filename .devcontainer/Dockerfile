@@ -46,6 +46,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# --- just (task runner) ----------------------------------------------------
+# Single entry point for the dev + CI task recipes (see justfile + scripts/).
+# Installed system-wide so it is on PATH for every user, including CI-parity
+# runs of `just ci` inside the container.
+ARG JUST_VERSION=1.54.0
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+        | bash -s -- --tag "${JUST_VERSION}" --to /usr/local/bin \
+    && just --version
+
 # --- Non-root user ---------------------------------------------------------
 ARG USERNAME=vscode
 ARG USER_UID=1000

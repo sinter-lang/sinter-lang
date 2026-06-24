@@ -33,7 +33,8 @@
         "streetsidesoftware.code-spell-checker",
         "yzhang.markdown-all-in-one",
         "bierner.markdown-mermaid",
-        "Anthropic.claude-code"
+        "Anthropic.claude-code",
+        "xoronic.pestfile"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash",

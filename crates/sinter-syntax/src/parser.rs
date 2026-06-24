@@ -1,4 +1,4 @@
-//! The Sinter parser: turns `.snt` source into an [`ast::Program`].
+//! The Sinter parser: turns `.snt` source into an [`crate::ast::Program`].
 //!
 //! Built on a `pest` PEG (`grammar/sinter.pest`). The PEG is the normative
 //! surface-syntax spec; this module folds its parse tree into the typed AST.
