@@ -1,7 +1,7 @@
 # Sinter development container.
 #
 # Adapted from the pico-gs devcontainer, trimmed to what Sinter needs:
-#   * Rust toolchain (stable + nightly) to build the compiler and run tests.
+#   * Rust toolchain (stable) to build the compiler and run tests.
 #   * OSS CAD Suite, which bundles Yosys and Verilator for the conformance
 #     oracle (generated Verilog synthesized by Yosys and simulated by Verilator).
 #   * Node.js for the Claude Code CLI.
@@ -60,13 +60,20 @@ RUN if getent passwd $USER_UID >/dev/null; then \
 USER $USERNAME
 ENV HOME=/home/$USERNAME
 
-# --- Rust via rustup (nightly default, stable available) -------------------
+# --- Rust via rustup (stable; Sinter builds on stable, see rust-toolchain.toml)
 ENV RUSTUP_HOME=$HOME/.rustup \
     CARGO_HOME=$HOME/.cargo \
     PATH=$HOME/.cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --component rustfmt clippy \
-    && rustup toolchain install nightly --component rustfmt clippy
+        | sh -s -- -y --default-toolchain stable --component rustfmt --component clippy
+
+# Pre-create the cargo registry tree so the devcontainer's named volume
+# (mounted at ~/.cargo/registry) inherits vscode ownership on first creation.
+# Docker seeds a fresh named volume from the image's mount point; without this
+# directory the volume is created root-owned and cargo can't write to it.
+RUN mkdir -p $HOME/.cargo/registry/cache \
+        $HOME/.cargo/registry/index \
+        $HOME/.cargo/registry/src
 
 # Persist tool PATHs for login shells.
 RUN echo 'export PATH="$HOME/.cargo/bin:/opt/oss-cad-suite/bin:$PATH"' >> $HOME/.bashrc \

@@ -4,6 +4,13 @@ set -euo pipefail
 
 echo "==> Sinter post-create"
 
+# Self-heal cargo registry ownership. The named volume mounted at
+# ~/.cargo/registry can be created root-owned (e.g. a pre-existing volume from
+# before the Dockerfile pre-created the tree), which breaks all cargo commands
+# below. Reclaim it for vscode before anything touches the registry.
+echo "==> Ensuring cargo registry is writable"
+sudo chown -R "$(id -u):$(id -g)" "${CARGO_HOME:-$HOME/.cargo}/registry" || true
+
 # Activate skill submodules if SSH access is available (best effort).
 echo "==> Activating skill submodules"
 "$(dirname "$0")/init-skills.sh" || echo "    (skills unavailable here — continuing)"

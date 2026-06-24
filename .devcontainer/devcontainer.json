@@ -32,7 +32,8 @@
         "mshr-h.veriloghdl",
         "streetsidesoftware.code-spell-checker",
         "yzhang.markdown-all-in-one",
-        "bierner.markdown-mermaid"
+        "bierner.markdown-mermaid",
+        "Anthropic.claude-code"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash",
