@@ -631,6 +631,39 @@ the timeline types — Sinter combines them.
    error-tolerant). Build system / dependency management (cf. Spade).
 7. **Future — nextpnr path / native synth / spring placer.** Distinct, deferred.
 
+### 9.1 Functional-surface lowering — ACTIVE milestone (F1–F5)
+
+The functional surface (§2.1) parses today (`examples/go_board_counter.snt`).
+This milestone makes it **lower** to the cycle-accurate Rust simulator *and*
+synthesizable SystemVerilog that agree under the §7.4 oracle — graduating the Go
+Board example from "parses" to a passing conformance test.
+
+**Strategy.** Lower the functional surface to the **existing flat `ir::Module`**
+(ports / regs / topo-sorted lets / `out_drives` / `reg_updates`) so the simulator,
+Verilog backend, and oracle are reused unchanged. All new work is a front-half
+elaboration: state-struct → leaf registers, `match` → `if`-mux, method/free-fn
+calls → inlined bodies (single-step rule), struct/tuple/array values → scalarized
+leaves (SROA). The IR gains only a mode-named `Cast` node and mixed-width
+arithmetic (operand extension); everything else lowers to the existing nodes.
+
+| Phase | Scope | Oracle status |
+|---|---|---|
+| **F1** | Resolve + type-check: symbol tables, name resolution, width inference, cast checking, single-clock-domain, single-step, acyclicity. No lowering. | unchanged; `check` reports real diagnostics |
+| **F2** | Elaborate to `ir::Module`: state flattening, SROA, free-fn inline, `Cast`+mixed-width IR extension. | a small functional example passes the oracle |
+| **F3** | enum encoding + `match`→mux, sub-state method inlining, nested state, arrays, tuple destructuring. | **the Go Board example passes the oracle** |
+| **F4** | fixed-point `uI.F`/`iI.F` arithmetic + `trunc`/`round` casts. | a fixed-point example passes the oracle |
+| **F5** | pin map (`.pins`) → top-level Verilog wrapper + nextpnr PCF. | `build` emits a synthesizable top + PCF |
+
+**Locked decisions (this milestone):**
+- The oracle observes **all leaf state registers** (full-state trace), plus the
+  `Outputs` value for a `(Self, Outputs)` transition function.
+- The clock-root `tick` may return `-> Self` (outputs are observed state fields)
+  **or** `-> (Self, Outputs)` (a distinct output channel; cf. §4.4).
+- Struct reset/default values const-eval over **literals and `const` references**
+  (const-fn-in-default deferred).
+- **Single clock domain only** (phantom-domain CDC deferred); memories and the
+  `pipeline`/`multiplex` colors are out of scope (M4/§3, §6.6).
+
 ---
 
 ## 10. Settled Decisions vs Open Questions (quick index)

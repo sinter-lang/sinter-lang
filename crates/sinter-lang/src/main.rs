@@ -108,12 +108,12 @@ fn cmd_check(file: &Path) -> Result<()> {
         );
     }
     if modules.is_empty() {
-        // A functional-surface source (struct/impl/fn) parses but is not yet
-        // lowered, so `check` finds no `module` to report. Say so rather than
-        // exiting silently (DESIGN §2.1; lowering is a later milestone).
+        // A functional-surface source (struct/impl/fn) is parsed and now
+        // type-checked (it reached here without error), but not yet lowered, so
+        // `check` finds no `module` to report (DESIGN §2.1; lowering is F2+).
         info!(
-            "no `module` declarations in `{}` to check; the functional surface \
-             is parsed but its semantic checks and lowering are not yet implemented",
+            "no `module` declarations in `{}`; the functional surface \
+             type-checks, but lowering to sim/Verilog is not yet implemented",
             file.display()
         );
     }
