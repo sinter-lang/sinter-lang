@@ -1,0 +1,7 @@
+// Fixed-point type spellings (DESIGN §6.1): `uI.F` / `iI.F` where `I` includes
+// the sign bit, alongside a plain scalar. Parse-only for now.
+struct Sample {
+    gain: u4.8 = 0,
+    bias: i4.8 = 0,
+    raw: u12 = 0,
+}

@@ -1,0 +1,151 @@
+Program {
+    modules: [],
+    items: [
+        Enum(
+            EnumItem {
+                attrs: [],
+                name: "Sel",
+                variants: [
+                    EnumVariant {
+                        name: "A",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 4,
+                            col: 5,
+                        },
+                    },
+                    EnumVariant {
+                        name: "B",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                name: "pick",
+                params: [
+                    Typed {
+                        name: "s",
+                        ty: Named(
+                            "Sel",
+                        ),
+                        pos: Pos {
+                            line: 8,
+                            col: 9,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                body: Block {
+                    stmts: [
+                        Let {
+                            pattern: Binding(
+                                "base",
+                            ),
+                            ty: None,
+                            value: Block(
+                                Block {
+                                    stmts: [
+                                        Let {
+                                            pattern: Binding(
+                                                "half",
+                                            ),
+                                            ty: None,
+                                            value: Literal(
+                                                2,
+                                            ),
+                                            pos: Pos {
+                                                line: 10,
+                                                col: 9,
+                                            },
+                                        },
+                                    ],
+                                    tail: Ident(
+                                        "half",
+                                    ),
+                                    pos: Pos {
+                                        line: 9,
+                                        col: 16,
+                                    },
+                                },
+                            ),
+                            pos: Pos {
+                                line: 9,
+                                col: 5,
+                            },
+                        },
+                    ],
+                    tail: Match {
+                        scrutinee: Ident(
+                            "s",
+                        ),
+                        arms: [
+                            MatchArm {
+                                pattern: Path(
+                                    [
+                                        "Sel",
+                                        "A",
+                                    ],
+                                ),
+                                body: Ident(
+                                    "base",
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Wildcard,
+                                body: Block(
+                                    Block {
+                                        stmts: [
+                                            Let {
+                                                pattern: Binding(
+                                                    "bump",
+                                                ),
+                                                ty: None,
+                                                value: Literal(
+                                                    1,
+                                                ),
+                                                pos: Pos {
+                                                    line: 16,
+                                                    col: 13,
+                                                },
+                                            },
+                                        ],
+                                        tail: Ident(
+                                            "bump",
+                                        ),
+                                        pos: Pos {
+                                            line: 15,
+                                            col: 14,
+                                        },
+                                    },
+                                ),
+                            },
+                        ],
+                    },
+                    pos: Pos {
+                        line: 8,
+                        col: 23,
+                    },
+                },
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

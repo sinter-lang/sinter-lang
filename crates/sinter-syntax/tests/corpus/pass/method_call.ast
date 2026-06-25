@@ -1,0 +1,176 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                name: "Adder",
+                fields: [
+                    StructField {
+                        name: "bias",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Adder",
+                methods: [
+                    Func {
+                        attrs: [],
+                        name: "apply",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 9,
+                                    col: 14,
+                                },
+                            },
+                            Typed {
+                                name: "x",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 9,
+                                    col: 20,
+                                },
+                            },
+                        ],
+                        ret: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: Ident(
+                                "x",
+                            ),
+                            pos: Pos {
+                                line: 9,
+                                col: 33,
+                            },
+                        },
+                        pos: Pos {
+                            line: 9,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+        Struct(
+            StructItem {
+                attrs: [],
+                name: "Top",
+                fields: [
+                    StructField {
+                        name: "add",
+                        ty: Named(
+                            "Adder",
+                        ),
+                        default: None,
+                        pos: Pos {
+                            line: 15,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 14,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Top",
+                methods: [
+                    Func {
+                        attrs: [],
+                        name: "run",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 19,
+                                    col: 12,
+                                },
+                            },
+                            Typed {
+                                name: "n",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 19,
+                                    col: 18,
+                                },
+                            },
+                        ],
+                        ret: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: MethodCall {
+                                receiver: Field {
+                                    base: Ident(
+                                        "self",
+                                    ),
+                                    field: "add",
+                                },
+                                method: "apply",
+                                args: [
+                                    Ident(
+                                        "n",
+                                    ),
+                                ],
+                            },
+                            pos: Pos {
+                                line: 19,
+                                col: 31,
+                            },
+                        },
+                        pos: Pos {
+                            line: 19,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 18,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

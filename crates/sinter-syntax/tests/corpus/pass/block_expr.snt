@@ -1,0 +1,20 @@
+// A block as an expression outside `if`/`else`: a `let` initializer and a
+// block-bodied match arm both yield `Expr::Block` (DESIGN §2.1).
+enum Sel {
+    A,
+    B,
+}
+
+fn pick(s: Sel) -> u8 {
+    let base = {
+        let half = 2;
+        half
+    };
+    match s {
+        Sel::A => base,
+        _ => {
+            let bump = 1;
+            bump
+        },
+    }
+}

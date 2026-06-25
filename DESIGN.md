@@ -96,6 +96,18 @@ A clock-root function may invoke other functions, but:
 - **non-reentrantly** (no instance is stepped more than once per cycle), and
 - all invoked combinational logic **completes within the same cycle**.
 
+**Surface syntax (SETTLED direction; `examples/go_board_counter.snt` is the
+canonical artifact).** Persistent state is a `struct` — which may nest other
+structs (hierarchical ownership, §4.3) — with **inline reset values**
+(`count: u20 = 0`). The transition function is a `self`-taking method whose
+return is the new state; inputs arrive as additional parameters, and outputs are
+either fields of the returned state or extra tuple elements (a combinational
+sub-step uses the §2.3 `(new_state, outputs)` form, e.g.
+`fn step(self, cmd) -> (Digit, u1)`). The **unique** `#[clock(domain = …)]`
+function is the design's synthesizable top, and is what the physical pin map
+(§7.6) resolves against. The Verilog-style `module { in/out/reg }` construct in
+the current grammar is the legacy MVP surface, slated to migrate onto this form.
+
 ### 2.2 Two function colors at the base level
 
 - **Combinational `fn`** — no cycle breaks; completes within the cycle; composes
@@ -337,13 +349,26 @@ discharges the exclusivity obligation for free.
 
 ### 6.1 Fixed-point types (built-in)
 
-- Signed/unsigned fixed-point are first-class, e.g. `i6.10` = signed fixed-point
-  with 10 fractional bits. **`OPEN: sign-bit convention`** — pin down precisely
-  whether the integer field count includes the sign bit (TI Q-notation often
-  counts the sign within the integer bits; `i6.10` could read as 6 + 10 + sign =
-  17, or as 16 total). Fix this unambiguously in the grammar; ambiguity here
-  silently corrupts the digital twin. Document the chosen convention in one
-  normative sentence with a worked bit-layout example.
+- Signed/unsigned fixed-point are first-class, spelled with a **dotted**
+  `uI.F` / `iI.F` notation (e.g. `i4.8` = signed fixed-point, 4 integer bits and
+  8 fractional bits). The dot is parseable without ambiguity provided the
+  fractional part lexes atomically as `"." ~ ASCII_DIGIT+` — the dot must be
+  immediately followed by a digit, so it never collides with `..` ranges or with
+  member access `.field` — and types only ever appear in type position.
+- **Sign-bit convention (SETTLED).** For `iI.F` the total width is exactly
+  `I + F` bits and **the sign bit is the MSB of the integer field — i.e. `I`
+  includes the sign.** Worked example: `i4.8` is 12 bits total; the integer
+  field is 4 bits (1 sign + 3 magnitude) and the fractional field is 8 bits, so
+  the representable range is approximately `[-8.0, +8.0)` at a resolution of
+  `2^-8`. Unsigned `uI.F` is `I + F` bits with no sign bit. This is normative;
+  the Rust sim and the Verilog must both honor it bit-for-bit.
+- **Word-scaled / coarse integers are *not* a separate type family (DEFERRED).**
+  A "stored in N bits but each step is worth `2^k`" type is just a fixed-point
+  number whose binary point sits to the *left* of the LSB (negative fractional
+  bits): `u4` scaled by `2^2` ≡ `u4.-2`. A single "where is the binary point"
+  axis covers both precision (fractional bits to the right) and coarseness (to
+  the left). Deferred until a concrete need appears; if revived it folds into the
+  fixed-point exponent rather than adding a third suffix.
 
 ### 6.2 Width-inferred arithmetic
 
@@ -351,6 +376,16 @@ discharges the exclusivity obligation for free.
   values**:
   - `iN + iM` → `i(max(N,M)+1)`
   - `Qa.b * Qc.d` → `Q(a+c).(b+d)`
+- **Signed multiply is *total* under full width inference — there is no
+  most-negative special case at the multiply.** `iN × iN` infers to `i(2N)` (not
+  `i(2N-1)`), and `min × min = +2^(2N-2)` fits, because a `2N`-bit signed value
+  reaches `+2^(2N-1) − 1 ≥ 2^(2N-2)`. The classic "−1.0 × −1.0 = +1.0 overflows"
+  gotcha is purely an artifact of the DSP convention that keeps `2N-1` bits
+  (dropping the redundant sign bit / left-shifting to renormalize). Sinter keeps
+  the multiply full-width and surprise-free; the min×min decision only surfaces
+  later, at the **explicit narrowing cast** (§6.3) — exactly where every lossy
+  choice should live. A hardware DSP block's double-wide output maps straight
+  onto the inferred product type.
 - Elegant consequence: in a feedback path (`acc = acc + x`) width cannot grow
   unbounded because the register's declared width **forces a narrowing at the
   register boundary** — i.e. the type system funnels every lossy operation to the
@@ -400,8 +435,13 @@ explicit in the semantics.
   `Option<T>`, so it threads cleanly through `?`.
 - `enum` (algebraic, with payloads) is native; `Option` is the
   one-variant-payload special case.
-- **Enum encoding** (binary / one-hot / gray) is **annotatable**, not merely
-  inferred, so external protocol encodings can be matched exactly.
+- **Enum encoding is annotatable (SETTLED syntax).** A `#[encoding(...)]`
+  attribute selects the bit-encoding: `binary` (the default, `ceil(log2 N)`
+  bits), `onehot` (`N` bits), `gray`, or `johnson`. Independently, Rust-style
+  **explicit discriminants** (`enum Op { Rd = 0b01, Wr = 0b10 }`) let an external
+  protocol encoding be matched exactly. The two compose: the named scheme says
+  "pick a good encoding of this kind"; explicit values say "I am these exact
+  bits." Encoding is never silently inferred across an external boundary.
 
 ### 6.6 Containers, arrays, memories, channels (first-class)
 
@@ -438,6 +478,15 @@ distinct primitive type whose interface *is* a latency-contracted stateful
 instance — so it composes under the §3.4 latency rules — but whose lowering is
 hard-wired to BRAM/`DP16KD`/`PDPW16KD`-style primitives rather than synthesized
 from generic state.)
+
+### 6.10 Integer literals (SETTLED)
+
+Integer literals are **untyped by default**; their width is resolved from
+context (the surrounding type). A literal may carry an optional **Rust-style
+width suffix** — `0b0111111_u7`, `42_i16` — which asserts its type and makes a
+width mismatch with context a compile error (useful for bit-pattern constants,
+where an off-by-one-bit typo is otherwise easy to miss). Supported forms:
+decimal, `0x` hex, and `0b` binary, with `_` permitted as a digit separator.
 
 ---
 
@@ -516,6 +565,30 @@ spring model. **Caveats to record so scope is honest:**
 
 Deferred. Not in early milestones.
 
+### 7.6 Physical pin mapping (SETTLED shape; `examples/go_board.pins`)
+
+Because the functional surface (§2.1) has no top-level Verilog ports, the bridge
+from physical pins to the design is a dedicated **pin-map file**, a superset of
+the familiar nextpnr PCF idiom:
+
+```
+set_io <pin#> <dir> <path> [low]
+```
+
+- `<dir>` is `clock` | `in` | `out`.
+- `<path>` resolves against the clock-root `tick` signature: an input parameter
+  (`btn.inc`), or a field of the returned state addressed by name and bit/array
+  index (`seg[0][6]`). A `clock` line binds a pin to a **domain** (`sys`), not a
+  field.
+- the optional `low` flag marks an active-low board signal, so polarity is
+  resolved once at the boundary and the source logic stays written active-high.
+
+The compiler consumes this to (1) synthesize a top-level Verilog wrapper with one
+port per pin, wiring each port to/from the addressed bit, and (2) emit the
+concrete nextpnr PCF (with the generated port names) as a build artifact. This
+keeps the Sinter → Verilog → Yosys → nextpnr flow (§7.2) intact while letting the
+source stay portless.
+
 ---
 
 ## 8. Prior Art to Mine (read before fixing signatures)
@@ -564,11 +637,26 @@ the timeline types — Sinter combines them.
 
 **Settled:**
 - Name = Sinter; ext `.snt`; CLI binary `sinter`; crate & org `sinter-lang`.
-- One invocation = one clock cycle; clock-root attribute.
+- One invocation = one clock cycle; clock-root attribute; the **unique**
+  `#[clock(domain = …)]` function is the synthesizable top (§2.1).
+- Surface syntax = state `struct` (nestable) with inline reset values
+  (`field: T = expr`) + a `self`-taking transition method; combinational
+  sub-steps return a `(new_state, outputs)` tuple (§2.1, §2.3). The legacy
+  `module` form migrates onto this. Canonical artifact:
+  `examples/go_board_counter.snt`.
 - Single-driver rule generalized to registers, write-ports, and instances.
 - Acyclic per-cycle combinational graph; feedback only through registers.
 - Hierarchical state ownership (not flatten-to-root).
 - Width-inferred arithmetic; narrowing = explicit mode-named cast (no default).
+  Signed multiply is total: `iN × iN → i(2N)`, no min×min special case at the
+  multiply — saturation, if any, happens at the explicit cast (§6.2).
+- Fixed-point spelled `uI.F` / `iI.F` (dotted); `I` includes the sign bit, total
+  width = `I + F` (§6.1). Word-scaled integers deferred (fold into the
+  fixed-point binary-point position if revived).
+- Enum encoding via `#[encoding(binary|onehot|gray|johnson)]` (default binary),
+  plus optional explicit discriminants for protocol matching (§6.5).
+- Integer literals untyped by default; optional Rust-style width suffix
+  (`_uN`/`_iN`); `0x`/`0b` forms and `_` separators (§6.10).
 - `?` = validity propagation only; register writes are guarded holds.
 - Merge is always a named combinator; resource sharing is always an explicit
   instance; exclusivity discharged structurally.
@@ -578,16 +666,19 @@ the timeline types — Sinter combines them.
 - `pipeline`/`multiplex` as two function colors; selector binding time sets
   latency class; three latency points (`Static`/`Bounded`/`Dynamic`).
 - Backends ordered sim → Verilog → (later) nextpnr; native synth is separate.
+- Physical pin mapping = PCF-superset binding pins to dotted state/input paths +
+  bit/array index + optional `low` polarity; the compiler synthesizes the
+  top-level Verilog wrapper and emits the concrete PCF (§7.6).
 - Parser is NOT a single generated grammar driving all tools; grammar is the
   spec/oracle.
 
 **Open (decide on paper before/at M0):**
-1. §6.1 — exact sign-bit convention for `iI.F` notation.
-2. §4.4 — stateful-fn signature: separate yield/return channels vs collapsed
-   `Step` sum.
-3. §3.5 — prove `Bounded` latency from the transition graph (retain scheduling
+1. §4.4 — *generator* (multi-cycle, yield + done) signature: separate
+   yield/return channels vs collapsed `Step` sum. (The §2.3 combinational
+   sub-step shape is now settled as a `(new_state, outputs)` tuple.)
+2. §3.5 — prove `Bounded` latency from the transition graph (retain scheduling
    leverage) vs treat all runtime selectors as `Dynamic`.
-4. §6.9 — memory as latency-contracted stateful instance vs distinct primitive.
-5. §7.1 — tree-sitter shared layer vs rowan + hand-written error-recovering
+3. §6.9 — memory as latency-contracted stateful instance vs distinct primitive.
+4. §7.1 — tree-sitter shared layer vs rowan + hand-written error-recovering
    parser.
-6. §6.6 — do channels guarantee deadlock-freedom or just expose ready/valid (v1).
+5. §6.6 — do channels guarantee deadlock-freedom or just expose ready/valid (v1).

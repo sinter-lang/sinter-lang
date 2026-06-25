@@ -1,0 +1,4 @@
+// A function must declare a return type (`-> T`); omitting it is rejected.
+fn bump(v: u8) {
+    v
+}

@@ -1,0 +1,120 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                name: "Pair",
+                fields: [
+                    StructField {
+                        name: "lanes",
+                        ty: Array {
+                            elem: Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                            len: Literal(
+                                2,
+                            ),
+                        },
+                        default: Some(
+                            Array(
+                                [
+                                    Literal(
+                                        0,
+                                    ),
+                                    Literal(
+                                        0,
+                                    ),
+                                ],
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 4,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Pair",
+                methods: [
+                    Func {
+                        attrs: [],
+                        name: "split",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 8,
+                                    col: 14,
+                                },
+                            },
+                        ],
+                        ret: Tuple(
+                            [
+                                Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                            ],
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: Tuple(
+                                [
+                                    Index {
+                                        base: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "lanes",
+                                        },
+                                        index: Literal(
+                                            0,
+                                        ),
+                                    },
+                                    Index {
+                                        base: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "lanes",
+                                        },
+                                        index: Literal(
+                                            1,
+                                        ),
+                                    },
+                                ],
+                            ),
+                            pos: Pos {
+                                line: 8,
+                                col: 32,
+                            },
+                        },
+                        pos: Pos {
+                            line: 8,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 7,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

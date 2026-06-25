@@ -1,0 +1,73 @@
+Program {
+    modules: [],
+    items: [
+        Const(
+            ConstItem {
+                name: "A",
+                ty: Scalar(
+                    Uint(
+                        32,
+                    ),
+                ),
+                value: Literal(
+                    1000000,
+                ),
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Const(
+            ConstItem {
+                name: "B",
+                ty: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                value: Literal(
+                    255,
+                ),
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+        Const(
+            ConstItem {
+                name: "C",
+                ty: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                value: Literal(
+                    170,
+                ),
+                pos: Pos {
+                    line: 6,
+                    col: 1,
+                },
+            },
+        ),
+        Const(
+            ConstItem {
+                name: "D",
+                ty: Scalar(
+                    Uint(
+                        7,
+                    ),
+                ),
+                value: Literal(
+                    63,
+                ),
+                pos: Pos {
+                    line: 7,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

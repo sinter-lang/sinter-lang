@@ -1,0 +1,192 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                name: "Counter",
+                fields: [
+                    StructField {
+                        name: "value",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Counter",
+                methods: [
+                    Func {
+                        attrs: [],
+                        name: "step",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 9,
+                                    col: 13,
+                                },
+                            },
+                            Typed {
+                                name: "inc",
+                                ty: Scalar(
+                                    Uint(
+                                        1,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 9,
+                                    col: 19,
+                                },
+                            },
+                        ],
+                        ret: Named(
+                            "Counter",
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: StructLit {
+                                name: "Counter",
+                                fields: [
+                                    FieldInit {
+                                        name: "value",
+                                        value: If {
+                                            cond: Binary {
+                                                op: Eq,
+                                                lhs: Ident(
+                                                    "inc",
+                                                ),
+                                                rhs: Literal(
+                                                    1,
+                                                ),
+                                            },
+                                            then: Block(
+                                                Block {
+                                                    stmts: [],
+                                                    tail: Call {
+                                                        func: Ident(
+                                                            "bump",
+                                                        ),
+                                                        args: [
+                                                            Field {
+                                                                base: Ident(
+                                                                    "self",
+                                                                ),
+                                                                field: "value",
+                                                            },
+                                                        ],
+                                                    },
+                                                    pos: Pos {
+                                                        line: 11,
+                                                        col: 32,
+                                                    },
+                                                },
+                                            ),
+                                            els: Block(
+                                                Block {
+                                                    stmts: [],
+                                                    tail: Field {
+                                                        base: Ident(
+                                                            "self",
+                                                        ),
+                                                        field: "value",
+                                                    },
+                                                    pos: Pos {
+                                                        line: 11,
+                                                        col: 58,
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    },
+                                ],
+                            },
+                            pos: Pos {
+                                line: 9,
+                                col: 39,
+                            },
+                        },
+                        pos: Pos {
+                            line: 9,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                name: "bump",
+                params: [
+                    Typed {
+                        name: "v",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 16,
+                            col: 9,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: Cast {
+                        expr: Binary {
+                            op: Add,
+                            lhs: Ident(
+                                "v",
+                            ),
+                            rhs: Literal(
+                                1,
+                            ),
+                        },
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        mode: Wrap,
+                    },
+                    pos: Pos {
+                        line: 16,
+                        col: 22,
+                    },
+                },
+                pos: Pos {
+                    line: 16,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

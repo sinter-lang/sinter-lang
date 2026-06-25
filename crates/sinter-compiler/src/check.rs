@@ -270,6 +270,25 @@ impl Checker<'_> {
             AstExpr::Unary { op, expr: inner } => self.check_unary(*op, inner, expected, pos),
             AstExpr::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, expected, pos),
             AstExpr::If { cond, then, els } => self.check_if(cond, then, els, expected, pos),
+            // Functional-surface expressions are never produced by `module`
+            // parsing, so they are unreachable here. Lowering them is a later
+            // milestone (DESIGN §2.1). Listed explicitly (rather than `_`) so
+            // adding a new legacy variant is a compile error, not silent.
+            AstExpr::Path(_)
+            | AstExpr::Field { .. }
+            | AstExpr::Call { .. }
+            | AstExpr::MethodCall { .. }
+            | AstExpr::Index { .. }
+            | AstExpr::StructLit { .. }
+            | AstExpr::Tuple(_)
+            | AstExpr::Array(_)
+            | AstExpr::Cast { .. }
+            | AstExpr::Match { .. }
+            | AstExpr::Block(_) => Err(CompileError::semantic(
+                self.module,
+                pos,
+                "this expression form is not supported in a `module` body",
+            )),
         }
     }
 
@@ -478,6 +497,19 @@ impl Checker<'_> {
             AstExpr::If { then, els, .. } => self
                 .synth_concrete(then)
                 .or_else(|| self.synth_concrete(els)),
+            // Functional-surface expressions never appear in a module body.
+            // Listed explicitly so a new legacy variant fails to compile here.
+            AstExpr::Path(_)
+            | AstExpr::Field { .. }
+            | AstExpr::Call { .. }
+            | AstExpr::MethodCall { .. }
+            | AstExpr::Index { .. }
+            | AstExpr::StructLit { .. }
+            | AstExpr::Tuple(_)
+            | AstExpr::Array(_)
+            | AstExpr::Cast { .. }
+            | AstExpr::Match { .. }
+            | AstExpr::Block(_) => None,
         }
     }
 

@@ -1,0 +1,7 @@
+// Integer literal forms (DESIGN §6.10): decimal with `_` separators, hex,
+// binary, and binary with a Rust-style width suffix. The suffix is parsed and
+// validated but not yet represented in the AST.
+const A: u32 = 1_000_000;
+const B: u8 = 0xFF;
+const C: u8 = 0b1010_1010;
+const D: u7 = 0b0111111_u7;

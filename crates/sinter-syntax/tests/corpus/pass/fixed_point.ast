@@ -1,0 +1,68 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                name: "Sample",
+                fields: [
+                    StructField {
+                        name: "gain",
+                        ty: Fixed {
+                            signed: false,
+                            int_bits: 4,
+                            frac_bits: 8,
+                        },
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 4,
+                            col: 5,
+                        },
+                    },
+                    StructField {
+                        name: "bias",
+                        ty: Fixed {
+                            signed: true,
+                            int_bits: 4,
+                            frac_bits: 8,
+                        },
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                    StructField {
+                        name: "raw",
+                        ty: Scalar(
+                            Uint(
+                                12,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}
