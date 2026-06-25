@@ -4,7 +4,7 @@
 #   * Rust toolchain (stable) to build the compiler and run tests.
 #   * OSS CAD Suite, which bundles Yosys and Verilator for the conformance
 #     oracle (generated Verilog synthesized by Yosys and simulated by Verilator).
-#   * Node.js for the Claude Code CLI.
+#   * Claude Code CLI, installed via Anthropic's native shell installer.
 FROM ubuntu:24.04
 
 ARG OSS_CAD_SUITE_VERSION=20260127
@@ -41,11 +41,6 @@ RUN curl -fsSL \
     && rm /tmp/oss-cad-suite.tgz
 ENV PATH="${OSS_CAD_SUITE_PATH}/bin:${PATH}"
 
-# --- Node.js 20.x LTS (for the Claude Code CLI) ----------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
 # --- just (task runner) ----------------------------------------------------
 # Single entry point for the dev + CI task recipes (see justfile + scripts/).
 # Installed system-wide so it is on PATH for every user, including CI-parity
@@ -77,6 +72,14 @@ ENV RUSTUP_HOME=$HOME/.rustup \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain stable --component rustfmt --component clippy
 
+# --- Claude Code CLI (Anthropic's native shell installer) ------------------
+# Self-contained native binary installed to ~/.local/bin/claude (no Node.js
+# runtime). Native installs auto-update in the background, so this seeds the
+# image with the latest release at build time.
+ENV PATH=$HOME/.local/bin:$PATH
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && claude --version
+
 # Pre-create the cargo registry tree so the devcontainer's named volume
 # (mounted at ~/.cargo/registry) inherits vscode ownership on first creation.
 # Docker seeds a fresh named volume from the image's mount point; without this
@@ -86,7 +89,7 @@ RUN mkdir -p $HOME/.cargo/registry/cache \
         $HOME/.cargo/registry/src
 
 # Persist tool PATHs for login shells.
-RUN echo 'export PATH="$HOME/.cargo/bin:/opt/oss-cad-suite/bin:$PATH"' >> $HOME/.bashrc \
+RUN echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/oss-cad-suite/bin:$PATH"' >> $HOME/.bashrc \
     && echo 'export OSS_CAD_SUITE_PATH=/opt/oss-cad-suite' >> $HOME/.bashrc
 
 ENV LANG=en_US.UTF-8
