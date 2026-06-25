@@ -1,0 +1,11 @@
+// Tuple return type, array type with an array-literal reset, and tuple / index
+// expressions (DESIGN §6.6 vector-of-registers).
+struct Pair {
+    lanes: [u8; 2] = [0, 0],
+}
+
+impl Pair {
+    fn split(self) -> (u8, u8) {
+        (self.lanes[0], self.lanes[1])
+    }
+}

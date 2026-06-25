@@ -84,3 +84,11 @@ clocked modules with `uN`/`iN` registers, combinational next-state, and
 single-driver + acyclicity checks. Fixed-point, width inference, `pipeline`/
 `multiplex` colors, clock-domain phantom types, and memories are designed in
 `DESIGN.md` but not yet implemented. Keep new work faithful to that design.
+
+The **functional surface** (DESIGN §2.1: `struct` state + `impl` transition
+methods + a `#[clock]` root, with `enum`/`match`, tuples, arrays, fixed-point
+types, and mode-named casts) is **parsed** by `sinter-syntax` today — see
+`examples/go_board_counter.snt` and the corpus — but semantic checking and
+lowering of it are not yet implemented; `sinter-compiler` still lowers only the
+legacy `module` form. The two share the AST's `Expr`; the legacy `module` parse
+path is frozen (keep its goldens and the oracle bit-for-bit stable).

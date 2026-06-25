@@ -1,0 +1,4 @@
+// A struct field must be `name: Type`; a bare name is rejected.
+struct Broken {
+    value
+}

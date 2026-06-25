@@ -1,0 +1,143 @@
+Program {
+    modules: [],
+    items: [
+        Enum(
+            EnumItem {
+                attrs: [
+                    Attr {
+                        name: "encoding",
+                        args: [
+                            AttrArg {
+                                key: "onehot",
+                                value: None,
+                            },
+                        ],
+                        pos: Pos {
+                            line: 3,
+                            col: 1,
+                        },
+                    },
+                ],
+                name: "Dir",
+                variants: [
+                    EnumVariant {
+                        name: "North",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                    EnumVariant {
+                        name: "East",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
+                    },
+                    EnumVariant {
+                        name: "South",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 7,
+                            col: 5,
+                        },
+                    },
+                    EnumVariant {
+                        name: "West",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 8,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                name: "quadrant",
+                params: [
+                    Typed {
+                        name: "d",
+                        ty: Named(
+                            "Dir",
+                        ),
+                        pos: Pos {
+                            line: 11,
+                            col: 13,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        2,
+                    ),
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: Match {
+                        scrutinee: Ident(
+                            "d",
+                        ),
+                        arms: [
+                            MatchArm {
+                                pattern: Path(
+                                    [
+                                        "Dir",
+                                        "North",
+                                    ],
+                                ),
+                                body: Literal(
+                                    0,
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Path(
+                                    [
+                                        "Dir",
+                                        "East",
+                                    ],
+                                ),
+                                body: Literal(
+                                    1,
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Path(
+                                    [
+                                        "Dir",
+                                        "South",
+                                    ],
+                                ),
+                                body: Literal(
+                                    2,
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Wildcard,
+                                body: Literal(
+                                    3,
+                                ),
+                            },
+                        ],
+                    },
+                    pos: Pos {
+                        line: 11,
+                        col: 27,
+                    },
+                },
+                pos: Pos {
+                    line: 11,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

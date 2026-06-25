@@ -1,0 +1,18 @@
+// An `#[encoding(...)]`-annotated enum (DESIGN §6.5) and a `match` expression
+// with path patterns, a literal pattern, and the wildcard.
+#[encoding(onehot)]
+enum Dir {
+    North,
+    East,
+    South,
+    West,
+}
+
+fn quadrant(d: Dir) -> u2 {
+    match d {
+        Dir::North => 0,
+        Dir::East => 1,
+        Dir::South => 2,
+        _ => 3,
+    }
+}

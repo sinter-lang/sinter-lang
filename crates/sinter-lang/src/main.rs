@@ -107,6 +107,16 @@ fn cmd_check(file: &Path) -> Result<()> {
             m.lets.len()
         );
     }
+    if modules.is_empty() {
+        // A functional-surface source (struct/impl/fn) parses but is not yet
+        // lowered, so `check` finds no `module` to report. Say so rather than
+        // exiting silently (DESIGN §2.1; lowering is a later milestone).
+        info!(
+            "no `module` declarations in `{}` to check; the functional surface \
+             is parsed but its semantic checks and lowering are not yet implemented",
+            file.display()
+        );
+    }
     Ok(())
 }
 

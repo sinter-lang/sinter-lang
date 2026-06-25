@@ -1,0 +1,18 @@
+// Functional surface: a state `struct` with an inline reset value and an `impl`
+// transition method (DESIGN §2.1). Exercises struct literals, field access, a
+// free-function call, an `if` expression, and a mode-named narrowing cast.
+struct Counter {
+    value: u8 = 0,
+}
+
+impl Counter {
+    fn step(self, inc: u1) -> Counter {
+        Counter {
+            value: if inc == 1 { bump(self.value) } else { self.value },
+        }
+    }
+}
+
+fn bump(v: u8) -> u8 {
+    (v + 1) as u8 wrap
+}

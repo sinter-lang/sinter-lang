@@ -1,0 +1,210 @@
+// =============================================================================
+// FUNCTIONAL-SURFACE EXAMPLE — parses today (sinter-syntax); semantic checking
+// and lowering to sim/Verilog are the next milestone.
+//
+// This is the canonical artifact for the functional surface (see DESIGN.md §2
+// "transition-function" model and §4 "hierarchical state ownership"). It
+// fleshes out what a small, real Sinter project looks like and drives the
+// front end forward. It now parses into an AST (`tests/parse.rs` checks it; the
+// corpus has focused per-feature cases); the remaining graduation step is
+// semantic checks + the dual sim/Verilog lowering, then the conformance oracle.
+//
+// Target board: Nandland Go Board (Lattice iCE40 HX1K, 25 MHz). Two-digit
+// 7-segment display, tactile switches. Press SW1 to increment a 00..99 decimal
+// counter, SW2 to decrement. Physical pins are bound in `go_board.pins`.
+//
+// Syntax exercised here (now parsed; DESIGN §2.1 and the settled decisions):
+//   * `struct` with inline reset values, replacing `module { reg ... = ...; }`
+//   * `enum` + `match`, with `#[encoding(...)]` bit-encoding   (DESIGN §6.5)
+//   * `impl` blocks with `self`-taking methods (= the transition function)
+//   * the clock-root `tick`: `#[clock] fn(self, inputs) -> Self`  (DESIGN §2.1)
+//   * sub-steps return `(new_state, output)` tuples           (DESIGN §4.4)
+//   * arrays `[T; N]`, indexing, and array literals           (DESIGN §6.6)
+//   * width inference; mode-named narrowing casts `x as u4 wrap` (DESIGN §6.2-3)
+//   * `const` items; binary `0b...` literals with an optional Rust-style width
+//     suffix (`_u7`) and `_` digit separators
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Constants. Const arithmetic is compile-time folding, distinct from the
+// runtime `/` that DESIGN §6.8 forbids in hardware — so a const divide would be
+// fine; we use a literal here and show the derivation in the comment.
+// ---------------------------------------------------------------------------
+
+// ~10 ms of stable level at 25 MHz before a button is considered pressed:
+//   25_000_000 cycles/s * 0.010 s = 250_000 cycles.
+const DEBOUNCE_TICKS: u20 = 250_000;
+
+// ---------------------------------------------------------------------------
+// Sub-state: a one-button debouncer. Counts consecutive high samples; once it
+// saturates, the level is considered stable. Any low sample resets it.
+// ---------------------------------------------------------------------------
+struct Debounce {
+    count: u20 = 0, // consecutive stable-high samples
+    level: u1 = 0,  // debounced, stable button level
+}
+
+impl Debounce {
+    // Combinational step: invoked once per cycle by the clock root. Pure
+    // `state -> state`; no clock attribute (the root owns the cycle).
+    fn step(self, raw: u1) -> Debounce {
+        if raw == 0 {
+            Debounce { count: 0, level: 0 }
+        } else if self.count == DEBOUNCE_TICKS {
+            Debounce { count: self.count, level: 1 }
+        } else {
+            // `count + 1` is u21 by width inference (DESIGN §6.2); the explicit
+            // `as u20 wrap` discharges the narrowing at the register boundary
+            // (§6.3). Range guarantees no actual wrap — we stop at the limit.
+            Debounce { count: (self.count + 1) as u20 wrap, level: self.level }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sub-state: a rising-edge detector, so one press = one count step.
+// ---------------------------------------------------------------------------
+struct Edge {
+    prev: u1 = 0,
+}
+
+impl Edge {
+    fn step(self, level: u1) -> Edge {
+        Edge { prev: level }
+    }
+
+    // Pure projection: high for exactly one cycle on a 0->1 transition. Reads
+    // the OLD `prev` together with this cycle's `level`.
+    fn rising(self, level: u1) -> u1 {
+        level & !self.prev
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What a digit is asked to do this cycle. Native enum (DESIGN §6.5); `match`
+// arms are mutually exclusive, giving exclusivity for free (§5). The encoding
+// is annotatable: `binary` (the default — 2 bits here) vs `onehot` / `gray`.
+// ---------------------------------------------------------------------------
+#[encoding(binary)]
+enum Cmd {
+    Hold,
+    Up,
+    Down,
+}
+
+// ---------------------------------------------------------------------------
+// Sub-state: one decimal digit (0..=9). `step` returns a tuple of the next
+// digit and a `wrap` bit — the carry (Up past 9) / borrow (Down past 0) into
+// the next digit. The `(new_state, output)` tuple is the lightweight form of
+// DESIGN §4.4's stateful-output question.
+// ---------------------------------------------------------------------------
+struct Digit {
+    value: u4 = 0,
+}
+
+impl Digit {
+    fn step(self, cmd: Cmd) -> (Digit, u1) {
+        match cmd {
+            Cmd::Hold => (self, 0),
+            Cmd::Up => if self.value == 9 {
+                (Digit { value: 0 }, 1)
+            } else {
+                (Digit { value: (self.value + 1) as u4 wrap }, 0)
+            },
+            Cmd::Down => if self.value == 0 {
+                (Digit { value: 9 }, 1)
+            } else {
+                (Digit { value: (self.value - 1) as u4 wrap }, 0)
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Combinational 7-segment decoder. Active-HIGH segment map; bit0 = A .. bit6 = G.
+// The board's segments are active-low, but that polarity is handled once at the
+// pin boundary (`low` in go_board.pins) so this stays readable.
+// ---------------------------------------------------------------------------
+fn seven_seg(d: u4) -> u7 {
+    match d {
+        0 => 0b0111111_u7, // A B C D E F
+        1 => 0b0000110_u7, //   B C
+        2 => 0b1011011_u7, // A B   D E   G
+        3 => 0b1001111_u7, // A B C D     G
+        4 => 0b1100110_u7, //   B C   F G
+        5 => 0b1101101_u7, // A   C D F G
+        6 => 0b1111101_u7, // A   C D E F G
+        7 => 0b0000111_u7, // A B C
+        8 => 0b1111111_u7, // all
+        9 => 0b1101111_u7, // A B C D F G
+        _ => 0b0000000_u7, // blank for 10..15 (unreachable for a BCD digit)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The raw board inputs, sampled each cycle. (Real hardware should run these
+// through input synchronizers; the debouncer's first flop serves here.)
+// ---------------------------------------------------------------------------
+struct Buttons {
+    inc: u1, // SW1
+    dec: u1, // SW2
+}
+
+// ---------------------------------------------------------------------------
+// The ENTIRE persistent state of the program, synchronized to one clock. Nests
+// the sub-states (DESIGN §4.3) and carries the registered outputs `seg`/`led`,
+// which the pin map addresses by field + index.
+// ---------------------------------------------------------------------------
+struct Top {
+    inc: Debounce,
+    dec: Debounce,
+    inc_edge: Edge,
+    dec_edge: Edge,
+    tens: Digit,
+    ones: Digit,
+    seg: [u7; 2] = [0, 0], // registered, active-high; seg[0]=ones, seg[1]=tens
+    led: u4 = 0,
+}
+
+impl Top {
+    // THE clock root: one invocation == one cycle of `sys` (DESIGN §2.1).
+    // Inputs arrive as a parameter; the new whole-state is returned.
+    #[clock(domain = sys)]
+    fn tick(self, btn: Buttons) -> Top {
+        // 1. Debounce the raw levels.
+        let inc = self.inc.step(btn.inc);
+        let dec = self.dec.step(btn.dec);
+
+        // 2. One pulse per press (rising edge of the debounced level).
+        let inc_pulse = self.inc_edge.rising(inc.level);
+        let dec_pulse = self.dec_edge.rising(dec.level);
+
+        // 3. This cycle's command (increment wins a simultaneous press).
+        let cmd = if inc_pulse {
+            Cmd::Up
+        } else if dec_pulse {
+            Cmd::Down
+        } else {
+            Cmd::Hold
+        };
+
+        // 4. Step the ones digit; ripple carry/borrow into tens. `ones_wrap` is
+        //    only ever set when `cmd` was Up or Down, so forwarding `cmd` is ok.
+        let (ones, ones_wrap) = self.ones.step(cmd);
+        let tens_cmd = if ones_wrap { cmd } else { Cmd::Hold };
+        // `_tens_wrap` would be the whole 00<->99 counter wrap; unused here.
+        let (tens, _tens_wrap) = self.tens.step(tens_cmd);
+
+        // 5. Assemble the next whole-state, decoding both digits for display.
+        Top {
+            inc: inc,
+            dec: dec,
+            inc_edge: self.inc_edge.step(inc.level),
+            dec_edge: self.dec_edge.step(dec.level),
+            ones: ones,
+            tens: tens,
+            seg: [seven_seg(ones.value), seven_seg(tens.value)],
+            led: self.led,
+        }
+    }
+}

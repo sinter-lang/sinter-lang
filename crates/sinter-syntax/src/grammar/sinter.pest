@@ -1,14 +1,28 @@
-// Sinter concrete grammar (.snt) — minimal synchronous core.
+// Sinter concrete grammar (.snt).
 //
 // This file is the normative PEG for the current language subset. Per DESIGN
 // §7.1 the formal grammar is the spec/conformance oracle; this PEG also happens
 // to be the literal parser for the MVP. Keep it the single source of truth for
 // surface syntax and grow it alongside DESIGN.md.
+//
+// Two surfaces coexist here:
+//   * the legacy `module { in/out/reg }` core (DESIGN calls it the legacy MVP
+//     surface, slated to migrate) — every rule below the "LEGACY" banner is
+//     frozen so the existing compiler/oracle path stays bit-for-bit identical;
+//   * the functional surface (DESIGN §2.1): `struct` state + `impl` transition
+//     methods + a `#[clock]` root — every `f_*` / `*_item` rule below the
+//     "FUNCTIONAL" banner. This surface currently parses only; semantic checks
+//     and lowering are a later milestone. See `examples/go_board_counter.snt`.
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
-program = { SOI ~ module* ~ EOI }
+// A compilation unit is any mix of legacy modules and functional items.
+program = { SOI ~ (module | item)* ~ EOI }
+
+// ===========================================================================
+// LEGACY surface — frozen. Do not change the parse of any pre-existing module.
+// ===========================================================================
 
 // A module optionally declares the clock domain it belongs to. Default: `sys`.
 clock_attr = { "#[" ~ "clock" ~ "(" ~ "domain" ~ "=" ~ ident ~ ")" ~ "]" }
@@ -49,6 +63,7 @@ primary  = { if_expr | literal | ident | "(" ~ expr ~ ")" }
 if_expr    = { "if" ~ expr ~ block_expr ~ "else" ~ (if_expr | block_expr) }
 block_expr = { "{" ~ expr ~ "}" }
 
+// Binary/unary operators, shared by both surfaces.
 or_op    = { "|" }
 xor_op   = { "^" }
 and_op   = { "&" }
@@ -57,9 +72,134 @@ rel_op   = { "<=" | ">=" | "<" | ">" }
 add_op   = { "+" | "-" }
 unary_op = { "!" | "~" | "-" }
 
-// Integer literals: decimal or `0x` hex. Untyped; width resolved from context.
-literal = @{ ("0x" ~ ASCII_HEX_DIGIT+) | ASCII_DIGIT+ }
+// Integer literals: decimal, `0x` hex, or `0b` binary, with `_` digit
+// separators and an optional Rust-style width suffix (`_u7`, `_i16`). The
+// suffix is currently parsed and validated but not represented in the AST
+// (width assertion is a semantic concern; DESIGN §6.10). Untyped otherwise:
+// width is resolved from context. A `_` separator must sit *between two
+// digits* (so `1_` and `0b_1010` are rejected, unlike Rust).
+//
+// NOTE: this rule is shared with the legacy `module` surface. Extending it is a
+// strict, backward-compatible *superset*: every previously-valid literal parses
+// to the identical value, so the legacy parse path is unchanged on all existing
+// programs — the legacy surface simply now also accepts the binary/separator/
+// suffix forms. (Intentional; the legacy surface is slated to migrate anyway.)
+literal      = @{ literal_body ~ literal_suffix? }
+literal_body = {
+      "0x" ~ ASCII_HEX_DIGIT ~ ("_"* ~ ASCII_HEX_DIGIT)*
+    | "0b" ~ ASCII_BIN_DIGIT ~ ("_"* ~ ASCII_BIN_DIGIT)*
+    | ASCII_DIGIT ~ ("_"* ~ ASCII_DIGIT)*
+}
+literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 
-// Identifiers, excluding reserved words.
-keyword = @{ ("module" | "in" | "out" | "reg" | "let" | "if" | "else") ~ !(ASCII_ALPHANUMERIC | "_") }
+// Identifiers, excluding reserved words. `self` is intentionally NOT reserved
+// (it is a contextual keyword, matched only in parameter position), so it reads
+// as an ordinary identifier inside expressions (`self.value`).
+keyword = @{
+    ("module" | "in" | "out" | "reg" | "let" | "if" | "else"
+   | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as")
+    ~ !(ASCII_ALPHANUMERIC | "_")
+}
 ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// ===========================================================================
+// FUNCTIONAL surface (DESIGN §2.1) — parse-only for now.
+// ===========================================================================
+
+item = { const_item | struct_item | enum_item | impl_item | fn_item }
+
+// `const NAME: TYPE = EXPR;`
+const_item = { "const" ~ ident ~ ":" ~ f_typeref ~ "=" ~ f_expr ~ ";" }
+
+// `struct Name { field: Type [= reset], ... }` — inline reset values.
+struct_item  = { attr* ~ "struct" ~ ident ~ "{" ~ (struct_field ~ ("," ~ struct_field)* ~ ","?)? ~ "}" }
+struct_field = { ident ~ ":" ~ f_typeref ~ ("=" ~ f_expr)? }
+
+// `enum Name { Variant [= disc], ... }` with an optional `#[encoding(...)]`.
+enum_item    = { attr* ~ "enum" ~ ident ~ "{" ~ (enum_variant ~ ("," ~ enum_variant)* ~ ","?)? ~ "}" }
+enum_variant = { ident ~ ("=" ~ f_expr)? }
+
+// `impl Name { fn ... }`
+impl_item = { "impl" ~ ident ~ "{" ~ fn_item* ~ "}" }
+
+// `[#[attr]] fn name(params) -> Type { block }`. The clock-root carries
+// `#[clock(domain = …)]`; combinational sub-steps carry none.
+fn_item     = { attr* ~ "fn" ~ ident ~ "(" ~ (param ~ ("," ~ param)* ~ ","?)? ~ ")" ~ "->" ~ f_typeref ~ f_block }
+param       = { self_param | typed_param }
+self_param  = @{ "self" ~ !(ASCII_ALPHANUMERIC | "_") }
+typed_param = { ident ~ ":" ~ f_typeref }
+
+// Attributes: `#[name]` or `#[name(arg, key = value, ...)]`.
+attr      = { "#[" ~ ident ~ attr_args? ~ "]" }
+attr_args = { "(" ~ attr_arg ~ ("," ~ attr_arg)* ~ ")" }
+attr_arg  = { ident ~ ("=" ~ attr_val)? }
+attr_val  = { ident | literal }
+
+// A block is a sequence of `let` statements then a tail expression (its value).
+f_block = { "{" ~ f_let* ~ f_expr ~ "}" }
+f_let   = { "let" ~ f_pattern ~ (":" ~ f_typeref)? ~ "=" ~ f_expr ~ ";" }
+
+// Patterns (let bindings and match arms). `f_path_pat` needs at least one `::`
+// so a bare name falls through to `f_binding`; `f_wildcard` needs a word
+// boundary so `_tens_wrap` binds rather than matching the `_` wildcard.
+f_pattern   = { f_tuple_pat | f_wildcard | f_lit_pat | f_path_pat | f_binding }
+f_tuple_pat = { "(" ~ f_pattern ~ ("," ~ f_pattern)* ~ ","? ~ ")" }
+f_wildcard  = @{ "_" ~ !(ASCII_ALPHANUMERIC | "_") }
+f_lit_pat   = { literal }
+f_path_pat  = { ident ~ ("::" ~ ident)+ }
+f_binding   = { ident }
+
+// Type references. Fixed-point `uI.F` / `iI.F` (DESIGN §6.1) is admitted in the
+// scalar form; the dotted frac requires a digit so it never clashes with `..`
+// or member access. Order matters: scalar before named so `u4` is not a name.
+f_typeref   = { f_array_ty | f_tuple_ty | f_scalar_ty | ident }
+f_array_ty  = { "[" ~ f_typeref ~ ";" ~ f_expr ~ "]" }
+f_tuple_ty  = { "(" ~ f_typeref ~ ("," ~ f_typeref)+ ~ ","? ~ ")" }
+f_scalar_ty = @{ ("u" | "i") ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+
+// Functional expression grammar, lowest precedence first. Mirrors the legacy
+// precedence but adds `as` casts, postfix (field/call/index), and the richer
+// primaries (struct literals, paths, match, tuples, arrays).
+f_expr = { f_or }
+f_or   = { f_xor ~ (or_op ~ f_xor)* }
+f_xor  = { f_and ~ (xor_op ~ f_and)* }
+f_and  = { f_eq ~ (and_op ~ f_eq)* }
+f_eq   = { f_rel ~ (eq_op ~ f_rel)* }
+f_rel  = { f_add ~ (rel_op ~ f_add)* }
+f_add  = { f_cast ~ (add_op ~ f_cast)* }
+
+// `expr as Type mode` — mode-named narrowing cast (DESIGN §6.3). Binds tighter
+// than the binary operators, looser than unary/postfix (as in Rust). Exactly
+// one mode-cast is allowed; to chain (a double narrowing), parenthesize the
+// inner cast: `(x as u8 wrap) as u4 trunc`.
+f_cast      = { f_unary ~ ("as" ~ f_typeref ~ f_cast_mode)? }
+f_cast_mode = @{ ("sat" | "wrap" | "trunc" | "round") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+f_unary   = { unary_op* ~ f_postfix }
+f_postfix = { f_primary ~ (f_dot | f_call | f_index)* }
+// `.field` or `.method(args)` — distinguished by the presence of `f_args`.
+f_dot   = { "." ~ ident ~ f_args? }
+f_call  = { f_args }
+f_index = { "[" ~ f_expr ~ "]" }
+f_args  = { "(" ~ (f_expr ~ ("," ~ f_expr)* ~ ","?)? ~ ")" }
+
+// Primaries. `f_struct_lit` requires ≥1 field and `f_field_init` guards the
+// colon (`!":"`) so a path scrutinee (`match cmd {`) or bare condition
+// (`if flag {`) never mis-parses the following block as struct fields. This is
+// the pragmatic disambiguation of the classic struct-literal-in-condition
+// ambiguity; the error-tolerant LSP parser (DESIGN §7.1) will harden it.
+// `f_block` is admitted here (not only as an `if` branch / fn body) so a block
+// is a first-class expression: a `let` initializer, a match-arm body, a struct
+// field value, a call argument, etc. It starts with `{`, disjoint from every
+// other alternative, so there is no ambiguity.
+f_primary = { f_match | f_if | f_block | f_struct_lit | f_path | f_group_or_tuple | f_array | literal | ident }
+
+f_if         = { "if" ~ f_expr ~ f_block ~ "else" ~ (f_if | f_block) }
+f_match      = { "match" ~ f_expr ~ "{" ~ (f_match_arm ~ ("," ~ f_match_arm)* ~ ","?)? ~ "}" }
+f_match_arm  = { f_pattern ~ "=>" ~ f_expr }
+f_struct_lit = { ident ~ "{" ~ f_field_init ~ ("," ~ f_field_init)* ~ ","? ~ "}" }
+f_field_init = { ident ~ ":" ~ !":" ~ f_expr }
+f_path       = { ident ~ ("::" ~ ident)+ }
+// A parenthesized group (one element) or a tuple (two or more).
+f_group_or_tuple = { "(" ~ f_expr ~ ("," ~ f_expr)* ~ ","? ~ ")" }
+f_array          = { "[" ~ (f_expr ~ ("," ~ f_expr)* ~ ","?)? ~ "]" }

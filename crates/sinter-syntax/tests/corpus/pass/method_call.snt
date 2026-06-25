@@ -1,0 +1,22 @@
+// Method calls on a sub-state instance: `receiver.method(args)` (DESIGN §2.1
+// "step an instance"), distinct from a free-function call and from field
+// access. Pins `Expr::MethodCall` (over a `Field` receiver, with arguments).
+struct Adder {
+    bias: u8 = 0,
+}
+
+impl Adder {
+    fn apply(self, x: u8) -> u8 {
+        x
+    }
+}
+
+struct Top {
+    add: Adder,
+}
+
+impl Top {
+    fn run(self, n: u8) -> u8 {
+        self.add.apply(n)
+    }
+}
