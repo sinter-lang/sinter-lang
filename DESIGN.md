@@ -712,9 +712,112 @@ arithmetic (operand extension); everything else lowers to the existing nodes.
 - **Single clock domain only** (phantom-domain CDC deferred); memories and the
   `pipeline`/`multiplex` colors are out of scope (M4/§3, §6.6).
 
+### 9.2 Source modules & visibility — next milestone
+
+A single `.snt` file does not scale to a real design, and a shared codebase needs
+enforced interface boundaries. This milestone adds the source-level **module
+system** (§10) — the structural floor the `pipeline`/`multiplex` work (§3) will
+sit on. It is deliberately sequenced **before** those colors: it is orthogonal to
+the compute model, low-risk (Rust's design is proven), and it stabilizes the
+cross-file name resolution the staged-color semantics will build on. Scope is
+**in-project multi-file + visibility only**; the external dependency/package
+layer is deferred.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **S1** | Grammar + AST: `mod` / `use` / `pub`; path expressions (`self::` / `super::` / `root::`); the Rust-2018 file loader (`foo.snt`, children in `foo/bar.snt`, never `mod.snt`). | a multi-file project parses into a module tree |
+| **S2** | Name resolution across modules + visibility checks: qualified paths, `use` aliases, private-by-default with `pub` on items and struct fields; clear diagnostics for unresolved / private access. | the F1 checks pass across files; private access is rejected |
+| **S3** | Pipeline integration: multi-file `sinter check` / `build`; the unique `#[clock]` root resolves from the root module and elaborates to the **same** flat IR as today. | the Go Board, split across files, passes the oracle **bit-for-bit identical** to the single-file version (refactor-invariance) |
+
+The S3 bit-for-bit check is the key correctness lever: splitting a design across
+files must be a pure refactor with zero effect on the elaborated IR or the trace.
+
 ---
 
-## 10. Settled Decisions vs Open Questions (quick index)
+## 10. Source Organization — Modules & Visibility (SETTLED shape)
+
+The functional surface (§2.1) is authored as `struct` state + `impl` methods +
+free `fn`s. Past a toy size, those must span multiple files with enforced
+interface boundaries (especially once more than one person edits a design).
+Sinter adopts a **Rust-style module tree**, deliberately split into two layers —
+only the first is in scope now:
+
+1. **In-project modules** (this milestone): a tree of source modules within one
+   project, with visibility.
+2. **External units** (deferred): distributable / dependency packages — Rust's
+   "crate" role. The name is intentionally *not* fixed yet (candidates lean
+   hardware-native: "core" / "block" / "library"); naming waits until dependency
+   resolution is actually built.
+
+**Modules and file layout (Rust 2018).** Every `.snt` file is a module. The
+**root module** is the file passed to `sinter build` / `check` (no mandated name;
+convention `main.snt` or `<project>.snt`). A `mod foo;` declaration pulls in a
+sibling `foo.snt`; that module's own children live in a sibling directory as
+`foo/bar.snt` (declared `mod bar;` inside `foo.snt`). There is **no `mod.snt`**
+entry-file form — mirroring the compiler's own "never `mod.rs`" rule. Inline
+`mod foo { … }` blocks are also allowed for small groupings.
+
+**Paths and imports.** Items are referenced by `::`-separated paths and brought
+into scope with `use`:
+- `self::` — the current module; `super::` — the parent.
+- `root::` — the project root module (the absolute prefix; named `root` rather
+  than borrowing Rust's `crate`, since the package layer is deferred and
+  unnamed).
+- `use root::debounce::Debounce;` imports a name; `use self::display::*;` is a
+  glob (allowed). Re-exports (`pub use`) compose a module's public surface.
+
+**Visibility (private by default).** Every item — `struct`, `enum`, `fn`,
+`const`, **and struct fields** — is private unless marked `pub`. A private item
+is visible within its defining module and that module's descendants (Rust
+semantics); `pub` widens it to the parent / outside. Default-private forces
+authors to design an explicit public interface for each reusable block — the
+encapsulation a multi-person codebase needs. The model is kept **minimal**: just
+`pub` vs private for now. Finer-grained forms (`pub(in path)` / `pub(super)`) are
+deferred until the external-unit layer exists.
+
+```
+// main.snt — the root module (passed to `sinter build`)
+mod debounce;
+mod display;
+
+use root::debounce::Debounce;
+
+pub struct Top { /* … the #[clock] root lives here … */ }
+```
+```
+// debounce.snt
+pub struct Debounce {     // exported
+    count: u20 = 0,       // field private by default
+    level: u1  = 0,
+}
+impl Debounce {
+    pub fn step(self, raw: u1) -> Debounce { /* … */ }  // public interface
+    fn saturated(self) -> u1 { /* … */ }                // module-local helper
+}
+```
+
+**Interaction with the rest of the language.**
+- **One synthesizable top, unchanged.** The unique `#[clock(domain = …)]` root
+  (§2.1) lives in the root module; there is still exactly one. The module tree
+  organizes *source*, not the elaborated flat IR.
+- **Pin maps unaffected (§7.6).** A `.pins` file still resolves against the
+  single elaborated top; multi-file spreads the *sources* feeding that top, not
+  the top itself. The dotted/indexed `set_io` paths are unchanged.
+- **Legacy `module` form excluded.** The frozen Verilog-like `module` surface
+  stays single-file; modules apply to the functional surface only. (This also
+  keeps the `mod` keyword clear of the legacy `module` keyword, which is being
+  retired.)
+- **Name resolution generalizes the F1 tables.** The existing symbol tables
+  extend to module-qualified resolution; nothing in the type / width / cast
+  machinery changes.
+
+**Deferred (out of scope this milestone):** the external dependency / package
+layer and its name; finer-grained visibility (`pub(in …)`); and any
+version / build-manifest format (cf. the M5 build-system line in §9).
+
+---
+
+## 11. Settled Decisions vs Open Questions (quick index)
 
 **Settled:**
 - Name = Sinter; ext `.snt`; CLI binary `sinter`; crate & org `sinter-lang`.
@@ -750,6 +853,11 @@ arithmetic (operand extension); everything else lowers to the existing nodes.
 - Physical pin mapping = PCF-superset binding pins to dotted state/input paths +
   bit/array index + optional `low` polarity; the compiler synthesizes the
   top-level Verilog wrapper and emits the concrete PCF (§7.6).
+- Source organization = Rust-style **`mod`** tree; Rust-2018 file layout
+  (`foo.snt`, children in `foo/bar.snt`, never `mod.snt`); `use` imports over
+  `self::` / `super::` / `root::` paths; **private-by-default**, `pub` to export
+  (items *and* struct fields). One `#[clock]` top in the root module. External
+  dependency/package layer (and its name) deferred (§10).
 - Parser is NOT a single generated grammar driving all tools; grammar is the
   spec/oracle.
 
