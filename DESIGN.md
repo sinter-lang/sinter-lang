@@ -782,6 +782,13 @@ encapsulation a multi-person codebase needs. The model is kept **minimal**: just
 `pub` vs private for now. Finer-grained forms (`pub(in path)` / `pub(super)`) are
 deferred until the external-unit layer exists.
 
+**`impl` is co-located with its type.** An `impl T` block must live in the module
+that defines `T` (a mild divergence from Rust, which permits impls anywhere in
+the crate). This keeps field-visibility checking sound: the type checker derives
+the *accessing* module from the receiver type, so a cross-module `impl` would
+otherwise read every private field of the type's module as same-module. Lifting
+this (attributing visibility to the impl's own module) is a future option.
+
 ```
 // main.snt — the root module (passed to `sinter build`)
 mod debounce;

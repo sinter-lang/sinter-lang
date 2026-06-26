@@ -103,6 +103,14 @@ fn constructing_with_a_private_field_cross_module_is_rejected() {
 }
 
 #[test]
+fn cross_module_impl_is_rejected() {
+    // An `impl` on a `use`d foreign type would otherwise type-check its bodies
+    // with the *type's* module as the accessing module, bypassing field privacy
+    // (review #1/#3). Require `impl` to be co-located with its type.
+    reject("foreign_impl", "cross-module `impl` is not supported");
+}
+
+#[test]
 fn reading_a_pub_field_cross_module_is_allowed() {
     compile("field_pub_read").expect("a `pub` field is readable from another module");
 }

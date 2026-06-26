@@ -1,0 +1,5 @@
+mod m;
+use root::m::Wid;
+impl Wid {
+    pub fn leak(self) -> u8 { self.secret }
+}

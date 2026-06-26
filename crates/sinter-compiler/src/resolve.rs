@@ -443,6 +443,28 @@ impl Resolver {
             Item::Impl(im) => {
                 if let Some(canon) = self.scope_lookup(cur, &im.type_name) {
                     im.type_name = canon;
+                    // An `impl` must live in the module that defines its type.
+                    // Field visibility (F1) derives the accessing module from the
+                    // receiver type, so a cross-module `impl` would otherwise read
+                    // as same-module and silently bypass private-field access
+                    // (DESIGN §10). Co-locating impls keeps that derivation sound.
+                    let type_mod = item_module(&im.type_name);
+                    if type_mod != cur.join("::") {
+                        let label = if type_mod.is_empty() {
+                            "root"
+                        } else {
+                            type_mod
+                        };
+                        return Err(CompileError::semantic(
+                            src,
+                            im.pos,
+                            format!(
+                                "`impl {}` must be in module `{label}` (which defines the type); \
+                                 cross-module `impl` is not supported",
+                                im.type_name,
+                            ),
+                        ));
+                    }
                 }
                 // The `#[clock]` root's state struct must live in the project
                 // ROOT module — otherwise its canonical name carries a `::` and
@@ -726,6 +748,12 @@ impl Resolver {
 /// from module `from`: `pub`, or `from` is `def_mod` or a descendant of it.
 fn accessible(vis: Visibility, def_mod: &[String], from: &[String]) -> bool {
     vis == Visibility::Public || from.starts_with(def_mod)
+}
+
+/// The module path (canonical-name prefix) of a canonical item name; root items
+/// (no `::`) yield the empty string.
+fn item_module(canonical: &str) -> &str {
+    canonical.rsplit_once("::").map_or("", |(m, _)| m)
 }
 
 /// Whether an `impl` block carries the `#[clock]` transition root.

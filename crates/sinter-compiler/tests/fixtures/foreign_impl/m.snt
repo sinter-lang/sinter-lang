@@ -1,0 +1,1 @@
+pub struct Wid { secret: u8 = 0 }
