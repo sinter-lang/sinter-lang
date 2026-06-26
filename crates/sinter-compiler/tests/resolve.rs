@@ -122,6 +122,18 @@ fn descendant_reads_ancestor_struct_private_field() {
     compile("field_descendant").expect("a descendant module may read an ancestor's private field");
 }
 
+#[test]
+fn calling_a_private_method_cross_module_is_rejected() {
+    reject("method_priv_call", "method `hidden` of `m::Wid` is private");
+}
+
+#[test]
+fn pub_method_calls_private_method_within_its_module() {
+    // A `pub` method is callable across modules; it may itself call a private
+    // method of the same module (DESIGN §10).
+    compile("method_pub_call").expect("pub method ok; same-module private call ok");
+}
+
 // --- regression tests for the S2 adversarial-review findings ---------------
 
 #[test]

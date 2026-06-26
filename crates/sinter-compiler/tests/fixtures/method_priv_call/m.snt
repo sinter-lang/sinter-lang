@@ -1,0 +1,4 @@
+pub struct Wid { pub v: u8 = 0 }
+impl Wid {
+    fn hidden(self) -> u8 { self.v }
+}

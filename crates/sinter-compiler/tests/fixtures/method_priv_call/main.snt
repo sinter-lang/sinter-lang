@@ -1,0 +1,3 @@
+mod m;
+use root::m::Wid;
+pub fn t(w: Wid) -> u8 { w.hidden() }

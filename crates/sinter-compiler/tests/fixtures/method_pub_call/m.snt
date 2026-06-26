@@ -1,0 +1,5 @@
+pub struct Wid { pub v: u8 = 0 }
+impl Wid {
+    pub fn shown(self) -> u8 { self.helper() }
+    fn helper(self) -> u8 { self.v }
+}

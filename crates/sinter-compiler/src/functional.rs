@@ -139,6 +139,9 @@ struct FnSig {
     params: Vec<FType>,
     /// Return type.
     ret: FType,
+    /// Visibility (DESIGN §10). Enforced for method calls; free-function calls
+    /// are already gated by item visibility at name resolution (S2).
+    vis: Visibility,
 }
 
 /// The program's resolved symbol tables.
@@ -386,6 +389,7 @@ fn resolve_sig(known: &KnownTypes, f: &Func) -> Result<FnSig, CompileError> {
         has_self,
         params,
         ret,
+        vis: f.vis,
     })
 }
 
@@ -771,6 +775,18 @@ impl Checker<'_> {
                 ctx,
                 pos,
                 format!("`{type_name}::{method}` is an associated function, not a method"),
+            ));
+        }
+        // A private method is callable only from its type's module or a
+        // descendant (DESIGN §10). The defining module is the type's module —
+        // an `impl` is co-located with its type (enforced in resolve).
+        if sig.vis == Visibility::Private
+            && !mod_reaches(self.acc_mod.borrow().as_str(), module_of(&type_name))
+        {
+            return Err(sem(
+                ctx,
+                pos,
+                format!("method `{method}` of `{type_name}` is private"),
             ));
         }
         self.check_args(method, &sig.params, args, env, ctx, pos)?;
