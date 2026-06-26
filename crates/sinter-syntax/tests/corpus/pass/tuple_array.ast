@@ -4,9 +4,11 @@ Program {
         Struct(
             StructItem {
                 attrs: [],
+                vis: Private,
                 name: "Pair",
                 fields: [
                     StructField {
+                        vis: Private,
                         name: "lanes",
                         ty: Array {
                             elem: Scalar(
@@ -48,6 +50,7 @@ Program {
                 methods: [
                     Func {
                         attrs: [],
+                        vis: Private,
                         name: "split",
                         params: [
                             SelfRef {

@@ -3,6 +3,7 @@ Program {
     items: [
         Const(
             ConstItem {
+                vis: Private,
                 name: "A",
                 ty: Scalar(
                     Uint(
@@ -20,6 +21,7 @@ Program {
         ),
         Const(
             ConstItem {
+                vis: Private,
                 name: "B",
                 ty: Scalar(
                     Uint(
@@ -37,6 +39,7 @@ Program {
         ),
         Const(
             ConstItem {
+                vis: Private,
                 name: "C",
                 ty: Scalar(
                     Uint(
@@ -54,6 +57,7 @@ Program {
         ),
         Const(
             ConstItem {
+                vis: Private,
                 name: "D",
                 ty: Scalar(
                     Uint(

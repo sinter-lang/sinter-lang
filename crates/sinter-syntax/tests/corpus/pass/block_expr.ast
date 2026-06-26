@@ -4,6 +4,7 @@ Program {
         Enum(
             EnumItem {
                 attrs: [],
+                vis: Private,
                 name: "Sel",
                 variants: [
                     EnumVariant {
@@ -32,6 +33,7 @@ Program {
         Func(
             Func {
                 attrs: [],
+                vis: Private,
                 name: "pick",
                 params: [
                     Typed {

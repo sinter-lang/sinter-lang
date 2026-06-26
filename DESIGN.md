@@ -725,7 +725,7 @@ layer is deferred.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **S1** | Grammar + AST: `mod` / `use` / `pub`; path expressions (`self::` / `super::` / `root::`); the Rust-2018 file loader (`foo.snt`, children in `foo/bar.snt`, never `mod.snt`). | a multi-file project parses into a module tree |
+| **S1** | ✅ Grammar + AST: `mod` / `use` / `pub` (private-by-default `Visibility` on items + fields), `use` paths with `self` / `super` / `root` qualifiers + `*` glob; the Rust-2018 file loader (`foo.snt`, children in `foo/bar.snt`, never `mod.snt`) producing a `ModuleTree`. (The single-file compile path rejects `mod` / `use` until S2/S3.) | `load_project` builds the tree; corpus + loader tests pass |
 | **S2** | Name resolution across modules + visibility checks: qualified paths, `use` aliases, private-by-default with `pub` on items and struct fields; clear diagnostics for unresolved / private access. | the F1 checks pass across files; private access is rejected |
 | **S3** | Pipeline integration: multi-file `sinter check` / `build`; the unique `#[clock]` root resolves from the root module and elaborates to the **same** flat IR as today. | the Go Board, split across files, passes the oracle **bit-for-bit identical** to the single-file version (refactor-invariance) |
 

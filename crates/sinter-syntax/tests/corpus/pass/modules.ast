@@ -1,0 +1,229 @@
+Program {
+    modules: [],
+    items: [
+        Mod(
+            ModItem {
+                vis: Private,
+                name: "debounce",
+                body: None,
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Mod(
+            ModItem {
+                vis: Public,
+                name: "display",
+                body: None,
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+        Use(
+            UseItem {
+                vis: Private,
+                path: UsePath {
+                    qualifier: Root,
+                    segments: [
+                        "debounce",
+                        "Debounce",
+                    ],
+                    glob: false,
+                },
+                pos: Pos {
+                    line: 7,
+                    col: 1,
+                },
+            },
+        ),
+        Use(
+            UseItem {
+                vis: Private,
+                path: UsePath {
+                    qualifier: SelfMod,
+                    segments: [
+                        "display",
+                    ],
+                    glob: true,
+                },
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+        Use(
+            UseItem {
+                vis: Public,
+                path: UsePath {
+                    qualifier: Super(
+                        1,
+                    ),
+                    segments: [
+                        "shared",
+                        "Cmd",
+                    ],
+                    glob: false,
+                },
+                pos: Pos {
+                    line: 9,
+                    col: 1,
+                },
+            },
+        ),
+        Const(
+            ConstItem {
+                vis: Public,
+                name: "WIDTH",
+                ty: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                value: Literal(
+                    8,
+                ),
+                pos: Pos {
+                    line: 11,
+                    col: 1,
+                },
+            },
+        ),
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Public,
+                name: "Top",
+                fields: [
+                    StructField {
+                        vis: Public,
+                        name: "seg",
+                        ty: Scalar(
+                            Uint(
+                                7,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 14,
+                            col: 5,
+                        },
+                    },
+                    StructField {
+                        vis: Private,
+                        name: "count",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 15,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 13,
+                    col: 1,
+                },
+            },
+        ),
+        Enum(
+            EnumItem {
+                attrs: [],
+                vis: Public,
+                name: "Mode",
+                variants: [
+                    EnumVariant {
+                        name: "Run",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 19,
+                            col: 5,
+                        },
+                    },
+                    EnumVariant {
+                        name: "Halt",
+                        discriminant: None,
+                        pos: Pos {
+                            line: 20,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 18,
+                    col: 1,
+                },
+            },
+        ),
+        Mod(
+            ModItem {
+                vis: Private,
+                name: "inner",
+                body: Some(
+                    [
+                        Func(
+                            Func {
+                                attrs: [],
+                                vis: Public,
+                                name: "helper",
+                                params: [
+                                    Typed {
+                                        name: "x",
+                                        ty: Scalar(
+                                            Uint(
+                                                8,
+                                            ),
+                                        ),
+                                        pos: Pos {
+                                            line: 24,
+                                            col: 19,
+                                        },
+                                    },
+                                ],
+                                ret: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                body: Block {
+                                    stmts: [],
+                                    tail: Ident(
+                                        "x",
+                                    ),
+                                    pos: Pos {
+                                        line: 24,
+                                        col: 32,
+                                    },
+                                },
+                                pos: Pos {
+                                    line: 24,
+                                    col: 5,
+                                },
+                            },
+                        ),
+                    ],
+                ),
+                pos: Pos {
+                    line: 23,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

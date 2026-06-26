@@ -162,7 +162,9 @@ fn build_tables(program: &Program) -> Tables<'_> {
                     t.methods.insert((im.type_name.clone(), m.name.clone()), m);
                 }
             }
-            Item::Const(_) => {}
+            // `const` carries no table entry; `mod` / `use` are rejected earlier
+            // by `check_functional` (the module system is not yet lowered, S2/S3).
+            Item::Const(_) | Item::Mod(_) | Item::Use(_) => {}
         }
     }
     t

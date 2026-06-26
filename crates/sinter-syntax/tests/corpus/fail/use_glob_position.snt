@@ -1,0 +1,3 @@
+// A `*` glob may only be the final segment of a `use` path.
+//~ ERROR may only appear as the final segment
+use a::*::b;

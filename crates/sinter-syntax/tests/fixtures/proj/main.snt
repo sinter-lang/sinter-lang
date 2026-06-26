@@ -1,0 +1,11 @@
+// Root module of a multi-file fixture (DESIGN §10).
+mod alpha;
+mod beta;
+
+mod inline {
+    pub fn here() -> u8 { 0 }
+}
+
+pub struct Top {
+    x: u8 = 0,
+}

@@ -4,6 +4,7 @@ Program {
         Func(
             Func {
                 attrs: [],
+                vis: Private,
                 name: "scale",
                 params: [
                     Typed {

@@ -4,9 +4,11 @@ Program {
         Struct(
             StructItem {
                 attrs: [],
+                vis: Private,
                 name: "Adder",
                 fields: [
                     StructField {
+                        vis: Private,
                         name: "bias",
                         ty: Scalar(
                             Uint(
@@ -36,6 +38,7 @@ Program {
                 methods: [
                     Func {
                         attrs: [],
+                        vis: Private,
                         name: "apply",
                         params: [
                             SelfRef {
@@ -87,9 +90,11 @@ Program {
         Struct(
             StructItem {
                 attrs: [],
+                vis: Private,
                 name: "Top",
                 fields: [
                     StructField {
+                        vis: Private,
                         name: "add",
                         ty: Named(
                             "Adder",
@@ -113,6 +118,7 @@ Program {
                 methods: [
                     Func {
                         attrs: [],
+                        vis: Private,
                         name: "run",
                         params: [
                             SelfRef {

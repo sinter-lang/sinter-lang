@@ -4,9 +4,11 @@ Program {
         Struct(
             StructItem {
                 attrs: [],
+                vis: Private,
                 name: "Sample",
                 fields: [
                     StructField {
+                        vis: Private,
                         name: "gain",
                         ty: Fixed {
                             signed: false,
@@ -24,6 +26,7 @@ Program {
                         },
                     },
                     StructField {
+                        vis: Private,
                         name: "bias",
                         ty: Fixed {
                             signed: true,
@@ -41,6 +44,7 @@ Program {
                         },
                     },
                     StructField {
+                        vis: Private,
                         name: "raw",
                         ty: Scalar(
                             Uint(

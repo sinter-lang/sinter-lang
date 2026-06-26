@@ -14,6 +14,16 @@ pub struct Pos {
     pub col: usize,
 }
 
+/// Item / field visibility (DESIGN §10). Private unless written `pub`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    /// Visible only within the defining module and its descendants (the default).
+    #[default]
+    Private,
+    /// Exported with `pub`.
+    Public,
+}
+
 /// A whole compilation unit: legacy modules and/or functional-surface items.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Program {
@@ -318,11 +328,69 @@ pub enum Item {
     Impl(ImplItem),
     /// A free function.
     Func(Func),
+    /// A `mod` declaration — external (`mod foo;`) or inline (`mod foo { … }`)
+    /// (DESIGN §10).
+    Mod(ModItem),
+    /// A `use` import (DESIGN §10).
+    Use(UseItem),
+}
+
+/// A `mod` declaration (DESIGN §10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModItem {
+    /// Visibility of the module itself.
+    pub vis: Visibility,
+    /// The module name.
+    pub name: String,
+    /// `Some(items)` for an inline `mod foo { … }`; `None` for an external
+    /// `mod foo;` whose body the loader reads from `foo.snt`.
+    pub body: Option<Vec<Item>>,
+    /// Source position of the `mod` keyword.
+    pub pos: Pos,
+}
+
+/// A `use` import (DESIGN §10). Name resolution / visibility checking is a later
+/// milestone (S2); this records the parsed path only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseItem {
+    /// `pub use` re-exports the imported name; otherwise the import is private.
+    pub vis: Visibility,
+    /// The imported path.
+    pub path: UsePath,
+    /// Source position of the `use` keyword.
+    pub pos: Pos,
+}
+
+/// A `use` path: an optional leading qualifier, `::`-separated segments, and an
+/// optional trailing `*` glob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsePath {
+    /// The leading qualifier (`root` / `self` / `super`…), if any.
+    pub qualifier: PathQualifier,
+    /// The `::`-separated segments after the qualifier (excludes a trailing `*`).
+    pub segments: Vec<String>,
+    /// Whether the path ends in a `::*` glob.
+    pub glob: bool,
+}
+
+/// The leading qualifier of a [`UsePath`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathQualifier {
+    /// No qualifier — a bare path.
+    None,
+    /// `root::` — the project root module.
+    Root,
+    /// `self::` — the current module.
+    SelfMod,
+    /// `super::` … — `N` levels up toward the root.
+    Super(usize),
 }
 
 /// A `const NAME: TYPE = EXPR;` binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstItem {
+    /// Visibility (DESIGN §10).
+    pub vis: Visibility,
     /// The constant's name.
     pub name: String,
     /// The declared type.
@@ -338,6 +406,8 @@ pub struct ConstItem {
 pub struct StructItem {
     /// Attributes preceding the struct (e.g. none today).
     pub attrs: Vec<Attr>,
+    /// Visibility (DESIGN §10).
+    pub vis: Visibility,
     /// The struct name.
     pub name: String,
     /// The fields, in source order.
@@ -349,6 +419,8 @@ pub struct StructItem {
 /// A field of a [`StructItem`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructField {
+    /// Visibility (DESIGN §10) — fields are private by default.
+    pub vis: Visibility,
     /// The field name.
     pub name: String,
     /// The field type.
@@ -364,6 +436,8 @@ pub struct StructField {
 pub struct EnumItem {
     /// Attributes preceding the enum (e.g. `#[encoding(binary)]`).
     pub attrs: Vec<Attr>,
+    /// Visibility (DESIGN §10).
+    pub vis: Visibility,
     /// The enum name.
     pub name: String,
     /// The variants, in source order.
@@ -399,6 +473,8 @@ pub struct ImplItem {
 pub struct Func {
     /// Attributes (e.g. `#[clock(domain = sys)]` on the clock root).
     pub attrs: Vec<Attr>,
+    /// Visibility (DESIGN §10).
+    pub vis: Visibility,
     /// The function name.
     pub name: String,
     /// The parameters, in order (a leading `self` for methods).
