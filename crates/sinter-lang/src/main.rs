@@ -16,8 +16,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use log::info;
 
 use sinter_compiler::ir::Module;
+use sinter_compiler::pinmap::PinMap;
 use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
-use sinter_compiler::{compile_str, verilator, verilog};
+use sinter_compiler::{board, compile_str, verilator, verilog};
 
 /// The Sinter HDL compiler.
 #[derive(Parser)]
@@ -44,6 +45,10 @@ enum Command {
         /// Output directory.
         #[arg(long, default_value = "build")]
         out: PathBuf,
+        /// Optional pin-map file (`.pins`): also emit a board-top Verilog
+        /// wrapper and the matching nextpnr PCF (DESIGN §7.6).
+        #[arg(long)]
+        pins: Option<PathBuf>,
     },
     /// Run the cycle-accurate reference simulator over a generated stimulus.
     Sim {
@@ -79,7 +84,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Check { file } => cmd_check(&file),
-        Command::Build { file, emit, out } => cmd_build(&file, emit, &out),
+        Command::Build {
+            file,
+            emit,
+            out,
+            pins,
+        } => cmd_build(&file, emit, &out, pins.as_deref()),
         Command::Sim {
             file,
             cycles,
@@ -120,7 +130,7 @@ fn cmd_check(file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_build(file: &Path, emit: Emit, out: &Path) -> Result<()> {
+fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>) -> Result<()> {
     let modules = read_and_compile(file)?;
     fs::create_dir_all(out).with_context(|| format!("creating output dir `{}`", out.display()))?;
 
@@ -138,6 +148,35 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path) -> Result<()> {
             info!("wrote {}", path.display());
         }
     }
+
+    if let Some(pins) = pins {
+        emit_board(&modules, pins, out)?;
+    }
+    Ok(())
+}
+
+/// Emit the board-top wrapper + PCF for a pin-mapped single-module design.
+fn emit_board(modules: &[Module], pins: &Path, out: &Path) -> Result<()> {
+    let [module] = modules else {
+        anyhow::bail!(
+            "`--pins` targets a single-module design, but `{}` produced {} modules",
+            pins.display(),
+            modules.len()
+        );
+    };
+    let text = fs::read_to_string(pins)
+        .with_context(|| format!("reading pin map `{}`", pins.display()))?;
+    let source = pins.display().to_string();
+    let pinmap = PinMap::parse(&text, &source).context("parsing pin map")?;
+    let stem = pins.file_stem().and_then(|s| s.to_str()).unwrap_or("board");
+    let board = board::emit_board(module, &pinmap, stem).context("generating board wrapper")?;
+
+    let sv = out.join(format!("{}.sv", board.module_name));
+    fs::write(&sv, &board.verilog).with_context(|| format!("writing `{}`", sv.display()))?;
+    info!("wrote {}", sv.display());
+    let pcf = out.join(format!("{}.pcf", board.module_name));
+    fs::write(&pcf, &board.pcf).with_context(|| format!("writing `{}`", pcf.display()))?;
+    info!("wrote {}", pcf.display());
     Ok(())
 }
 

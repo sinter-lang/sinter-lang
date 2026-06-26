@@ -239,6 +239,19 @@ impl Elaborator<'_> {
                 let mut pleaves = Vec::new();
                 self.flatten_ty(&pty, name, &mut pleaves);
                 for (pname, pty) in pleaves {
+                    // `clk`/`rst_n` are the module's reserved clock/reset ports
+                    // (emitted by the Verilog backend); an input flattening to
+                    // either would duplicate-declare a port.
+                    if pname == "clk" || pname == "rst_n" {
+                        return Err(err(
+                            &self.ctx,
+                            *pos,
+                            format!(
+                                "input `{pname}` collides with the reserved clock/reset port; \
+                                 rename the parameter or field"
+                            ),
+                        ));
+                    }
                     ports.push(ir::Port {
                         dir: sinter_syntax::ast::Dir::In,
                         name: pname,

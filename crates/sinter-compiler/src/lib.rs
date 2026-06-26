@@ -9,12 +9,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod board;
 pub mod check;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
 pub mod functional;
 pub mod ir;
+pub mod pinmap;
 pub mod sim;
 pub mod verilator;
 pub mod verilog;

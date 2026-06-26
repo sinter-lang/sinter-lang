@@ -608,6 +608,23 @@ concrete nextpnr PCF (with the generated port names) as a build artifact. This
 keeps the Sinter → Verilog → Yosys → nextpnr flow (§7.2) intact while letting the
 source stay portless.
 
+**Realized in F5 (`sinter build --pins <map>`).** The wrapper module is named
+after the pin-map file stem; each wrapper port is a single 1-bit pin named by the
+sanitized path (`btn.inc`→`btn_inc`, `seg[0][6]`→`seg_0_6`), and the PCF maps that
+port name to the pin number. Paths resolve against the elaborated leaf names:
+`btn.inc`→ inner input `btn_inc`; `seg[0][6]`→ bit 6 of observation output
+`seg_0_q`. A trailing `[i]` is **always** the bit index (a leading `[i]` indexes
+the array), resolved directly so a path can never silently bind a sibling
+register. Because the map has **no reset pin**, the wrapper synthesizes a
+**power-on reset** — a counter (init via a configuration-time `initial`, held low
+until it saturates: 15 clocks) drives the inner `rst_n`. Polarity for `low` pins
+is inverted once at the boundary. To stay Verilator-`-Wall`-clean with no
+pragmas, *every* observation output is connected (an output left unrouted would
+be `PINMISSING`/`PINCONNECTEMPTY`), 1-bit taps are not bit-selected, and bits not
+sent to a pin are tied into a single `_unused`-named sink (exempt from
+`UNUSEDSIGNAL`). The wrapper rejects a path flattening to a reserved internal
+name (`rst_n`/`por_count`/…) and a physical pin bound twice.
+
 ---
 
 ## 8. Prior Art to Mine (read before fixing signatures)
@@ -671,7 +688,7 @@ arithmetic (operand extension); everything else lowers to the existing nodes.
 | **F2** | Elaborate to `ir::Module`: state flattening, SROA, free-fn inline, `Cast`+mixed-width IR extension. | a small functional example passes the oracle |
 | **F3** | enum encoding + `match`→mux, sub-state method inlining, nested state, arrays, tuple destructuring. | **the Go Board example passes the oracle** |
 | **F4** | ✅ fixed-point `uI.F`/`iI.F` arithmetic (`+`/`-`/`*`, the `*` operator, IR `Shl`/`Shr`) erasing to integers; the full `wrap`/`sat`/`trunc`/`round` cast set (§6.3); Verilog emits explicit operand extension. | fn_fixed/fn_sat/fn_round pass the oracle |
-| **F5** | pin map (`.pins`) → top-level Verilog wrapper + nextpnr PCF. | `build` emits a synthesizable top + PCF |
+| **F5** | ✅ pin map (`.pins`) → top-level Verilog wrapper + nextpnr PCF: `sinter build --pins` resolves each `set_io` path against the elaborated module, synthesizes a one-port-per-pin wrapper (power-on reset, polarity inversion for `low`, observation outputs tapped/sunk lint-clean) and emits the matching PCF. | `go_board.pins` wrapper synthesizes (Yosys) and lints clean (Verilator `-Wall`) |
 
 **Locked decisions (this milestone):**
 - The oracle observes **all leaf state registers** (full-state trace), plus the

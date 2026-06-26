@@ -67,6 +67,12 @@ build:
 verilog emit="verilog":
     scripts/verilog.sh {{ emit }}
 
+# Emit the board-top Verilog wrapper + nextpnr PCF for each pin-mapped example
+# into build/board/ (git-ignored). Bridges the portless functional surface to
+# physical pins (DESIGN §7.6).
+board:
+    scripts/board.sh
+
 # --- Aggregates (these invoke the recipes above) ---------------------------
 
 # Fast inner-loop gate: format, lint, and test.
