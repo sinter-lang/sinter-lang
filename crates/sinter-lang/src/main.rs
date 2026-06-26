@@ -18,7 +18,7 @@ use log::info;
 use sinter_compiler::ir::Module;
 use sinter_compiler::pinmap::PinMap;
 use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
-use sinter_compiler::{board, compile_str, verilator, verilog};
+use sinter_compiler::{board, compile_project, verilator, verilog};
 
 /// The Sinter HDL compiler.
 #[derive(Parser)]
@@ -99,10 +99,13 @@ fn main() -> Result<()> {
     }
 }
 
+/// Compile the `.snt` at `file` as the root of a (possibly multi-file) project:
+/// `mod` declarations pull in sibling files, names resolve across modules, and
+/// the result lowers to the same flat IR as the equivalent single file (DESIGN
+/// §10). A file with no `mod`s compiles exactly as before.
 fn read_and_compile(file: &Path) -> Result<Vec<Module>> {
-    let source =
-        fs::read_to_string(file).with_context(|| format!("reading source `{}`", file.display()))?;
-    let design = compile_str(&source).with_context(|| format!("compiling `{}`", file.display()))?;
+    let design =
+        compile_project(file).with_context(|| format!("compiling `{}`", file.display()))?;
     Ok(design.modules)
 }
 

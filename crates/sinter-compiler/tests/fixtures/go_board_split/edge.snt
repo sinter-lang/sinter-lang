@@ -1,0 +1,13 @@
+pub struct Edge {
+    prev: u1 = 0,
+}
+
+impl Edge {
+    pub fn step(self, level: u1) -> Edge {
+        Edge { prev: level }
+    }
+
+    pub fn rising(self, level: u1) -> u1 {
+        level & !self.prev
+    }
+}

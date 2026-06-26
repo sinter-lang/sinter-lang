@@ -1,0 +1,18 @@
+use root::DEBOUNCE_TICKS;
+
+pub struct Debounce {
+    count: u20 = 0,
+    pub level: u1 = 0,
+}
+
+impl Debounce {
+    pub fn step(self, raw: u1) -> Debounce {
+        if raw == 0 {
+            Debounce { count: 0, level: 0 }
+        } else if self.count == DEBOUNCE_TICKS {
+            Debounce { count: self.count, level: 1 }
+        } else {
+            Debounce { count: (self.count + 1) as u20 wrap, level: self.level }
+        }
+    }
+}
