@@ -14,12 +14,13 @@
 //! - the precise fixed-point fit/arithmetic rules (F4);
 //! - multiple clock domains and CDC (later milestone).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 
 use sinter_syntax::ast::{
     BinOp, Block, CastMode, Expr, Func, Item, Param, Pattern, Pos, Program, Stmt, Type, TypeRef,
-    UnaryOp,
+    UnaryOp, Visibility,
 };
 
 use crate::error::CompileError;
@@ -104,14 +105,24 @@ impl fmt::Display for FType {
     }
 }
 
-/// A struct's fields, in declaration order.
+/// A struct's fields, in declaration order: `(name, type, visibility)`.
 struct StructInfo {
-    fields: Vec<(String, FType)>,
+    fields: Vec<(String, FType, Visibility)>,
 }
 
 impl StructInfo {
     fn field(&self, name: &str) -> Option<&FType> {
-        self.fields.iter().find(|(n, _)| n == name).map(|(_, t)| t)
+        self.fields
+            .iter()
+            .find(|(n, _, _)| n == name)
+            .map(|(_, t, _)| t)
+    }
+
+    fn field_vis(&self, name: &str) -> Option<Visibility> {
+        self.fields
+            .iter()
+            .find(|(n, _, _)| n == name)
+            .map(|(_, _, v)| *v)
     }
 }
 
@@ -165,7 +176,7 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
         ));
     }
     let tables = build_tables(program)?;
-    let checker = Checker { tables: &tables };
+    let checker = Checker::new(&tables);
 
     // Type-check every function body (free functions and methods).
     for item in &program.items {
@@ -227,7 +238,7 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                         ));
                     }
                     let ty = resolve_type(&known, &fld.ty, &s.name, fld.pos)?;
-                    fields.push((fld.name.clone(), ty));
+                    fields.push((fld.name.clone(), ty, fld.vis));
                 }
                 structs.insert(s.name.clone(), StructInfo { fields });
             }
@@ -314,11 +325,12 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
     // types now that all tables exist (a value may reference another const). This
     // is what makes an out-of-range initializer (e.g. `u4 = 99`) a compile error
     // rather than a silently-masked reset (DESIGN §6.10).
-    let checker = Checker { tables: &tables };
+    let checker = Checker::new(&tables);
     let env = HashMap::new();
     for item in &program.items {
         match item {
             Item::Const(c) => {
+                checker.enter_module(&c.name);
                 let want = tables
                     .consts
                     .get(&c.name)
@@ -327,6 +339,7 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                 checker.check_expr(&c.value, &env, Some(&want), &c.name, c.pos)?;
             }
             Item::Struct(s) => {
+                checker.enter_module(&s.name);
                 for f in &s.fields {
                     if let Some(default) = &f.default {
                         let want = resolve_type(&checker.known(), &f.ty, &s.name, f.pos)?;
@@ -338,6 +351,19 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
         }
     }
     Ok(tables)
+}
+
+/// The module path (canonical-name prefix) of a canonical item name. Root items
+/// (no `::`) live in the root module, returned as the empty string.
+fn module_of(canonical: &str) -> &str {
+    canonical.rsplit_once("::").map_or("", |(m, _)| m)
+}
+
+/// Whether an accessing module `acc` can reach a *private* item of module `def`:
+/// `acc` is `def` or a descendant (DESIGN §10). A root-module (`""`) item is
+/// reachable from everywhere, since every module descends the root.
+fn mod_reaches(acc: &str, def: &str) -> bool {
+    def.is_empty() || acc == def || acc.starts_with(&format!("{def}::"))
 }
 
 /// The set of declared type names, used while resolving [`TypeRef`]s.
@@ -448,13 +474,63 @@ fn validate_encoding(e: &sinter_syntax::ast::EnumItem) -> Result<(), CompileErro
 
 struct Checker<'a> {
     tables: &'a Tables,
+    /// The module path of the code currently being checked (the *accessing*
+    /// module), derived from the enclosing item's canonical name. Used to
+    /// enforce struct-field visibility (DESIGN §10). Set per item/function.
+    acc_mod: RefCell<String>,
 }
 
 /// Lexical environment: local/parameter/`self` names to their types.
 type Env = HashMap<String, FType>;
 
+impl<'a> Checker<'a> {
+    fn new(tables: &'a Tables) -> Self {
+        Checker {
+            tables,
+            acc_mod: RefCell::new(String::new()),
+        }
+    }
+
+    /// Set the accessing module for subsequent checks (the module owning the
+    /// item about to be checked).
+    fn enter_module(&self, canonical_item: &str) {
+        *self.acc_mod.borrow_mut() = module_of(canonical_item).to_string();
+    }
+
+    /// Reject a read/construction of a private field from a module that cannot
+    /// reach it (DESIGN §10 field visibility).
+    fn check_field_access(
+        &self,
+        struct_name: &str,
+        field: &str,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        let Some(vis) = self
+            .tables
+            .structs
+            .get(struct_name)
+            .and_then(|si| si.field_vis(field))
+        else {
+            return Ok(());
+        };
+        let acc = self.acc_mod.borrow();
+        if vis == Visibility::Private && !mod_reaches(acc.as_str(), module_of(struct_name)) {
+            return Err(sem(
+                ctx,
+                pos,
+                format!("field `{field}` of struct `{struct_name}` is private"),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Checker<'_> {
     fn check_fn(&self, f: &Func, self_ty: Option<&str>) -> Result<(), CompileError> {
+        // The accessing module is where this code lives: a method's `self` type
+        // module, or a free function's own module (both via canonical name).
+        self.enter_module(self_ty.unwrap_or(&f.name));
         let mut env = Env::new();
         for p in &f.params {
             match p {
@@ -539,12 +615,15 @@ impl Checker<'_> {
                 let FType::Struct(s) = &bt else {
                     return Err(sem(ctx, pos, format!("`{bt}` has no fields")));
                 };
-                self.tables
+                let fty = self
+                    .tables
                     .structs
                     .get(s)
                     .and_then(|si| si.field(field))
                     .cloned()
-                    .ok_or_else(|| sem(ctx, pos, format!("struct `{s}` has no field `{field}`")))?
+                    .ok_or_else(|| sem(ctx, pos, format!("struct `{s}` has no field `{field}`")))?;
+                self.check_field_access(s, field, ctx, pos)?;
+                fty
             }
             Expr::Index { base, index } => {
                 let bt = self.check_expr(base, env, None, ctx, pos)?;
@@ -753,13 +832,16 @@ impl Checker<'_> {
                     format!("field `{}` set more than once", fi.name),
                 ));
             }
+            // Constructing with a private field is only allowed from a module
+            // that can reach it (DESIGN §10).
+            self.check_field_access(name, &fi.name, ctx, pos)?;
             self.check_expr(&fi.value, env, Some(fty), ctx, pos)?;
         }
         if seen.len() != info.fields.len() {
             let missing: Vec<&str> = info
                 .fields
                 .iter()
-                .map(|(n, _)| n.as_str())
+                .map(|(n, _, _)| n.as_str())
                 .filter(|n| !seen.contains(*n))
                 .collect();
             return Err(sem(

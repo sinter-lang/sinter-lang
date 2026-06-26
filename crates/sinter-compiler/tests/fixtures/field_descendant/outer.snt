@@ -1,0 +1,2 @@
+mod inner;
+pub struct S { secret: u8 = 0 }

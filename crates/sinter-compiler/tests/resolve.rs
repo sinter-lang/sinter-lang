@@ -84,6 +84,36 @@ fn importing_a_missing_item_is_rejected() {
     reject("unresolved", "no item `nope`");
 }
 
+// --- struct-field visibility (DESIGN §10) ----------------------------------
+
+#[test]
+fn reading_a_private_field_cross_module_is_rejected() {
+    reject(
+        "field_priv_read",
+        "field `secret` of struct `m::Wid` is private",
+    );
+}
+
+#[test]
+fn constructing_with_a_private_field_cross_module_is_rejected() {
+    reject(
+        "field_priv_construct",
+        "field `secret` of struct `m::Wid` is private",
+    );
+}
+
+#[test]
+fn reading_a_pub_field_cross_module_is_allowed() {
+    compile("field_pub_read").expect("a `pub` field is readable from another module");
+}
+
+#[test]
+fn descendant_reads_ancestor_struct_private_field() {
+    // `outer::inner` reads a private field of a struct defined in `outer` — the
+    // same descendant rule as item visibility.
+    compile("field_descendant").expect("a descendant module may read an ancestor's private field");
+}
+
 // --- regression tests for the S2 adversarial-review findings ---------------
 
 #[test]

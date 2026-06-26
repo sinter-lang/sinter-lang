@@ -1,0 +1,2 @@
+use super::S;
+pub fn t(s: S) -> u8 { s.secret }
