@@ -553,6 +553,10 @@ impl Checker<'_> {
                     self.const_eval(els, pos)
                 }
             }
+            ExprKind::Cast { expr: inner, mode } => {
+                let v = self.const_eval(inner, pos)?;
+                Ok(crate::eval::apply_cast(v, inner.ty, expr.ty, *mode))
+            }
         }
     }
 }

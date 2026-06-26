@@ -1,14 +1,17 @@
 //! F1 tests: resolution + type checking of the functional surface (DESIGN §2.1).
 //!
-//! `compile_str` runs the functional checker before lowering the legacy
-//! `module` surface, so a well-typed functional source compiles to a `Design`
-//! with no modules, and an ill-typed one returns a `CompileError`.
+//! These exercise F1 (`check_functional`) in isolation — not the full
+//! `compile_str`, which also runs F2 elaboration and so would reject the
+//! still-unlowered F3 constructs (enums/`match`/methods/arrays) that several
+//! well-typed cases here intentionally use.
 
-use sinter_compiler::compile_str;
+use sinter_compiler::functional::check_functional;
+use sinter_syntax::parse_program;
 
-/// Type-check a source; `Ok(())` means it passed F1 (and legacy checking).
+/// Type-check a source through F1; `Ok(())` means it passed resolution + typing.
 fn check(src: &str) -> Result<(), String> {
-    compile_str(src).map(|_| ()).map_err(|e| e.to_string())
+    let program = parse_program(src).map_err(|e| e.to_string())?;
+    check_functional(&program).map_err(|e| e.to_string())
 }
 
 /// Assert the source is rejected and the error mentions `needle`.

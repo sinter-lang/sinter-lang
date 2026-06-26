@@ -10,6 +10,7 @@
 #![warn(missing_docs)]
 
 pub mod check;
+pub mod elaborate;
 pub mod error;
 pub mod eval;
 pub mod functional;
@@ -23,16 +24,20 @@ pub use ir::{Design, Module};
 
 /// Parse and check Sinter source, returning the typed design.
 ///
-/// Both surfaces are validated: the functional surface (DESIGN §2.1) is
-/// type-checked (`functional`), and the legacy `module` surface is lowered to
-/// the typed IR (`check`). Lowering of the functional surface to the IR is a
-/// later milestone, so a functional-only source yields a `Design` with no
-/// modules today.
+/// Both surfaces are lowered to the same IR: the legacy `module` surface via
+/// [`check`], and the functional surface (DESIGN §2.1) via
+/// [`functional::check_functional`] (type checking) then [`elaborate`]
+/// (lowering its `#[clock]` transition root to an [`ir::Module`]). A functional
+/// source with no transition root yields no module.
 ///
 /// # Errors
 /// Returns a [`CompileError`] on a parse or semantic error.
 pub fn compile_str(source: &str) -> Result<Design, CompileError> {
     let program = sinter_syntax::parse_program(source)?;
     functional::check_functional(&program)?;
-    check::check_program(&program)
+    let mut design = check::check_program(&program)?;
+    if let Some(module) = elaborate::elaborate(&program)? {
+        design.modules.push(module);
+    }
+    Ok(design)
 }

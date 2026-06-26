@@ -5,7 +5,7 @@
 //! that their semantics cannot drift apart (DESIGN §7.4, the correctness
 //! oracle requires bit-for-bit agreement).
 
-use sinter_syntax::ast::{BinOp, Dir, Type, UnaryOp};
+use sinter_syntax::ast::{BinOp, CastMode, Dir, Type, UnaryOp};
 
 /// The 1-bit unsigned type used for booleans/conditions.
 pub const BOOL: Type = Type::Uint(1);
@@ -123,5 +123,14 @@ pub enum ExprKind {
         then: Box<Expr>,
         /// Value when false.
         els: Box<Expr>,
+    },
+    /// A mode-named cast to the node's own [`Type`] (DESIGN §6.3). Produced by
+    /// the functional surface's elaboration; the legacy `module` path never
+    /// emits one.
+    Cast {
+        /// The operand being converted (carries its own source type).
+        expr: Box<Expr>,
+        /// How out-of-range / fractional values are handled.
+        mode: CastMode,
     },
 }
