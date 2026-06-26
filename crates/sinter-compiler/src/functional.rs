@@ -295,18 +295,31 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
         funcs,
         consts,
     };
-    // Re-check const values against their declared types now that all tables
-    // exist (a const value may reference another const).
+    // Re-check const values and struct-field reset values against their declared
+    // types now that all tables exist (a value may reference another const). This
+    // is what makes an out-of-range initializer (e.g. `u4 = 99`) a compile error
+    // rather than a silently-masked reset (DESIGN §6.10).
     let checker = Checker { tables: &tables };
+    let env = HashMap::new();
     for item in &program.items {
-        if let Item::Const(c) = item {
-            let want = tables
-                .consts
-                .get(&c.name)
-                .cloned()
-                .unwrap_or(FType::Uint(MAX_WIDTH));
-            let env = HashMap::new();
-            checker.check_expr(&c.value, &env, Some(&want), &c.name, c.pos)?;
+        match item {
+            Item::Const(c) => {
+                let want = tables
+                    .consts
+                    .get(&c.name)
+                    .cloned()
+                    .unwrap_or(FType::Uint(MAX_WIDTH));
+                checker.check_expr(&c.value, &env, Some(&want), &c.name, c.pos)?;
+            }
+            Item::Struct(s) => {
+                for f in &s.fields {
+                    if let Some(default) = &f.default {
+                        let want = resolve_type(&checker.known(), &f.ty, &s.name, f.pos)?;
+                        checker.check_expr(default, &env, Some(&want), &s.name, f.pos)?;
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(tables)
@@ -819,19 +832,15 @@ impl Checker<'_> {
         pos: Pos,
     ) -> Result<FType, CompileError> {
         if op.is_comparison() {
-            let opty = self.synth(lhs, env).or_else(|| self.synth(rhs, env));
-            let l = self.check_expr(lhs, env, opty.as_ref(), ctx, pos)?;
-            let r = self.check_expr(rhs, env, Some(&l), ctx, pos)?;
+            let (l, r) = self.check_operands(lhs, rhs, env, None, ctx, pos)?;
             self.expect(&l, &r, ctx, pos)?;
             // Result is 1-bit; the caller's `expected` is checked by `check_expr`.
             return Ok(FType::Uint(1));
         }
         match op {
             BinOp::And | BinOp::Or | BinOp::Xor => {
-                // Bitwise: same-width operands, result identical.
-                let opty = expected.cloned().or_else(|| self.synth(lhs, env));
-                let l = self.check_expr(lhs, env, opty.as_ref(), ctx, pos)?;
-                let r = self.check_expr(rhs, env, Some(&l), ctx, pos)?;
+                // Bitwise: same-type operands, result identical.
+                let (l, r) = self.check_operands(lhs, rhs, env, expected, ctx, pos)?;
                 self.expect(&l, &r, ctx, pos)?;
                 self.require_scalar(&l, ctx, pos)?;
                 Ok(l)
@@ -839,11 +848,9 @@ impl Checker<'_> {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
                 // Width inference (DESIGN §6.2). A bare literal adopts the other
                 // operand's type; two concrete operands may differ in integer
-                // width. The result widens, so storing it back needs a cast.
-                let lhint = self.synth(lhs, env).or_else(|| self.synth(rhs, env));
-                let l = self.check_expr(lhs, env, lhint.as_ref(), ctx, pos)?;
-                let rhint = self.synth(rhs, env).or_else(|| Some(l.clone()));
-                let r = self.check_expr(rhs, env, rhint.as_ref(), ctx, pos)?;
+                // width (e.g. nested `a*b + c*d`). The result widens, so storing
+                // it back needs a cast.
+                let (l, r) = self.check_operands(lhs, rhs, env, expected, ctx, pos)?;
                 let (ls, li, lf) =
                     fx_parts(&l).ok_or_else(|| sem(ctx, pos, format!("`{l}` is not numeric")))?;
                 let (rs, ri, rf) =
@@ -1139,58 +1146,36 @@ impl Checker<'_> {
         }
     }
 
-    /// Best-effort type synthesis without an expectation, mirroring the legacy
-    /// checker's `synth_concrete`. Returns `None` when the form needs context
-    /// (a bare literal, `if`, `match`, block).
-    fn synth(&self, expr: &Expr, env: &Env) -> Option<FType> {
-        match expr {
-            Expr::Ident(name) => env
-                .get(name)
-                .or_else(|| self.tables.consts.get(name))
-                .cloned(),
-            Expr::Path(segs) => match segs.as_slice() {
-                [e, _] if self.tables.enums.contains_key(e) => Some(FType::Enum(e.clone())),
-                _ => None,
-            },
-            Expr::Field { base, field } => match self.synth(base, env)? {
-                FType::Struct(s) => self.tables.structs.get(&s)?.field(field).cloned(),
-                _ => None,
-            },
-            Expr::Index { base, .. } => match self.synth(base, env)? {
-                FType::Array(e, _) => Some(*e),
-                _ => None,
-            },
-            Expr::Call { func, .. } => match &**func {
-                Expr::Ident(name) => self.tables.funcs.get(name).map(|s| s.ret.clone()),
-                _ => None,
-            },
-            Expr::MethodCall {
-                receiver, method, ..
-            } => {
-                let ty = self.synth(receiver, env)?;
-                let name = match ty {
-                    FType::Struct(s) | FType::Enum(s) => s,
-                    _ => return None,
-                };
-                self.tables
-                    .methods
-                    .get(&(name, method.clone()))
-                    .map(|s| s.ret.clone())
+    /// Type-check the two operands of a binary operator. A bare integer literal
+    /// adopts the other operand's type; a non-literal operand always self-infers
+    /// (passing no expectation), so nested width-inferred arithmetic — e.g.
+    /// `a*b + c*d` — is accepted and operands may differ in integer width.
+    fn check_operands(
+        &self,
+        lhs: &Expr,
+        rhs: &Expr,
+        env: &Env,
+        both_literal_hint: Option<&FType>,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<(FType, FType), CompileError> {
+        let lhs_lit = matches!(lhs, Expr::Literal(_));
+        let rhs_lit = matches!(rhs, Expr::Literal(_));
+        match (lhs_lit, rhs_lit) {
+            (true, true) => Ok((
+                self.check_expr(lhs, env, both_literal_hint, ctx, pos)?,
+                self.check_expr(rhs, env, both_literal_hint, ctx, pos)?,
+            )),
+            (true, false) => {
+                let r = self.check_expr(rhs, env, None, ctx, pos)?;
+                let l = self.check_expr(lhs, env, Some(&r), ctx, pos)?;
+                Ok((l, r))
             }
-            Expr::Cast { ty, .. } => resolve_type(&self.known(), ty, "", Pos::default()).ok(),
-            Expr::Unary { op, expr } => match op {
-                UnaryOp::Not => Some(FType::Uint(1)),
-                UnaryOp::BitNot | UnaryOp::Neg => self.synth(expr, env),
-            },
-            Expr::Binary { op, lhs, rhs } => {
-                if op.is_comparison() {
-                    Some(FType::Uint(1))
-                } else {
-                    self.synth(lhs, env).or_else(|| self.synth(rhs, env))
-                }
+            (false, _) => {
+                let l = self.check_expr(lhs, env, None, ctx, pos)?;
+                let r = self.check_expr(rhs, env, rhs_lit.then_some(&l), ctx, pos)?;
+                Ok((l, r))
             }
-            Expr::StructLit { name, .. } => Some(FType::Struct(name.clone())),
-            _ => None,
         }
     }
 }
@@ -1227,13 +1212,20 @@ fn make_fx(signed: bool, ibits: u32, fbits: u32) -> FType {
     }
 }
 
+/// Whether a raw integer literal fits a numeric type's erased bit width. A
+/// fixed-point `iI.F`/`uI.F` literal is the raw stored value, so it fits the
+/// `(I+F)`-bit two's-complement / unsigned range — the same check as `iN`/`uN`.
 fn literal_fits(v: u128, ty: &FType) -> bool {
-    match ty {
-        FType::Uint(w) => *w >= 128 || v < (1u128 << w),
-        FType::Int(w) => *w >= 1 && (*w > 127 || v < (1u128 << (w - 1))),
-        // Precise fixed-point fit is deferred to F4; accept integer initializers.
-        FType::Fixed { .. } => true,
-        _ => false,
+    match fx_parts(ty) {
+        Some((false, ib, fb)) => {
+            let w = ib + fb;
+            w >= 128 || v < (1u128 << w)
+        }
+        Some((true, ib, fb)) => {
+            let w = ib + fb;
+            w >= 1 && (w > 127 || v < (1u128 << (w - 1)))
+        }
+        None => false,
     }
 }
 

@@ -40,6 +40,10 @@ use crate::ir;
 /// Guards against accidental unbounded inlining (recursion is not synthesizable).
 const MAX_INLINE_DEPTH: usize = 256;
 
+/// All IR scalar widths must fit `eval`'s `u64` (DESIGN §6.2). Mirrors
+/// `check::MAX_WIDTH` / `functional::MAX_WIDTH`.
+const MAX_WIDTH: u32 = 64;
+
 /// A resolved functional type.
 #[derive(Debug, Clone)]
 enum Ty {
@@ -599,6 +603,21 @@ impl Elaborator<'_> {
         let xi = e.ty.width() - xf;
         if xs != ts {
             return Err(unsupported(&self.ctx, pos, "sign-changing casts (F4+)"));
+        }
+        // Widening the fraction (xf -> tf) builds an `xi + tf`-bit intermediate
+        // before the integer step narrows it. `eval` is `u64`-bounded, so reject
+        // a cast whose intermediate would overflow 64 bits (it would silently
+        // diverge from the Verilog, which has no such limit).
+        let intermediate = xi + tf.max(xf);
+        if intermediate > MAX_WIDTH {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "cast builds a {intermediate}-bit intermediate, exceeding the \
+                     {MAX_WIDTH}-bit limit"
+                ),
+            ));
         }
 
         // Step 1: fractional alignment xf -> tf.

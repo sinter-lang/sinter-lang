@@ -60,6 +60,11 @@ const EXAMPLES: &[Example] = &[
         name: "fn_round",
         source: include_str!("../../../examples/fn_round.snt"),
     },
+    // Nested width-inferred arithmetic: `a*b + c*d + acc` (multiply-accumulate).
+    Example {
+        name: "fn_mac",
+        source: include_str!("../../../examples/fn_mac.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {

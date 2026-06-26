@@ -1,0 +1,18 @@
+// Multiply-accumulate (DESIGN §6.2): two products summed into a running total.
+//
+// The body `a * b + c * d + self.acc` is *nested* width-inferred arithmetic:
+// each `i4 * i4` widens to `i8`, the two products sum to `i9`, and adding the
+// `i16` accumulator widens to `i17` before the explicit wrap cast stores it back
+// at 16 bits. This is the worked example for nested arithmetic — F1 must type
+// it without hinting non-literal operands with a sibling's width, and the sim
+// and Verilog must agree bit-for-bit on the sign-extended products and sum.
+struct Mac {
+    acc: i16 = 0,
+}
+
+impl Mac {
+    #[clock(domain = sys)]
+    fn tick(self, a: i4, b: i4, c: i4, d: i4) -> Mac {
+        Mac { acc: (a * b + c * d + self.acc) as i16 wrap }
+    }
+}

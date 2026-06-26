@@ -420,8 +420,11 @@ So the mode picks the frac rounding (`round` vs truncate) and the int overflow
 + saturate int; `round` = round frac + wrap int. (Combining rounded frac with
 saturated int is two casts.) The fixed-point representation **erases to a plain
 `(I+F)`-bit integer** in the IR (DESIGN §7.2); the binary point lives only in the
-front-end. *Deferred:* `+`/`-` require matching fractional bits (no implicit
-alignment yet); sign-changing casts.
+front-end. Widening the fraction first builds an `xi + tf`-bit intermediate (old
+integer bits, new fraction bits) before the integer step narrows it; that
+intermediate must fit the 64-bit width limit (§6.2), else the cast is rejected.
+*Deferred:* `+`/`-` require matching fractional bits (no implicit alignment yet);
+sign-changing casts.
 
 ### 6.4 `?` is for Option/valid propagation only
 

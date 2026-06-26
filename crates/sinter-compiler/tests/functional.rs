@@ -114,6 +114,39 @@ fn unnarrowed_arithmetic_requires_a_cast() {
 }
 
 #[test]
+fn nested_arithmetic_type_checks() {
+    // A multiply-accumulate: `a*b` and `c*d` each widen u4*u4 -> u8, and the
+    // sum widens u8+u8 -> u9 (DESIGN §6.2). Nested operands must NOT be hinted
+    // with their sibling's width — only bare literals are (regression: F1 once
+    // pushed the inferred result type onto non-literal operands and rejected
+    // this).
+    let src = "fn mac(a: u4, b: u4, c: u4, d: u4) -> u9 { a * b + c * d }";
+    check(src).expect("nested width-inferred arithmetic should type-check");
+}
+
+#[test]
+fn out_of_range_field_default_is_rejected() {
+    // A struct field's reset value is type-checked against the field type, so an
+    // out-of-range initializer is a compile error rather than a silently-masked
+    // reset (DESIGN §6.10).
+    reject(
+        "struct S { a: u4 = 99 }",
+        "literal `99` does not fit in `u4`",
+    );
+}
+
+#[test]
+fn out_of_range_fixed_field_default_is_rejected() {
+    // Fixed-point fields are checked too — `u4.4` is 8 erased bits (max 255), so
+    // 999 does not fit. (Regression: `literal_fits` once returned true for any
+    // fixed-point type, masking out-of-range fixed defaults.)
+    reject(
+        "struct S { a: u4.4 = 999 }",
+        "literal `999` does not fit in `u4.4`",
+    );
+}
+
+#[test]
 fn non_exhaustive_enum_match_is_rejected() {
     reject(
         "enum E { A, B, C } fn f(e: E) -> u2 { match e { E::A => 0, E::B => 1 } }",
