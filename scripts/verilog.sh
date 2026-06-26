@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Emit SystemVerilog for every example `.snt` into build/verilog/<example>/.
+# Emit SystemVerilog for every example into build/verilog/<example>/.
+#
+# Covers both single-file examples (`examples/*.snt`) and multi-file projects
+# (`examples/<proj>/main.snt`, built via `sinter build` over the project root).
 #
 # build/ is git-ignored, so this is a throwaway, dev-container-observable
 # snapshot — the emitted Verilog changes as the compiler evolves and is not
@@ -22,10 +25,17 @@ step "regenerating $out/ (emit=$emit)"
 rm -rf "$out"
 mkdir -p "$out"
 
+shopt -s nullglob
 ok=0
 failed=()
-for snt in examples/*.snt; do
-    name="$(basename "$snt" .snt)"
+
+# Roots to build: single-file examples + multi-file project entry points.
+roots=(examples/*.snt examples/*/main.snt)
+for snt in "${roots[@]}"; do
+    case "$snt" in
+        */main.snt) name="$(basename "$(dirname "$snt")")" ;; # project: dir name
+        *) name="$(basename "$snt" .snt)" ;;
+    esac
     dest="$out/$name"
     mkdir -p "$dest"
     if log="$("$bin" build "$snt" --emit "$emit" --out "$dest" 2>&1)"; then

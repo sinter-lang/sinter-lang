@@ -77,6 +77,25 @@ const EXAMPLES: &[Example] = &[
     },
 ];
 
+/// Multi-file projects (DESIGN §10), compiled via `compile_project` from their
+/// root file and run through the same oracle as the single-file examples.
+struct Project {
+    name: &'static str,
+    root: &'static str,
+}
+
+const PROJECTS: &[Project] = &[
+    // Module-system example: `mod`/`use`/`pub` with a public struct field read
+    // across the module boundary.
+    Project {
+        name: "sat_counter",
+        root: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/sat_counter/main.snt"
+        ),
+    },
+];
+
 fn tool_available(tool: &str) -> bool {
     Command::new(tool)
         .arg("--version")
@@ -99,6 +118,27 @@ fn workdir(name: &str) -> PathBuf {
 fn compile_one(source: &str) -> Module {
     let design = compile_str(source).expect("example should compile");
     design.modules.into_iter().next().expect("one module")
+}
+
+fn compile_project_one(root: &str) -> Module {
+    let design = sinter_compiler::compile_project(std::path::Path::new(root))
+        .expect("project should compile");
+    design.modules.into_iter().next().expect("one module")
+}
+
+/// Every oracle case as `(name, module)` — the single-file examples plus the
+/// multi-file projects.
+fn all_cases() -> Vec<(String, Module)> {
+    let mut cases: Vec<(String, Module)> = EXAMPLES
+        .iter()
+        .map(|ex| (ex.name.to_string(), compile_one(ex.source)))
+        .collect();
+    cases.extend(
+        PROJECTS
+            .iter()
+            .map(|p| (p.name.to_string(), compile_project_one(p.root))),
+    );
+    cases
 }
 
 /// Synthesize with Yosys to confirm the emitted SV is synthesizable.
@@ -195,21 +235,20 @@ fn examples_pass_the_oracle() {
         );
     }
 
-    for ex in EXAMPLES {
-        let module = compile_one(ex.source);
-        let dir = workdir(ex.name);
+    for (name, module) in &all_cases() {
+        let dir = workdir(name);
 
         // Emit artifacts.
         let sv = dir.join(format!("{}.sv", module.name));
-        std::fs::write(&sv, verilog::emit_module(&module)).expect("write sv");
+        std::fs::write(&sv, verilog::emit_module(module)).expect("write sv");
         let harness = dir.join(format!("{}_tb.cpp", module.name));
-        std::fs::write(&harness, verilator::emit_cpp_harness(&module)).expect("write harness");
+        std::fs::write(&harness, verilator::emit_cpp_harness(module)).expect("write harness");
 
         // Stimulus + reference trace.
-        let stimulus = gen_stimulus(&module, CYCLES, 0xDEAD_BEEF);
+        let stimulus = gen_stimulus(module, CYCLES, 0xDEAD_BEEF);
         let stim_path = dir.join("stimulus.bin");
         std::fs::write(&stim_path, stimulus_to_bytes(&stimulus)).expect("write stimulus");
-        let reference = run_reference(&module, &stimulus);
+        let reference = run_reference(module, &stimulus);
 
         if have_yosys {
             run_yosys(&sv, &module.name);

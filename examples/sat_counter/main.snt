@@ -1,0 +1,22 @@
+// Module-system example (DESIGN §10): the root of a multi-file project.
+//
+// `mod counter;` pulls in `counter.snt`; `use` brings its public items into
+// scope. `Counter`'s `value` field is `pub`, so the root module may read it
+// across the module boundary (`c.value` below) — if it were private, that read
+// would be a compile error. Build with `sinter build examples/sat_counter/main.snt`.
+mod counter;
+
+use root::counter::Counter;
+
+struct Top {
+    c: Counter,
+    last: u8 = 0, // mirrors the counter's value, read across the module boundary
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, en: u1) -> Top {
+        let c = self.c.bump(en);
+        Top { c: c, last: c.value }
+    }
+}

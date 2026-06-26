@@ -1,0 +1,16 @@
+// A small reusable counter module. The struct is `pub` (nameable from other
+// modules), its `value` field is `pub` (readable from other modules), and `bump`
+// is a `pub` method; the wrap cast stays internal to the implementation.
+pub struct Counter {
+    pub value: u8 = 0,
+}
+
+impl Counter {
+    pub fn bump(self, en: u1) -> Counter {
+        if en == 1 {
+            Counter { value: (self.value + 1) as u8 wrap }
+        } else {
+            self
+        }
+    }
+}
