@@ -18,6 +18,7 @@ Program {
                         },
                     },
                 ],
+                vis: Private,
                 name: "Dir",
                 variants: [
                     EnumVariant {
@@ -62,6 +63,7 @@ Program {
         Func(
             Func {
                 attrs: [],
+                vis: Private,
                 name: "quadrant",
                 params: [
                     Typed {

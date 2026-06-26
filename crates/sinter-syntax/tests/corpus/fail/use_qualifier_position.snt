@@ -1,0 +1,3 @@
+// `root` / `self` / `super` may only lead a `use` path, not appear mid-path.
+//~ ERROR may only lead a `use` path
+use a::super::b;

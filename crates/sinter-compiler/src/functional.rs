@@ -149,6 +149,21 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
     if program.items.is_empty() {
         return Ok(());
     }
+    // The module system parses today (S1) but is not yet resolved or lowered;
+    // reject `mod` / `use` in the single-file compile path so they are never
+    // silently dropped. Multi-file resolution is milestone S2/S3 (DESIGN §9.2).
+    for item in &program.items {
+        let (kind, pos) = match item {
+            Item::Mod(m) => ("mod", m.pos),
+            Item::Use(u) => ("use", u.pos),
+            _ => continue,
+        };
+        return Err(sem(
+            "module",
+            pos,
+            format!("`{kind}` is parsed but not yet lowered (milestone S2/S3)"),
+        ));
+    }
     let tables = build_tables(program)?;
     let checker = Checker { tables: &tables };
 

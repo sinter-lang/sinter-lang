@@ -1,0 +1,27 @@
+// Module system (DESIGN §10): `mod` / `use` / `pub` and path qualifiers.
+// External `mod foo;` only parses here; the loader resolves the files.
+
+mod debounce;
+pub mod display;
+
+use root::debounce::Debounce;
+use self::display::*;
+pub use super::shared::Cmd;
+
+pub const WIDTH: u8 = 8;
+
+pub struct Top {
+    pub seg: u7 = 0,
+    count: u8 = 0,
+}
+
+pub enum Mode {
+    Run,
+    Halt,
+}
+
+mod inner {
+    pub fn helper(x: u8) -> u8 {
+        x
+    }
+}

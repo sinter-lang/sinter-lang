@@ -1,0 +1,4 @@
+// `alpha`'s own submodules live in `alpha/`.
+mod gamma;
+
+pub fn a() -> u8 { 0 }

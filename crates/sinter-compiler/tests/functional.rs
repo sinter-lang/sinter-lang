@@ -182,6 +182,14 @@ fn multiple_clock_roots_are_rejected() {
 }
 
 #[test]
+fn module_items_are_rejected_until_lowered() {
+    // The module system parses (S1) but the single-file compile path does not yet
+    // resolve/lower it (S2/S3) — reject rather than silently drop.
+    reject("mod foo;", "not yet lowered");
+    reject("use root::debounce::Debounce;", "not yet lowered");
+}
+
+#[test]
 fn clock_root_must_return_self() {
     reject(
         "struct A { x: u1 = 0 } impl A { #[clock(domain = sys)] fn tick(self) -> u1 { self.x } }",

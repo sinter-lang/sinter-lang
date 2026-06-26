@@ -98,7 +98,8 @@ literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 // as an ordinary identifier inside expressions (`self.value`).
 keyword = @{
     ("module" | "in" | "out" | "reg" | "let" | "if" | "else"
-   | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as")
+   | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as"
+   | "mod" | "use" | "pub")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -107,25 +108,44 @@ ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 // FUNCTIONAL surface (DESIGN §2.1) — parse-only for now.
 // ===========================================================================
 
-item = { const_item | struct_item | enum_item | impl_item | fn_item }
+item = { use_item | mod_item | const_item | struct_item | enum_item | impl_item | fn_item }
 
-// `const NAME: TYPE = EXPR;`
-const_item = { "const" ~ ident ~ ":" ~ f_typeref ~ "=" ~ f_expr ~ ";" }
+// Visibility (DESIGN §10): items are private unless marked `pub`. Atomic with a
+// trailing word boundary so `pubx` is an ordinary identifier, not `pub` + `x`.
+vis = @{ "pub" ~ !(ASCII_ALPHANUMERIC | "_") }
 
-// `struct Name { field: Type [= reset], ... }` — inline reset values.
-struct_item  = { attr* ~ "struct" ~ ident ~ "{" ~ (struct_field ~ ("," ~ struct_field)* ~ ","?)? ~ "}" }
-struct_field = { ident ~ ":" ~ f_typeref ~ ("=" ~ f_expr)? }
+// `[pub] use a::b::c;` — a `::`-path import with an optional trailing `*` glob;
+// leading `self` / `super` / `root` are ordinary segments interpreted by the
+// parser. (Boundary-checked `use` keyword; the kw token is dropped in the AST.)
+use_item = { vis? ~ kw_use ~ use_path ~ ";" }
+kw_use   = @{ "use" ~ !(ASCII_ALPHANUMERIC | "_") }
+use_path = { use_seg ~ ("::" ~ use_seg)* }
+use_seg  = { "*" | ident }
 
-// `enum Name { Variant [= disc], ... }` with an optional `#[encoding(...)]`.
-enum_item    = { attr* ~ "enum" ~ ident ~ "{" ~ (enum_variant ~ ("," ~ enum_variant)* ~ ","?)? ~ "}" }
+// `[pub] mod foo;` (external file `foo.snt`) or `mod foo { items }` (inline).
+mod_item   = { vis? ~ kw_mod ~ ident ~ (mod_inline | ";") }
+kw_mod     = @{ "mod" ~ !(ASCII_ALPHANUMERIC | "_") }
+mod_inline = { "{" ~ item* ~ "}" }
+
+// `[pub] const NAME: TYPE = EXPR;`
+const_item = { vis? ~ "const" ~ ident ~ ":" ~ f_typeref ~ "=" ~ f_expr ~ ";" }
+
+// `[pub] struct Name { [pub] field: Type [= reset], ... }` — inline reset values.
+struct_item  = { attr* ~ vis? ~ "struct" ~ ident ~ "{" ~ (struct_field ~ ("," ~ struct_field)* ~ ","?)? ~ "}" }
+struct_field = { vis? ~ ident ~ ":" ~ f_typeref ~ ("=" ~ f_expr)? }
+
+// `[pub] enum Name { Variant [= disc], ... }` with an optional `#[encoding(...)]`.
+// Variants are as visible as the enum, so they carry no per-variant `pub`.
+enum_item    = { attr* ~ vis? ~ "enum" ~ ident ~ "{" ~ (enum_variant ~ ("," ~ enum_variant)* ~ ","?)? ~ "}" }
 enum_variant = { ident ~ ("=" ~ f_expr)? }
 
-// `impl Name { fn ... }`
+// `impl Name { fn ... }` (an impl block itself carries no visibility; its
+// methods do, via `fn_item`).
 impl_item = { "impl" ~ ident ~ "{" ~ fn_item* ~ "}" }
 
-// `[#[attr]] fn name(params) -> Type { block }`. The clock-root carries
+// `[#[attr]] [pub] fn name(params) -> Type { block }`. The clock-root carries
 // `#[clock(domain = …)]`; combinational sub-steps carry none.
-fn_item     = { attr* ~ "fn" ~ ident ~ "(" ~ (param ~ ("," ~ param)* ~ ","?)? ~ ")" ~ "->" ~ f_typeref ~ f_block }
+fn_item     = { attr* ~ vis? ~ "fn" ~ ident ~ "(" ~ (param ~ ("," ~ param)* ~ ","?)? ~ ")" ~ "->" ~ f_typeref ~ f_block }
 param       = { self_param | typed_param }
 self_param  = @{ "self" ~ !(ASCII_ALPHANUMERIC | "_") }
 typed_param = { ident ~ ":" ~ f_typeref }

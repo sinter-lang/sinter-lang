@@ -4,9 +4,11 @@ Program {
         Struct(
             StructItem {
                 attrs: [],
+                vis: Private,
                 name: "Counter",
                 fields: [
                     StructField {
+                        vis: Private,
                         name: "value",
                         ty: Scalar(
                             Uint(
@@ -36,6 +38,7 @@ Program {
                 methods: [
                     Func {
                         attrs: [],
+                        vis: Private,
                         name: "step",
                         params: [
                             SelfRef {
@@ -138,6 +141,7 @@ Program {
         Func(
             Func {
                 attrs: [],
+                vis: Private,
                 name: "bump",
                 params: [
                     Typed {

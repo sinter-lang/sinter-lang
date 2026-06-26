@@ -8,8 +8,9 @@ use pest::Parser as _;
 
 use crate::ast::{
     Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, ConstItem, Dir, EnumItem,
-    EnumVariant, Expr, FieldInit, Func, ImplItem, Item, LetBinding, MatchArm, Module, Param,
-    Pattern, Port, Pos, Program, Reg, Stmt, StructField, StructItem, Type, TypeRef, UnaryOp,
+    EnumVariant, Expr, FieldInit, Func, ImplItem, Item, LetBinding, MatchArm, ModItem, Module,
+    Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt, StructField, StructItem, Type,
+    TypeRef, UnaryOp, UseItem, UsePath, Visibility,
 };
 
 /// The `pest`-generated parser and `Rule` enum. Isolated in a submodule so the
@@ -411,17 +412,126 @@ fn parse_item(pair: Pair<Rule>) -> Result<Item, ParseError> {
         Rule::enum_item => Ok(Item::Enum(parse_enum(inner)?)),
         Rule::impl_item => Ok(Item::Impl(parse_impl(inner)?)),
         Rule::fn_item => Ok(Item::Func(parse_fn(inner)?)),
+        Rule::mod_item => Ok(Item::Mod(parse_mod(inner)?)),
+        Rule::use_item => Ok(Item::Use(parse_use(inner)?)),
         other => Err(unexpected(other, "item")),
     }
+}
+
+/// Consume a leading `vis` pair if present, returning the visibility (DESIGN §10).
+fn take_vis(inner: &mut pest::iterators::Pairs<'_, Rule>) -> Visibility {
+    if inner.peek().map(|p| p.as_rule()) == Some(Rule::vis) {
+        inner.next();
+        Visibility::Public
+    } else {
+        Visibility::Private
+    }
+}
+
+fn parse_mod(pair: Pair<Rule>) -> Result<ModItem, ParseError> {
+    let pos = pos_of(&pair);
+    let mut vis = Visibility::Private;
+    let mut name = String::new();
+    let mut body = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::vis => vis = Visibility::Public,
+            Rule::kw_mod => {}
+            Rule::ident => name = inner.as_str().to_string(),
+            Rule::mod_inline => {
+                body = Some(
+                    inner
+                        .into_inner()
+                        .map(parse_item)
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+            }
+            other => return Err(unexpected(other, "mod")),
+        }
+    }
+    Ok(ModItem {
+        vis,
+        name,
+        body,
+        pos,
+    })
+}
+
+fn parse_use(pair: Pair<Rule>) -> Result<UseItem, ParseError> {
+    let pos = pos_of(&pair);
+    let mut vis = Visibility::Private;
+    let mut path = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::vis => vis = Visibility::Public,
+            Rule::kw_use => {}
+            Rule::use_path => path = Some(parse_use_path(inner)?),
+            other => return Err(unexpected(other, "use")),
+        }
+    }
+    let path = path.ok_or_else(|| ParseError::Syntax("`use` without a path".into()))?;
+    Ok(UseItem { vis, path, pos })
+}
+
+/// Interpret a `use_path`'s raw segments into a leading qualifier, the remaining
+/// segments, and a trailing `*` glob flag. `root` / `self` / `super` are only
+/// qualifiers in leading position; `*` is only valid as the final segment.
+fn parse_use_path(pair: Pair<Rule>) -> Result<UsePath, ParseError> {
+    let raw: Vec<String> = pair.into_inner().map(|p| p.as_str().to_string()).collect();
+    let mut idx = 0;
+    let qualifier = match raw.first().map(String::as_str) {
+        Some("root") => {
+            idx = 1;
+            PathQualifier::Root
+        }
+        Some("self") => {
+            idx = 1;
+            PathQualifier::SelfMod
+        }
+        Some("super") => {
+            let mut n = 0;
+            while raw.get(idx).map(String::as_str) == Some("super") {
+                n += 1;
+                idx += 1;
+            }
+            PathQualifier::Super(n)
+        }
+        _ => PathQualifier::None,
+    };
+    let mut segments: Vec<String> = raw[idx..].to_vec();
+    let glob = segments.last().map(String::as_str) == Some("*");
+    if glob {
+        segments.pop();
+    }
+    if segments.iter().any(|s| s == "*") {
+        return Err(ParseError::Syntax(
+            "`*` may only appear as the final segment of a `use` path".into(),
+        ));
+    }
+    if segments
+        .iter()
+        .any(|s| matches!(s.as_str(), "root" | "self" | "super"))
+    {
+        return Err(ParseError::Syntax(
+            "`root` / `self` / `super` may only lead a `use` path".into(),
+        ));
+    }
+    Ok(UsePath {
+        qualifier,
+        segments,
+        glob,
+    })
 }
 
 fn parse_const(pair: Pair<Rule>) -> Result<ConstItem, ParseError> {
     let pos = pos_of(&pair);
     let mut inner = pair.into_inner();
+    let vis = take_vis(&mut inner);
     let name = next_ident(&mut inner, "const name")?;
     let ty = parse_typeref(next_pair(&mut inner, "const type")?)?;
     let value = parse_expr(next_pair(&mut inner, "const value")?)?;
     Ok(ConstItem {
+        vis,
         name,
         ty,
         value,
@@ -432,11 +542,13 @@ fn parse_const(pair: Pair<Rule>) -> Result<ConstItem, ParseError> {
 fn parse_struct(pair: Pair<Rule>) -> Result<StructItem, ParseError> {
     let pos = pos_of(&pair);
     let mut attrs = Vec::new();
+    let mut vis = Visibility::Private;
     let mut name = String::new();
     let mut fields = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::attr => attrs.push(parse_attr(inner)?),
+            Rule::vis => vis = Visibility::Public,
             Rule::ident => name = inner.as_str().to_string(),
             Rule::struct_field => fields.push(parse_struct_field(inner)?),
             other => return Err(unexpected(other, "struct")),
@@ -444,6 +556,7 @@ fn parse_struct(pair: Pair<Rule>) -> Result<StructItem, ParseError> {
     }
     Ok(StructItem {
         attrs,
+        vis,
         name,
         fields,
         pos,
@@ -453,6 +566,7 @@ fn parse_struct(pair: Pair<Rule>) -> Result<StructItem, ParseError> {
 fn parse_struct_field(pair: Pair<Rule>) -> Result<StructField, ParseError> {
     let pos = pos_of(&pair);
     let mut inner = pair.into_inner();
+    let vis = take_vis(&mut inner);
     let name = next_ident(&mut inner, "field name")?;
     let ty = parse_typeref(next_pair(&mut inner, "field type")?)?;
     let default = match inner.next() {
@@ -460,6 +574,7 @@ fn parse_struct_field(pair: Pair<Rule>) -> Result<StructField, ParseError> {
         None => None,
     };
     Ok(StructField {
+        vis,
         name,
         ty,
         default,
@@ -470,11 +585,13 @@ fn parse_struct_field(pair: Pair<Rule>) -> Result<StructField, ParseError> {
 fn parse_enum(pair: Pair<Rule>) -> Result<EnumItem, ParseError> {
     let pos = pos_of(&pair);
     let mut attrs = Vec::new();
+    let mut vis = Visibility::Private;
     let mut name = String::new();
     let mut variants = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::attr => attrs.push(parse_attr(inner)?),
+            Rule::vis => vis = Visibility::Public,
             Rule::ident => name = inner.as_str().to_string(),
             Rule::enum_variant => variants.push(parse_enum_variant(inner)?),
             other => return Err(unexpected(other, "enum")),
@@ -482,6 +599,7 @@ fn parse_enum(pair: Pair<Rule>) -> Result<EnumItem, ParseError> {
     }
     Ok(EnumItem {
         attrs,
+        vis,
         name,
         variants,
         pos,
@@ -524,6 +642,7 @@ fn parse_impl(pair: Pair<Rule>) -> Result<ImplItem, ParseError> {
 fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
     let pos = pos_of(&pair);
     let mut attrs = Vec::new();
+    let mut vis = Visibility::Private;
     let mut name = String::new();
     let mut params = Vec::new();
     let mut ret = None;
@@ -531,6 +650,7 @@ fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::attr => attrs.push(parse_attr(inner)?),
+            Rule::vis => vis = Visibility::Public,
             Rule::ident => name = inner.as_str().to_string(),
             Rule::param => params.push(parse_param(inner)?),
             Rule::f_typeref => ret = Some(parse_typeref(inner)?),
@@ -542,6 +662,7 @@ fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
     let body = body.ok_or_else(|| ParseError::Syntax("function has no body".into()))?;
     Ok(Func {
         attrs,
+        vis,
         name,
         params,
         ret,
