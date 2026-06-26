@@ -62,6 +62,11 @@ conformance require="auto":
 build:
     scripts/build.sh
 
+# Emit SystemVerilog for the example .snt files into build/verilog/ (git-ignored,
+# observable in the dev container). emit = verilog (default) | harness | all.
+verilog emit="verilog":
+    scripts/verilog.sh {{ emit }}
+
 # --- Aggregates (these invoke the recipes above) ---------------------------
 
 # Fast inner-loop gate: format, lint, and test.
