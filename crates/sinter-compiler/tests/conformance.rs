@@ -18,6 +18,10 @@ use sinter_compiler::{compile_str, verilator, verilog};
 
 const CYCLES: usize = 64;
 
+/// Shared Verilator flag file mirroring the downstream pico-gs config (repo-root
+/// `verilator.f`); drives the build / co-simulation step.
+const VERILATOR_FLAGS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../verilator.f");
+
 struct Example {
     name: &'static str,
     source: &'static str,
@@ -114,11 +118,32 @@ fn run_yosys(sv: &Path, top: &str) {
     );
 }
 
-/// Build and run the Verilator model, returning its output trace bytes.
+/// Strict Verilator lint (`-Wall`, warnings fatal — note: NO `-Wno-fatal`): the
+/// `claude-skill-verilog` gate. Run alongside the pico-gs-flagged co-sim so that
+/// generated Verilog must be warning-free even though the co-sim tolerates
+/// warnings (matching pico-gs's `-Wno-fatal`).
+fn lint_verilator(sv: &Path, top: &str) {
+    let out = Command::new("verilator")
+        .args(["--lint-only", "-Wall", "--top-module"])
+        .arg(top)
+        .arg(sv)
+        .output()
+        .expect("spawn verilator");
+    assert!(
+        out.status.success(),
+        "verilator lint failed for {top}:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Build and run the Verilator model, returning its output trace bytes. The
+/// build uses the shared pico-gs flag file (`-f verilator.f`) so the generated
+/// SV runs under the same Verilator settings as the downstream project.
 fn run_verilator(dir: &Path, sv: &Path, harness: &Path, top: &str, stim: &Path) -> Vec<u8> {
     let obj = dir.join("obj");
     let build = Command::new("verilator")
-        .args(["--cc", "--exe", "--build", "-Wall", "--x-assign", "unique"])
+        .args(["--cc", "--exe", "--build", "-f", VERILATOR_FLAGS])
         .arg("--top-module")
         .arg(top)
         .arg("--Mdir")
@@ -190,6 +215,8 @@ fn examples_pass_the_oracle() {
             run_yosys(&sv, &module.name);
         }
         if have_verilator {
+            // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
+            lint_verilator(&sv, &module.name);
             let dut = run_verilator(&dir, &sv, &harness, &module.name, &stim_path);
             assert_eq!(
                 dut.len(),

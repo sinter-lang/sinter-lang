@@ -566,6 +566,18 @@ Generate the Rust sim and the Verilog from the **same source**, run both, **diff
 the binary traces**. The conformance harness becomes the language's own
 correctness oracle. This should be wired into CI from the first milestone.
 
+**Verilator settings.** The Verilator co-simulation runs under a shared flag file
+(repo-root `verilator.f`) that mirrors the downstream **pico-gs** integration
+config (`londey/pico-gs:integration/verilator.f`), so the generated SystemVerilog
+is exercised under the same settings as the project that consumes it: `-Wall
+-Wno-fatal -j 0 --assert --timing --x-assign unique --x-initial unique`
+(waveform tracing is omitted — the harness writes its own binary trace). The
+`--x-initial`/`--x-assign unique` X-propagation flags make missing resets /
+uninitialised signals surface as trace mismatches. Because that flag set is
+`-Wno-fatal` (matching pico-gs), a **separate strict `--lint-only -Wall` pass**
+(warnings fatal, no pragmas) enforces the lint-clean guarantee on every generated
+module.
+
 ### 7.5 (Future, explicitly deferred) custom place-and-route
 
 The "iteratively collapse a high-dimensional network of springs onto the 2-D
