@@ -8,7 +8,7 @@
 
 use std::fmt::Write as _;
 
-use sinter_syntax::ast::{BinOp, Type, UnaryOp};
+use sinter_syntax::ast::{BinOp, CastMode, Type, UnaryOp};
 
 use crate::ir::{Expr, ExprKind, Module};
 
@@ -151,11 +151,56 @@ fn expr(e: &Expr) -> String {
             format!("({sym}{})", expr(inner))
         }
         ExprKind::Binary { op, lhs, rhs } => {
-            format!("({} {} {})", expr(lhs), bin_sym(*op), expr(rhs))
+            // Width-inferred `+`/`-` widen the result; size-cast the operands up
+            // to the result width so the Verilog arithmetic context matches the
+            // `eval` semantics (a no-op when operands are already that wide, as
+            // on the legacy same-width path).
+            if matches!(op, BinOp::Add | BinOp::Sub) {
+                let w = e.ty.width();
+                format!("({} {} {})", widen(lhs, w), bin_sym(*op), widen(rhs, w))
+            } else {
+                format!("({} {} {})", expr(lhs), bin_sym(*op), expr(rhs))
+            }
         }
         ExprKind::If { cond, then, els } => {
             format!("({} ? {} : {})", expr(cond), expr(then), expr(els))
         }
+        ExprKind::Cast { expr: inner, mode } => match mode {
+            // Reinterpret the low `w` bits via a SystemVerilog size cast.
+            CastMode::Wrap | CastMode::Trunc | CastMode::Round => {
+                format!("{}'({})", e.ty.width(), expr(inner))
+            }
+            CastMode::Sat => sat_expr(inner, e.ty),
+        },
+    }
+}
+
+/// Size-cast an operand up to `w` bits (zero-extend) when narrower; emit it
+/// unchanged otherwise. Signed widening is deferred (F3+); the functional
+/// subset lowered today is unsigned.
+fn widen(operand: &Expr, w: u32) -> String {
+    if operand.ty.width() < w && !operand.ty.is_signed() {
+        format!("{w}'({})", expr(operand))
+    } else {
+        expr(operand)
+    }
+}
+
+/// Emit a saturating cast of `inner` into scalar type `to` (DESIGN §6.3). Used
+/// only once `sat` casts are lowered (F4); the `eval` side is `apply_cast`.
+fn sat_expr(inner: &Expr, to: Type) -> String {
+    let w = to.width();
+    let i = expr(inner);
+    if to.is_signed() {
+        let hi = (1i128 << (w - 1)) - 1;
+        let lo_abs = 1u128 << (w - 1);
+        format!(
+            "(($signed({i}) > {w}'sd{hi}) ? {w}'sd{hi} : \
+             (($signed({i}) < -{w}'sd{lo_abs}) ? -{w}'sd{lo_abs} : {w}'({i})))"
+        )
+    } else {
+        let hi = (1u128 << w) - 1;
+        format!("(({i} > {hi}) ? {w}'d{hi} : {w}'({i}))")
     }
 }
 

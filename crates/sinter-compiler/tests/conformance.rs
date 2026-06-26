@@ -32,6 +32,11 @@ const EXAMPLES: &[Example] = &[
         name: "accumulator",
         source: include_str!("../../../examples/accumulator.snt"),
     },
+    // Functional surface (DESIGN §2.1), lowered by F2 to the same IR.
+    Example {
+        name: "fn_counter",
+        source: include_str!("../../../examples/fn_counter.snt"),
+    },
 ];
 
 fn tool_available(tool: &str) -> bool {

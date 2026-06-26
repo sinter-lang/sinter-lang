@@ -1,0 +1,20 @@
+// Functional-surface counter (DESIGN §2.1).
+//
+// The state is a `struct` and one invocation of the `#[clock]` transition
+// method is one cycle. This is the legacy `examples/counter.snt` re-expressed in
+// the functional surface: `value` increments when `en` is high and holds
+// otherwise, wrapping at the declared 8-bit width. It is the F2 lowering
+// milestone's worked example — it elaborates to an `ir::Module` and runs through
+// the sim<->Verilog conformance oracle.
+struct Counter {
+    value: u8 = 0,
+}
+
+impl Counter {
+    #[clock(domain = sys)]
+    fn tick(self, en: u1) -> Counter {
+        Counter {
+            value: if en == 1 { (self.value + 1) as u8 wrap } else { self.value },
+        }
+    }
+}
