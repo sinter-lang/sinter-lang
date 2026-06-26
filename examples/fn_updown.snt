@@ -1,0 +1,43 @@
+// A small functional design (DESIGN §2.1) exercising the F3 features:
+// an `#[encoding]`-defaulted `enum`, a `match`, a sub-state **method** call, and
+// a **nested** state struct. Small enough to verify behaviorally and to
+// co-simulate through the conformance oracle.
+//
+// `up`/`down` drive a 4-bit digit up or down (wrapping); `up` wins a tie.
+enum Op {
+    Hold,
+    Inc,
+    Dec,
+}
+
+struct Digit {
+    value: u4 = 0,
+}
+
+impl Digit {
+    fn step(self, op: Op) -> Digit {
+        match op {
+            Op::Inc => Digit { value: (self.value + 1) as u4 wrap },
+            Op::Dec => Digit { value: (self.value - 1) as u4 wrap },
+            Op::Hold => self,
+        }
+    }
+}
+
+struct Top {
+    d: Digit,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, up: u1, down: u1) -> Top {
+        let op = if up == 1 {
+            Op::Inc
+        } else if down == 1 {
+            Op::Dec
+        } else {
+            Op::Hold
+        };
+        Top { d: self.d.step(op) }
+    }
+}

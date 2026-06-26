@@ -1,0 +1,14 @@
+// A signed functional design: signed width-inferred arithmetic (i4 + i4 -> i5)
+// and a signed narrowing `wrap` cast back to i4. Locks sim<->Verilog agreement
+// on signed operand extension and signed narrowing casts through the oracle
+// (the legacy accumulator only exercises same-width signed arithmetic).
+struct Acc {
+    acc: i4 = 0,
+}
+
+impl Acc {
+    #[clock(domain = sys)]
+    fn tick(self, x: i4) -> Acc {
+        Acc { acc: (self.acc + x) as i4 wrap }
+    }
+}

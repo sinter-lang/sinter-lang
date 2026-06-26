@@ -37,6 +37,22 @@ const EXAMPLES: &[Example] = &[
         name: "fn_counter",
         source: include_str!("../../../examples/fn_counter.snt"),
     },
+    // Functional surface F3: enum/match, sub-state method, nested struct.
+    Example {
+        name: "fn_updown",
+        source: include_str!("../../../examples/fn_updown.snt"),
+    },
+    // Signed arithmetic + signed narrowing `wrap` cast.
+    Example {
+        name: "fn_signed",
+        source: include_str!("../../../examples/fn_signed.snt"),
+    },
+    // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
+    // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
+    Example {
+        name: "go_board_counter",
+        source: include_str!("../../../examples/go_board_counter.snt"),
+    },
 ];
 
 fn tool_available(tool: &str) -> bool {

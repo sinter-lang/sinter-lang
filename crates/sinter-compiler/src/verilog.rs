@@ -175,9 +175,12 @@ fn expr(e: &Expr) -> String {
     }
 }
 
-/// Size-cast an operand up to `w` bits (zero-extend) when narrower; emit it
-/// unchanged otherwise. Signed widening is deferred (F3+); the functional
-/// subset lowered today is unsigned.
+/// For a `+`/`-` operand narrower than the result width `w`: zero-extend an
+/// unsigned operand with a size cast. A *signed* operand is emitted unchanged —
+/// SystemVerilog's context-determined sizing sign-extends it in every context
+/// the elaborator produces (assignment to a target at least as wide, a
+/// narrowing cast, or a comparison; both operands of a `+`/`-` share signedness,
+/// and widening casts are rejected during elaboration). `eval::ext` mirrors this.
 fn widen(operand: &Expr, w: u32) -> String {
     if operand.ty.width() < w && !operand.ty.is_signed() {
         format!("{w}'({})", expr(operand))
@@ -186,8 +189,11 @@ fn widen(operand: &Expr, w: u32) -> String {
     }
 }
 
-/// Emit a saturating cast of `inner` into scalar type `to` (DESIGN §6.3). Used
-/// only once `sat` casts are lowered (F4); the `eval` side is `apply_cast`.
+/// Emit a saturating cast of `inner` into scalar type `to` (DESIGN §6.3).
+/// Currently unreachable — `sat`/`trunc`/`round` casts are rejected during
+/// elaboration (F4). This emission is not yet Verilator-lint-verified; F4 will
+/// fix the threshold widths (compute bounds at the source width) and add an
+/// oracle example before enabling it. The `eval` side (`apply_cast`) is correct.
 fn sat_expr(inner: &Expr, to: Type) -> String {
     let w = to.width();
     let i = expr(inner);
