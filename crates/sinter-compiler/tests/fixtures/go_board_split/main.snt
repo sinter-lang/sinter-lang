@@ -1,0 +1,64 @@
+// Multi-file split of examples/go_board_counter.snt (DESIGN §10, milestone S3).
+// Must elaborate bit-for-bit identical to the single-file version.
+mod debounce;
+mod edge;
+mod digit;
+mod display;
+
+use root::debounce::Debounce;
+use root::edge::Edge;
+use root::digit::Cmd;
+use root::digit::Digit;
+use root::display::seven_seg;
+
+pub const DEBOUNCE_TICKS: u20 = 250_000;
+
+struct Buttons {
+    inc: u1,
+    dec: u1,
+}
+
+struct Top {
+    inc: Debounce,
+    dec: Debounce,
+    inc_edge: Edge,
+    dec_edge: Edge,
+    tens: Digit,
+    ones: Digit,
+    seg: [u7; 2] = [0, 0],
+    led: u4 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, btn: Buttons) -> Top {
+        let inc = self.inc.step(btn.inc);
+        let dec = self.dec.step(btn.dec);
+
+        let inc_pulse = self.inc_edge.rising(inc.level);
+        let dec_pulse = self.dec_edge.rising(dec.level);
+
+        let cmd = if inc_pulse {
+            Cmd::Up
+        } else if dec_pulse {
+            Cmd::Down
+        } else {
+            Cmd::Hold
+        };
+
+        let (ones, ones_wrap) = self.ones.step(cmd);
+        let tens_cmd = if ones_wrap { cmd } else { Cmd::Hold };
+        let (tens, _tens_wrap) = self.tens.step(tens_cmd);
+
+        Top {
+            inc: inc,
+            dec: dec,
+            inc_edge: self.inc_edge.step(inc.level),
+            dec_edge: self.dec_edge.step(dec.level),
+            ones: ones,
+            tens: tens,
+            seg: [seven_seg(ones.value), seven_seg(tens.value)],
+            led: self.led,
+        }
+    }
+}

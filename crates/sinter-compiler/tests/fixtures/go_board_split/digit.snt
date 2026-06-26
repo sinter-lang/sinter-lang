@@ -1,0 +1,28 @@
+#[encoding(binary)]
+pub enum Cmd {
+    Hold,
+    Up,
+    Down,
+}
+
+pub struct Digit {
+    pub value: u4 = 0,
+}
+
+impl Digit {
+    pub fn step(self, cmd: Cmd) -> (Digit, u1) {
+        match cmd {
+            Cmd::Hold => (self, 0),
+            Cmd::Up => if self.value == 9 {
+                (Digit { value: 0 }, 1)
+            } else {
+                (Digit { value: (self.value + 1) as u4 wrap }, 0)
+            },
+            Cmd::Down => if self.value == 0 {
+                (Digit { value: 9 }, 1)
+            } else {
+                (Digit { value: (self.value - 1) as u4 wrap }, 0)
+            },
+        }
+    }
+}

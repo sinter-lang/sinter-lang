@@ -727,14 +727,21 @@ layer is deferred.
 |---|---|---|
 | **S1** | ✅ Grammar + AST: `mod` / `use` / `pub` (private-by-default `Visibility` on items + fields), `use` paths with `self` / `super` / `root` qualifiers + `*` glob; the Rust-2018 file loader (`foo.snt`, children in `foo/bar.snt`, never `mod.snt`) producing a `ModuleTree`. (The single-file compile path rejects `mod` / `use` until S2/S3.) | `load_project` builds the tree; corpus + loader tests pass |
 | **S2** | ✅ Cross-module name resolution + **item** visibility: `resolve_project` lowers the module tree to one flat program with canonical (`mod::name`) names, resolving `use` (bare = root-relative, `self`/`super`/`root`, `::*` globs with Rust shadowing precedence) and qualified paths, enforcing private-by-default item access (reachable iff `pub` or from a descendant). Same-named items in different modules coexist; the `#[clock]` root struct is required to be in the root module. *Field-access* visibility, `pub use` re-export outward, and pub-*path* privacy are deferred. | F1 checks pass across files; private-item access is rejected (`compile_project`) |
-| **S3** | Pipeline integration: multi-file `sinter check` / `build`; the unique `#[clock]` root resolves from the root module and elaborates to the **same** flat IR as today. | the Go Board, split across files, passes the oracle **bit-for-bit identical** to the single-file version (refactor-invariance) |
+| **S3** | ✅ Pipeline integration: `sinter check` / `build` / `sim` route through `compile_project` (load + resolve + check + elaborate); a single file with no `mod`s behaves exactly as before. | the Go Board split across files elaborates to **byte-identical** SystemVerilog and an identical reference trace (refactor-invariance) |
 
 The S3 bit-for-bit check is the key correctness lever: splitting a design across
-files must be a pure refactor with zero effect on the elaborated IR or the trace.
+files is a pure refactor with zero effect on the elaborated IR or the trace —
+verified by `tests/project.rs` (single-file vs `tests/fixtures/go_board_split/`).
 
 ---
 
 ## 10. Source Organization — Modules & Visibility (SETTLED shape)
+
+> **Realized (S1–S3, §9.2).** Parsing + the Rust-2018 file loader (S1), cross-
+> module name resolution + `pub`/private *item* visibility (S2), and CLI/pipeline
+> integration with proven refactor-invariance (S3) are implemented.
+> *Field-access* visibility, `pub use` re-export outward, and full pub-*path*
+> privacy remain deferred.
 
 The functional surface (§2.1) is authored as `struct` state + `impl` methods +
 free `fn`s. Past a toy size, those must span multiple files with enforced
