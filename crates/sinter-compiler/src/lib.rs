@@ -17,6 +17,7 @@ pub mod eval;
 pub mod functional;
 pub mod ir;
 pub mod pinmap;
+pub mod resolve;
 pub mod sim;
 pub mod verilator;
 pub mod verilog;
@@ -36,6 +37,26 @@ pub use ir::{Design, Module};
 /// Returns a [`CompileError`] on a parse or semantic error.
 pub fn compile_str(source: &str) -> Result<Design, CompileError> {
     let program = sinter_syntax::parse_program(source)?;
+    compile_program(program)
+}
+
+/// Parse, resolve, and check a multi-file project rooted at `root` (DESIGN §10).
+///
+/// Loads the module tree ([`sinter_syntax::load_project`]), resolves cross-module
+/// names + visibility into a single flat program ([`resolve`]), then runs the
+/// same checks and lowering as [`compile_str`]. A single-file project (no `mod` /
+/// `use`) yields the same result as calling [`compile_str`] on that file.
+///
+/// # Errors
+/// Returns a [`CompileError`] on a load, resolution, or semantic error.
+pub fn compile_project(root: &std::path::Path) -> Result<Design, CompileError> {
+    let tree = sinter_syntax::load_project(root)?;
+    let program = resolve::resolve_project(&tree)?;
+    compile_program(program)
+}
+
+/// Check and lower an already-resolved [`Design`] from a flat program.
+fn compile_program(program: sinter_syntax::ast::Program) -> Result<Design, CompileError> {
     functional::check_functional(&program)?;
     let mut design = check::check_program(&program)?;
     if let Some(module) = elaborate::elaborate(&program)? {

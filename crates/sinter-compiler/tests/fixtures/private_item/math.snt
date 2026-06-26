@@ -1,0 +1,2 @@
+pub struct Pair { pub a: u8 = 0 }
+fn secret(x: u8) -> u8 { x }

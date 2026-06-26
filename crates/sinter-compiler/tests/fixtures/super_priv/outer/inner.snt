@@ -1,0 +1,1 @@
+pub fn i() -> u8 { super::SECRET }

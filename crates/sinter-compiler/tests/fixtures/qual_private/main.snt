@@ -1,0 +1,2 @@
+mod m;
+fn f() -> u8 { root::m::secret(1) }

@@ -1,0 +1,3 @@
+mod m;
+use root::m::*;
+pub fn t(p: Pair) -> u8 { add8(p.a) }
