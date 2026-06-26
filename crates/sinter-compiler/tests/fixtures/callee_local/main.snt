@@ -1,0 +1,3 @@
+mod m;
+use root::m::compute;
+pub fn t(compute: u8) -> u8 { compute(1) }

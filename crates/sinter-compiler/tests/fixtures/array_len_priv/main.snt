@@ -1,0 +1,2 @@
+mod m;
+pub struct S { a: [u8; root::m::SECRET] = [0, 0, 0, 0] }

@@ -1,0 +1,2 @@
+mod math;
+pub fn t() -> u9 { root::math::add(1, 2) }

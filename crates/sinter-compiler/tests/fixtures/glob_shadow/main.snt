@@ -1,0 +1,5 @@
+mod a;
+mod b;
+use root::a::Foo;
+use root::b::*;
+pub fn t(f: Foo) -> u8 { f.x }

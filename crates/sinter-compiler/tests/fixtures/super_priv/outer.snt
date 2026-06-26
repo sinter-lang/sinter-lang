@@ -1,0 +1,2 @@
+mod inner;
+const SECRET: u8 = 7;

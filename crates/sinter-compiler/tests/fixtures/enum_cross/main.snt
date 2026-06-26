@@ -1,0 +1,9 @@
+mod ops;
+use root::ops::Cmd;
+pub fn classify(c: Cmd) -> u2 {
+    match c {
+        Cmd::Hold => 0,
+        Cmd::Up => 1,
+        Cmd::Down => 2,
+    }
+}

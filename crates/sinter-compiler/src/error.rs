@@ -1,7 +1,7 @@
 //! Compiler error types.
 
 use sinter_syntax::ast::{Pos, Type};
-use sinter_syntax::ParseError;
+use sinter_syntax::{LoadError, ParseError};
 
 /// An error produced while checking or lowering a Sinter program.
 #[derive(Debug, thiserror::Error)]
@@ -9,6 +9,10 @@ pub enum CompileError {
     /// The source failed to parse.
     #[error(transparent)]
     Parse(#[from] ParseError),
+
+    /// A multi-file project failed to load (DESIGN §10).
+    #[error(transparent)]
+    Load(#[from] LoadError),
 
     /// A semantic error, with a source position.
     #[error("{module}:{}:{}: {msg}", pos.line, pos.col)]

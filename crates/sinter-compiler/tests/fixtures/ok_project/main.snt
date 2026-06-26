@@ -1,0 +1,5 @@
+mod math;
+use root::math::Pair;
+use root::math::add;
+
+pub fn top(p: Pair) -> u9 { add(p.a, p.b) }
