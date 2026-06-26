@@ -47,6 +47,19 @@ const EXAMPLES: &[Example] = &[
         name: "fn_signed",
         source: include_str!("../../../examples/fn_signed.snt"),
     },
+    // F4 fixed-point: Q-format multiply, saturating cast, rounding cast.
+    Example {
+        name: "fn_fixed",
+        source: include_str!("../../../examples/fn_fixed.snt"),
+    },
+    Example {
+        name: "fn_sat",
+        source: include_str!("../../../examples/fn_sat.snt"),
+    },
+    Example {
+        name: "fn_round",
+        source: include_str!("../../../examples/fn_round.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {

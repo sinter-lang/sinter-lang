@@ -1,0 +1,12 @@
+// Saturating signed accumulate: Q i4 + i4 -> i5, narrowed back to i4 with `sat`
+// (clamp to [-8, 7]) instead of wrapping. Exercises the saturating cast.
+struct Sat {
+    acc: i4 = 0,
+}
+
+impl Sat {
+    #[clock(domain = sys)]
+    fn tick(self, x: i4) -> Sat {
+        Sat { acc: (self.acc + x) as i4 sat }
+    }
+}

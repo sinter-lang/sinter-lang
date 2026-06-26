@@ -557,6 +557,25 @@ impl Checker<'_> {
                 let v = self.const_eval(inner, pos)?;
                 Ok(crate::eval::apply_cast(v, inner.ty, expr.ty, *mode))
             }
+            ExprKind::Shl {
+                expr: inner,
+                amount,
+            } => {
+                let v = self.const_eval(inner, pos)?;
+                Ok(crate::eval::apply_shl(v, expr.ty.width(), *amount))
+            }
+            ExprKind::Shr {
+                expr: inner,
+                amount,
+            } => {
+                let v = self.const_eval(inner, pos)?;
+                Ok(crate::eval::apply_shr(
+                    v,
+                    inner.ty,
+                    expr.ty.width(),
+                    *amount,
+                ))
+            }
         }
     }
 }

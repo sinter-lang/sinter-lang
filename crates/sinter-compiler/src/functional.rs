@@ -836,23 +836,50 @@ impl Checker<'_> {
                 self.require_scalar(&l, ctx, pos)?;
                 Ok(l)
             }
-            BinOp::Add | BinOp::Sub => {
-                // Width inference (DESIGN §6.2): iN+iM -> i(max(N,M)+1). Operands
-                // are taken at a common type; the result widens by one bit, so
-                // storing it back requires an explicit narrowing cast.
-                let opty = self.synth(lhs, env).or_else(|| self.synth(rhs, env));
-                let l = self.check_expr(lhs, env, opty.as_ref(), ctx, pos)?;
-                let r = self.check_expr(rhs, env, Some(&l), ctx, pos)?;
-                self.expect(&l, &r, ctx, pos)?;
-                let w = self
-                    .scalar_width(&l, ctx, pos)?
-                    .min(MAX_WIDTH - 1)
-                    .saturating_add(1);
-                Ok(if l.is_signed() {
-                    FType::Int(w)
+            BinOp::Add | BinOp::Sub | BinOp::Mul => {
+                // Width inference (DESIGN §6.2). A bare literal adopts the other
+                // operand's type; two concrete operands may differ in integer
+                // width. The result widens, so storing it back needs a cast.
+                let lhint = self.synth(lhs, env).or_else(|| self.synth(rhs, env));
+                let l = self.check_expr(lhs, env, lhint.as_ref(), ctx, pos)?;
+                let rhint = self.synth(rhs, env).or_else(|| Some(l.clone()));
+                let r = self.check_expr(rhs, env, rhint.as_ref(), ctx, pos)?;
+                let (ls, li, lf) =
+                    fx_parts(&l).ok_or_else(|| sem(ctx, pos, format!("`{l}` is not numeric")))?;
+                let (rs, ri, rf) =
+                    fx_parts(&r).ok_or_else(|| sem(ctx, pos, format!("`{r}` is not numeric")))?;
+                if ls != rs {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("mixed signedness in arithmetic: `{l}` and `{r}`"),
+                    ));
+                }
+                let (ibits, fbits) = if op == BinOp::Mul {
+                    // Qa.b * Qc.d -> Q(a+c).(b+d).
+                    (li + ri, lf + rf)
                 } else {
-                    FType::Uint(w)
-                })
+                    // Q a.f +/- Q c.f -> Q (max(a,c)+1).f (fractional bits aligned).
+                    if lf != rf {
+                        return Err(sem(
+                            ctx,
+                            pos,
+                            format!("`+`/`-` need matching fractional bits: `{l}` vs `{r}`"),
+                        ));
+                    }
+                    (li.max(ri) + 1, lf)
+                };
+                if ibits + fbits > MAX_WIDTH {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!(
+                            "result type `{}` exceeds the {MAX_WIDTH}-bit limit",
+                            make_fx(ls, ibits, fbits)
+                        ),
+                    ));
+                }
+                Ok(make_fx(ls, ibits, fbits))
             }
             _ => Err(sem(ctx, pos, "unsupported binary operator".to_string())),
         }
@@ -1112,11 +1139,6 @@ impl Checker<'_> {
         }
     }
 
-    fn scalar_width(&self, ty: &FType, ctx: &str, pos: Pos) -> Result<u32, CompileError> {
-        ty.scalar_width()
-            .ok_or_else(|| sem(ctx, pos, format!("expected a scalar value, found `{ty}`")))
-    }
-
     /// Best-effort type synthesis without an expectation, mirroring the legacy
     /// checker's `synth_concrete`. Returns `None` when the form needs context
     /// (a bare literal, `if`, `match`, block).
@@ -1169,6 +1191,38 @@ impl Checker<'_> {
             }
             Expr::StructLit { name, .. } => Some(FType::Struct(name.clone())),
             _ => None,
+        }
+    }
+}
+
+/// The (signed, integer-bits, fractional-bits) of a numeric type. Integers are
+/// fixed-point with zero fractional bits.
+fn fx_parts(ty: &FType) -> Option<(bool, u32, u32)> {
+    match ty {
+        FType::Uint(n) => Some((false, *n, 0)),
+        FType::Int(n) => Some((true, *n, 0)),
+        FType::Fixed {
+            signed,
+            int_bits,
+            frac_bits,
+        } => Some((*signed, *int_bits, *frac_bits)),
+        _ => None,
+    }
+}
+
+/// Build a numeric type, collapsing zero fractional bits to a plain integer.
+fn make_fx(signed: bool, ibits: u32, fbits: u32) -> FType {
+    if fbits == 0 {
+        if signed {
+            FType::Int(ibits)
+        } else {
+            FType::Uint(ibits)
+        }
+    } else {
+        FType::Fixed {
+            signed,
+            int_bits: ibits,
+            frac_bits: fbits,
         }
     }
 }

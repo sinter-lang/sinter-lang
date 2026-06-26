@@ -1,0 +1,13 @@
+// Fixed-point multiply (DESIGN §6.1/§6.2): Q4.4 * Q4.4 -> Q8.8. Exercises the
+// `*` operator and fixed-point erasure to a plain integer in the IR. The result
+// type matches the product width exactly, so no cast is needed.
+struct Prod {
+    p: i8.8 = 0,
+}
+
+impl Prod {
+    #[clock(domain = sys)]
+    fn tick(self, a: i4.4, b: i4.4) -> Prod {
+        Prod { p: a * b }
+    }
+}

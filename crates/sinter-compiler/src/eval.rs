@@ -39,6 +39,10 @@ pub fn apply_binary(op: BinOp, l: u64, lty: Type, r: u64, rty: Type, result_ty: 
         // operands too. A no-op on the legacy same-width path.
         BinOp::Add => mask(ext(l, lty, w).wrapping_add(ext(r, rty, w)), w),
         BinOp::Sub => mask(ext(l, lty, w).wrapping_sub(ext(r, rty, w)), w),
+        // Operands are extended to the (wider) product type, so signed and
+        // unsigned multiply share one masked low-`w`-bits implementation
+        // (DESIGN §6.2: `Qa.b * Qc.d -> Q(a+c).(b+d)`).
+        BinOp::Mul => mask(ext(l, lty, w).wrapping_mul(ext(r, rty, w)), w),
         BinOp::And => mask(l & r, w),
         BinOp::Or => mask(l | r, w),
         BinOp::Xor => mask(l ^ r, w),
@@ -87,6 +91,40 @@ pub fn eval_expr(expr: &Expr, env: &HashMap<String, u64>) -> u64 {
         ExprKind::Cast { expr: inner, mode } => {
             apply_cast(eval_expr(inner, env), inner.ty, expr.ty, *mode)
         }
+        ExprKind::Shl {
+            expr: inner,
+            amount,
+        } => apply_shl(eval_expr(inner, env), expr.ty.width(), *amount),
+        ExprKind::Shr {
+            expr: inner,
+            amount,
+        } => apply_shr(eval_expr(inner, env), inner.ty, expr.ty.width(), *amount),
+    }
+}
+
+/// Left shift `v` by `amount`, masked to the (wider) result width `to_w`. The
+/// value scales by `2^amount`.
+#[must_use]
+pub fn apply_shl(v: u64, to_w: u32, amount: u32) -> u64 {
+    if amount >= 64 {
+        0
+    } else {
+        mask(v << amount, to_w)
+    }
+}
+
+/// Right shift `v` (of type `from`) by `amount`, masked to the (narrower) result
+/// width `to_w`. Arithmetic (toward -inf) for a signed operand, logical for
+/// unsigned.
+#[must_use]
+pub fn apply_shr(v: u64, from: Type, to_w: u32, amount: u32) -> u64 {
+    if from.is_signed() {
+        // `signed_value` is i128, so the shift is always well-defined.
+        mask((signed_value(v, from) >> amount.min(127)) as u64, to_w)
+    } else if amount >= 64 {
+        0
+    } else {
+        mask(v >> amount, to_w)
     }
 }
 
@@ -114,10 +152,10 @@ fn ext(v: u64, from: Type, to_w: u32) -> u64 {
 pub fn apply_cast(v: u64, from: Type, to: Type, mode: CastMode) -> u64 {
     let to_w = to.width();
     match mode {
-        // Reinterpret the low bits: truncate when narrowing, zero-fill when
-        // widening. `trunc`/`round` are fixed-point modes (F4); on integers
-        // they coincide with `wrap`.
-        CastMode::Wrap | CastMode::Trunc | CastMode::Round => mask(v, to_w),
+        // Resize: sign/zero-extend (per the source type) when widening, truncate
+        // the high bits when narrowing. `trunc`/`round` never reach the IR (the
+        // elaborator lowers them to shifts); kept here for match exhaustiveness.
+        CastMode::Wrap | CastMode::Trunc | CastMode::Round => mask(ext(v, from, to_w), to_w),
         CastMode::Sat => {
             let val = signed_value(v, from);
             let (lo, hi) = range_of(to);

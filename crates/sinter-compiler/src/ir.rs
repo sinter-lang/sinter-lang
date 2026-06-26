@@ -126,11 +126,30 @@ pub enum ExprKind {
     },
     /// A mode-named cast to the node's own [`Type`] (DESIGN §6.3). Produced by
     /// the functional surface's elaboration; the legacy `module` path never
-    /// emits one.
+    /// emits one. `Wrap` resizes (sign/zero-extend when widening, truncate when
+    /// narrowing); `Sat` saturates to the node type's range.
     Cast {
         /// The operand being converted (carries its own source type).
         expr: Box<Expr>,
-        /// How out-of-range / fractional values are handled.
+        /// How out-of-range values are handled.
         mode: CastMode,
+    },
+    /// Left shift by a constant, widening the result by `amount` bits (the node
+    /// type is `amount` bits wider than the operand). Used for fixed-point
+    /// fractional alignment / precision growth.
+    Shl {
+        /// The value being shifted.
+        expr: Box<Expr>,
+        /// The (compile-time constant) shift amount.
+        amount: u32,
+    },
+    /// Right shift by a constant, narrowing the result by `amount` bits
+    /// (arithmetic for a signed operand, logical for unsigned). Used for
+    /// fixed-point fractional truncation/rounding.
+    Shr {
+        /// The value being shifted.
+        expr: Box<Expr>,
+        /// The (compile-time constant) shift amount.
+        amount: u32,
     },
 }

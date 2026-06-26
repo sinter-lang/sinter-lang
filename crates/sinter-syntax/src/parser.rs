@@ -220,9 +220,13 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::ident => Ok(Expr::Ident(pair.as_str().to_string())),
         // Functional surface (the legacy chain is left exactly as above).
         Rule::f_expr => parse_expr(first_inner(pair, "f_expr")?),
-        Rule::f_or | Rule::f_xor | Rule::f_and | Rule::f_eq | Rule::f_rel | Rule::f_add => {
-            fold_binary(pair)
-        }
+        Rule::f_or
+        | Rule::f_xor
+        | Rule::f_and
+        | Rule::f_eq
+        | Rule::f_rel
+        | Rule::f_add
+        | Rule::f_mul => fold_binary(pair),
         Rule::f_cast => parse_fcast(pair),
         // `f_unary` has the same `unary_op* ~ operand` shape as the legacy unary.
         Rule::f_unary => parse_unary(pair),
@@ -342,6 +346,7 @@ fn bin_op(text: &str) -> Result<BinOp, ParseError> {
     Ok(match text {
         "+" => BinOp::Add,
         "-" => BinOp::Sub,
+        "*" => BinOp::Mul,
         "&" => BinOp::And,
         "|" => BinOp::Or,
         "^" => BinOp::Xor,

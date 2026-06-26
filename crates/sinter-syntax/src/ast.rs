@@ -167,6 +167,8 @@ pub enum BinOp {
     Add,
     /// `-`
     Sub,
+    /// `*`
+    Mul,
     /// `&`
     And,
     /// `|`

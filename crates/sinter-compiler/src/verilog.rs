@@ -1,10 +1,17 @@
 //! SystemVerilog backend.
 //!
 //! Emits portable, Yosys-synthesizable, Verilator-lint-clean SystemVerilog that
-//! matches the `eval` semantics bit-for-bit. Conforms to the `claude-skill-verilog`
-//! standard: `` `default_nettype none ``, explicit widths, `always_ff` carrying
-//! only simple non-blocking assignments (next-state computed in `always_comb`),
-//! named ports, and one statement per line.
+//! matches the `eval` semantics bit-for-bit. Conforms to the
+//! `claude-skill-verilog` standard: `` `default_nettype none ``, explicit
+//! widths, `always_ff` carrying only simple non-blocking assignments
+//! (next-state computed in `always_comb`), named ports, one statement per line.
+//!
+//! Every operand is sized and signed **explicitly** — operands of `+`/`-`/`*`
+//! are sign/zero-extended to the result width with `w'($signed(e))` / `w'(e)`,
+//! casts resize the same way, shifts use concatenation / arithmetic `>>>` — so
+//! Verilog's context-determined sizing can never silently change a width away
+//! from `eval`. (On the legacy same-width `module` path no extension is added,
+//! so its emission is unchanged.)
 
 use std::fmt::Write as _;
 
@@ -37,7 +44,7 @@ pub fn emit_module(m: &Module) -> String {
     out
 }
 
-/// The signed/range prefix for a net of `kind` width, e.g. `signed [15:0]`.
+/// The signed/range prefix for a net of `ty` width, e.g. `signed [15:0]`.
 fn net_type(ty: Type) -> String {
     let range = format!("[{}:0]", ty.width() - 1);
     if ty.is_signed() {
@@ -129,36 +136,28 @@ fn emit_seq(out: &mut String, m: &Module) {
 }
 
 /// Render a typed expression as a fully-parenthesized SystemVerilog expression.
-/// Literals carry explicit width and signedness so Verilog's context rules
-/// cannot widen them away from the `eval` semantics.
 fn expr(e: &Expr) -> String {
     match &e.kind {
-        ExprKind::Literal(v) => {
-            let w = e.ty.width();
-            if e.ty.is_signed() {
-                format!("{w}'sd{v}")
-            } else {
-                format!("{w}'d{v}")
-            }
-        }
+        // Literals are emitted as sized hex bit-patterns; the surrounding
+        // context (net signedness / `$signed`) carries the interpretation.
+        ExprKind::Literal(v) => format!("{}'h{v:x}", e.ty.width()),
         ExprKind::Ident(name) => name.clone(),
-        ExprKind::Unary { op, expr: inner } => {
-            let sym = match op {
-                UnaryOp::Not => "!",
-                UnaryOp::BitNot => "~",
-                UnaryOp::Neg => "-",
-            };
-            format!("({sym}{})", expr(inner))
-        }
+        ExprKind::Unary { op, expr: inner } => match op {
+            UnaryOp::Not => format!("(!{})", expr(inner)),
+            UnaryOp::BitNot => format!("(~{})", expr(inner)),
+            // `Neg` requires a signed operand (enforced by the checker).
+            UnaryOp::Neg => format!("(-$signed({}))", expr(inner)),
+        },
         ExprKind::Binary { op, lhs, rhs } => {
-            // Width-inferred `+`/`-` widen the result; size-cast the operands up
-            // to the result width so the Verilog arithmetic context matches the
-            // `eval` semantics (a no-op when operands are already that wide, as
-            // on the legacy same-width path).
-            if matches!(op, BinOp::Add | BinOp::Sub) {
+            if op.is_comparison() {
+                format!("({} {} {})", signed(lhs), bin_sym(*op), signed(rhs))
+            } else if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+                // Extend both operands to the result width, then operate;
+                // mirrors `eval::ext` + `wrapping_{add,sub,mul}`.
                 let w = e.ty.width();
-                format!("({} {} {})", widen(lhs, w), bin_sym(*op), widen(rhs, w))
+                format!("({} {} {})", ext(lhs, w), bin_sym(*op), ext(rhs, w))
             } else {
+                // Bitwise: equal-width operands.
                 format!("({} {} {})", expr(lhs), bin_sym(*op), expr(rhs))
             }
         }
@@ -166,47 +165,101 @@ fn expr(e: &Expr) -> String {
             format!("({} ? {} : {})", expr(cond), expr(then), expr(els))
         }
         ExprKind::Cast { expr: inner, mode } => match mode {
-            // Reinterpret the low `w` bits via a SystemVerilog size cast.
-            CastMode::Wrap | CastMode::Trunc | CastMode::Round => {
-                format!("{}'({})", e.ty.width(), expr(inner))
-            }
-            CastMode::Sat => sat_expr(inner, e.ty),
+            CastMode::Sat => sat(inner, e.ty),
+            _ => resize(inner, e.ty),
         },
+        // Left shift by `amount`, widening: concatenate `amount` low zero bits.
+        ExprKind::Shl {
+            expr: inner,
+            amount,
+        } => {
+            if *amount == 0 {
+                expr(inner)
+            } else {
+                format!("{{{}, {amount}'b0}}", expr(inner))
+            }
+        }
+        // Right shift by `amount`, narrowing: arithmetic for signed, then keep
+        // the low result bits via a size cast.
+        ExprKind::Shr {
+            expr: inner,
+            amount,
+        } => {
+            let w = e.ty.width();
+            if inner.ty.is_signed() {
+                format!("{w}'($signed({}) >>> {amount})", expr(inner))
+            } else {
+                format!("{w}'({} >> {amount})", expr(inner))
+            }
+        }
     }
 }
 
-/// For a `+`/`-` operand narrower than the result width `w`: zero-extend an
-/// unsigned operand with a size cast. A *signed* operand is emitted unchanged —
-/// SystemVerilog's context-determined sizing sign-extends it in every context
-/// the elaborator produces (assignment to a target at least as wide, a
-/// narrowing cast, or a comparison; both operands of a `+`/`-` share signedness,
-/// and widening casts are rejected during elaboration). `eval::ext` mirrors this.
-fn widen(operand: &Expr, w: u32) -> String {
-    if operand.ty.width() < w && !operand.ty.is_signed() {
-        format!("{w}'({})", expr(operand))
+/// Extend operand `e` to `w` bits: sign-extend a signed operand, zero-extend an
+/// unsigned one. A no-op when `e` is already `w` bits wide (the legacy path).
+fn ext(e: &Expr, w: u32) -> String {
+    if e.ty.width() == w {
+        expr(e)
+    } else if e.ty.is_signed() {
+        format!("{w}'($signed({}))", expr(e))
     } else {
-        expr(operand)
+        format!("{w}'({})", expr(e))
     }
 }
 
-/// Emit a saturating cast of `inner` into scalar type `to` (DESIGN §6.3).
-/// Currently unreachable — `sat`/`trunc`/`round` casts are rejected during
-/// elaboration (F4). This emission is not yet Verilator-lint-verified; F4 will
-/// fix the threshold widths (compute bounds at the source width) and add an
-/// oracle example before enabling it. The `eval` side (`apply_cast`) is correct.
-fn sat_expr(inner: &Expr, to: Type) -> String {
+/// Resize `inner` to the cast's target type: truncate when narrowing,
+/// sign/zero-extend when widening (per the source signedness).
+fn resize(inner: &Expr, to: Type) -> String {
     let w = to.width();
+    let sw = inner.ty.width();
+    if w == sw {
+        expr(inner)
+    } else if w < sw {
+        format!("{w}'({})", expr(inner))
+    } else if inner.ty.is_signed() {
+        format!("{w}'($signed({}))", expr(inner))
+    } else {
+        format!("{w}'({})", expr(inner))
+    }
+}
+
+/// Saturate `inner` (wider than `to`) into `to`'s range, then keep the low bits.
+/// Comparisons are at the source width; bounds/results at the target width.
+fn sat(inner: &Expr, to: Type) -> String {
+    let w = to.width();
+    let sw = inner.ty.width();
     let i = expr(inner);
     if to.is_signed() {
         let hi = (1i128 << (w - 1)) - 1;
-        let lo_abs = 1u128 << (w - 1);
+        let lo = -(1i128 << (w - 1));
         format!(
-            "(($signed({i}) > {w}'sd{hi}) ? {w}'sd{hi} : \
-             (($signed({i}) < -{w}'sd{lo_abs}) ? -{w}'sd{lo_abs} : {w}'({i})))"
+            "(($signed({i}) > {}) ? {} : (($signed({i}) < {}) ? {} : {w}'({i})))",
+            signed_lit(hi, sw),
+            signed_lit(hi, w),
+            signed_lit(lo, sw),
+            signed_lit(lo, w)
         )
     } else {
         let hi = (1u128 << w) - 1;
-        format!("(({i} > {hi}) ? {w}'d{hi} : {w}'({i}))")
+        format!("(({i} > {sw}'d{hi}) ? {w}'d{hi} : {w}'({i}))")
+    }
+}
+
+/// Wrap `e` in `$signed(...)` when its type is signed (for comparisons).
+fn signed(e: &Expr) -> String {
+    if e.ty.is_signed() {
+        format!("$signed({})", expr(e))
+    } else {
+        expr(e)
+    }
+}
+
+/// A signed decimal literal of `w` bits (SV writes negatives as `-w'sdN`).
+fn signed_lit(v: i128, w: u32) -> String {
+    if v >= 0 {
+        format!("{w}'sd{v}")
+    } else {
+        format!("-{w}'sd{}", -v)
     }
 }
 
@@ -214,6 +267,7 @@ fn bin_sym(op: BinOp) -> &'static str {
     match op {
         BinOp::Add => "+",
         BinOp::Sub => "-",
+        BinOp::Mul => "*",
         BinOp::And => "&",
         BinOp::Or => "|",
         BinOp::Xor => "^",

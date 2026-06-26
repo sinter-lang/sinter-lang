@@ -183,26 +183,57 @@ fn fn_signed_arithmetic_and_narrowing_wrap() {
     assert_eq!(sim.step(&input("x", 0))["acc_q"], 14);
 }
 
+// --- F4: fixed-point arithmetic and the full cast-mode set -----------------
+
 #[test]
-fn widening_wrap_cast_is_rejected() {
-    // `wrap` must narrow (DESIGN §6.3); widening is F4. Caught at elaboration.
-    let src = "struct S { w: u6 = 0 }
-        impl S { #[clock(domain = sys)] fn tick(self, x: u4) -> S { S { w: x as u6 wrap } } }";
-    let e = compile_str(src)
-        .expect_err("widening cast should be rejected")
-        .to_string();
-    assert!(e.contains("widening"), "got: {e}");
+fn fn_fixed_multiplies_q_format() {
+    let design = compile_str(include_str!("../../../examples/fn_fixed.snt")).expect("compile");
+    let m = &design.modules[0];
+    assert_eq!(m.regs[0].name, "p");
+    // i8.8 erases to a 16-bit integer in the IR.
+    assert_eq!(m.regs[0].ty.width(), 16);
+    let mut sim = Simulator::new(m);
+    // 2.0 (Q4.4 = 32) * 3.0 (Q4.4 = 48) = 6.0 (Q8.8 = 1536).
+    sim.step(&input2(("a", 32), ("b", 48)));
+    assert_eq!(sim.step(&input2(("a", 0), ("b", 0)))["p_q"], 1536);
+    // -2.0 (Q4.4 bits 224) * 3.0 = -6.0 (Q8.8 = 65536 - 1536 = 64000).
+    sim.step(&input2(("a", 224), ("b", 48)));
+    assert_eq!(sim.step(&input2(("a", 0), ("b", 0)))["p_q"], 64000);
 }
 
 #[test]
-fn sat_cast_is_rejected() {
-    // sat/trunc/round casts are F4; only `wrap` lowers today.
-    let src = "struct S { v: u4 = 0 }
-        impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { v: x as u4 sat } } }";
-    let e = compile_str(src)
-        .expect_err("sat cast should be rejected")
-        .to_string();
-    assert!(e.contains("sat/trunc/round"), "got: {e}");
+fn fn_sat_saturates() {
+    let design = compile_str(include_str!("../../../examples/fn_sat.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    // +7 each cycle saturates at 7 (i4 max) instead of wrapping to -2.
+    assert_eq!(sim.step(&input("x", 7))["acc_q"], 0);
+    assert_eq!(sim.step(&input("x", 7))["acc_q"], 7);
+    assert_eq!(sim.step(&input("x", 7))["acc_q"], 7);
+    assert_eq!(sim.step(&input("x", 7))["acc_q"], 7);
+}
+
+#[test]
+fn fn_round_rounds_half_up() {
+    let design = compile_str(include_str!("../../../examples/fn_round.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    // Q4.8 -> Q4.4 rounds: (x + 8) >> 4. x=24 -> 2 (truncation would give 1).
+    sim.step(&input("x", 24));
+    assert_eq!(sim.step(&input("x", 0))["y_q"], 2);
+    // x=8 -> (8+8)>>4 = 1 (truncation would give 0).
+    sim.step(&input("x", 8));
+    assert_eq!(sim.step(&input("x", 0))["y_q"], 1);
+}
+
+#[test]
+fn widening_cast_sign_extends() {
+    // An i4 -> i8 widening `wrap` cast sign-extends (value-preserving).
+    let src = "struct S { wide: i8 = 0 }
+        impl S { #[clock(domain = sys)] fn tick(self, x: i4) -> S { S { wide: x as i8 wrap } } }";
+    let design = compile_str(src).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    // x = -3 (i4 bits 1101 = 13) -> wide = -3 (i8 bits 1111_1101 = 253).
+    sim.step(&input("x", 13));
+    assert_eq!(sim.step(&input("x", 0))["wide_q"], 253);
 }
 
 #[test]

@@ -44,6 +44,13 @@ const MAX_INLINE_DEPTH: usize = 256;
 #[derive(Debug, Clone)]
 enum Ty {
     Scalar(Type),
+    /// A fixed-point type `uI.F` / `iI.F`: it erases to an `(I+F)`-bit integer
+    /// in the IR; the binary point (`fbits`) is tracked only here.
+    Fixed {
+        signed: bool,
+        ibits: u32,
+        fbits: u32,
+    },
     /// An enum: its name and the bit width of its discriminant encoding.
     Enum(String, u32),
     Struct(String),
@@ -52,19 +59,45 @@ enum Ty {
 }
 
 impl Ty {
+    /// The IR (erased) integer type of a scalar/fixed/enum type.
     fn scalar(&self) -> Option<Type> {
         match self {
             Ty::Scalar(t) => Some(*t),
             Ty::Enum(_, w) => Some(Type::Uint(*w)),
+            Ty::Fixed {
+                signed,
+                ibits,
+                fbits,
+            } => Some(int_ty(*signed, ibits + fbits)),
             _ => None,
         }
+    }
+
+    /// The fractional-bit count of a scalar/fixed type (0 for plain integers).
+    fn fbits(&self) -> u32 {
+        match self {
+            Ty::Fixed { fbits, .. } => *fbits,
+            _ => 0,
+        }
+    }
+}
+
+/// The IR integer type of `width` bits with the given signedness.
+fn int_ty(signed: bool, width: u32) -> Type {
+    if signed {
+        Type::Int(width)
+    } else {
+        Type::Uint(width)
     }
 }
 
 /// A scalarized value: leaves are scalar IR expressions.
 #[derive(Debug, Clone)]
 enum Val {
-    Scalar(ir::Expr),
+    /// A scalar (or fixed-point) value: its IR expression plus the fractional
+    /// bit count (`0` for a plain integer). The expression's IR width is
+    /// `ibits + fbits`.
+    Scalar(ir::Expr, u32),
     /// An enum value, carried as its discriminant scalar.
     Enum(String, ir::Expr),
     Struct(String, Vec<(String, Val)>),
@@ -310,15 +343,17 @@ impl Elaborator<'_> {
         match e {
             Expr::Literal(v) => {
                 let ty = expected
-                    .and_then(Ty::scalar)
                     .ok_or_else(|| err(&self.ctx, pos, format!("cannot infer type of `{v}`")))?;
-                Ok(Val::Scalar(self.lit(*v, ty, pos)?))
+                let it = ty
+                    .scalar()
+                    .ok_or_else(|| err(&self.ctx, pos, format!("`{v}` needs a numeric type")))?;
+                Ok(Val::Scalar(self.lit(*v, it, pos)?, ty.fbits()))
             }
             Expr::Ident(name) => {
                 if let Some(v) = env.get(name) {
                     Ok(v.clone())
                 } else if let Some((v, ty)) = self.consts.get(name) {
-                    Ok(Val::Scalar(typed(ir::ExprKind::Literal(*v), *ty)))
+                    Ok(Val::Scalar(typed(ir::ExprKind::Literal(*v), *ty), 0))
                 } else {
                     Err(err(&self.ctx, pos, format!("unknown name `{name}`")))
                 }
@@ -402,34 +437,7 @@ impl Elaborator<'_> {
                 expr: inner,
                 ty,
                 mode,
-            } => {
-                if !matches!(mode, CastMode::Wrap) {
-                    return Err(unsupported(&self.ctx, pos, "sat/trunc/round casts (F4)"));
-                }
-                let target = self.resolve(ty, pos)?;
-                let tt = target
-                    .scalar()
-                    .ok_or_else(|| err(&self.ctx, pos, "cast to a non-scalar type"))?;
-                let v = self.lower_scalar(env, inner, None, depth, pos)?;
-                // F3 lowers only narrowing `wrap` casts (DESIGN §6.3: wrap =
-                // "truncate high bits"). A widening cast needs sign/zero-extension
-                // that eval and Verilog must agree on; that is deferred to F4, so
-                // reject it rather than emit a divergent lowering.
-                if tt.width() > v.ty.width() {
-                    return Err(unsupported(
-                        &self.ctx,
-                        pos,
-                        "widening casts (F4); a `wrap` cast must narrow",
-                    ));
-                }
-                Ok(Val::Scalar(typed(
-                    ir::ExprKind::Cast {
-                        expr: Box::new(v),
-                        mode: *mode,
-                    },
-                    tt,
-                )))
-            }
+            } => self.lower_cast(env, inner, ty, *mode, depth, pos),
             Expr::Block(b) => {
                 let mut local = env.clone();
                 for stmt in &b.stmts {
@@ -457,7 +465,7 @@ impl Elaborator<'_> {
         pos: Pos,
     ) -> Result<ir::Expr, CompileError> {
         match self.lower(env, e, expected.map(Ty::Scalar).as_ref(), depth, pos)? {
-            Val::Scalar(x) | Val::Enum(_, x) => Ok(x),
+            Val::Scalar(x, _) | Val::Enum(_, x) => Ok(x),
             _ => Err(err(&self.ctx, pos, "expected a scalar value")),
         }
     }
@@ -474,12 +482,13 @@ impl Elaborator<'_> {
         match op {
             UnaryOp::Not => {
                 let v = self.lower_scalar(env, inner, Some(Type::Uint(1)), depth, pos)?;
-                Ok(Val::Scalar(typed(unary(op, v), Type::Uint(1))))
+                Ok(Val::Scalar(typed(unary(op, v), Type::Uint(1)), 0))
             }
             UnaryOp::BitNot | UnaryOp::Neg => {
-                let v = self.lower_scalar(env, inner, expected.and_then(Ty::scalar), depth, pos)?;
-                let ty = v.ty;
-                Ok(Val::Scalar(typed(unary(op, v), ty)))
+                let val = self.lower(env, inner, expected, depth, pos)?;
+                let (e, f) = scalar_parts(&val, &self.ctx, pos)?;
+                let ty = e.ty;
+                Ok(Val::Scalar(typed(unary(op, e), ty), f))
             }
         }
     }
@@ -497,37 +506,149 @@ impl Elaborator<'_> {
         pos: Pos,
     ) -> Result<Val, CompileError> {
         if op.is_comparison() {
-            let opty = self.synth(env, lhs).or_else(|| self.synth(env, rhs));
-            let l = self.lower_scalar(env, lhs, opty, depth, pos)?;
-            let lty = l.ty;
-            let r = self.lower_scalar(env, rhs, Some(lty), depth, pos)?;
-            return Ok(Val::Scalar(typed(binary(op, l, r), Type::Uint(1))));
+            let (l, r) = self.lower_operands(env, lhs, rhs, None, depth, pos)?;
+            let (le, _) = scalar_parts(&l, &self.ctx, pos)?;
+            let (re, _) = scalar_parts(&r, &self.ctx, pos)?;
+            return Ok(Val::Scalar(typed(binary(op, le, re), Type::Uint(1)), 0));
         }
         match op {
             BinOp::And | BinOp::Or | BinOp::Xor => {
-                let opty = expected
-                    .and_then(Ty::scalar)
-                    .or_else(|| self.synth(env, lhs));
-                let l = self.lower_scalar(env, lhs, opty, depth, pos)?;
-                let ty = l.ty;
-                let r = self.lower_scalar(env, rhs, Some(ty), depth, pos)?;
-                Ok(Val::Scalar(typed(binary(op, l, r), ty)))
+                let l = self.lower(env, lhs, expected, depth, pos)?;
+                let (le, lf) = scalar_parts(&l, &self.ctx, pos)?;
+                let lt = val_ty(&l);
+                let r = self.lower(env, rhs, Some(&lt), depth, pos)?;
+                let (re, _) = scalar_parts(&r, &self.ctx, pos)?;
+                let ty = le.ty;
+                Ok(Val::Scalar(typed(binary(op, le, re), ty), lf))
             }
-            BinOp::Add | BinOp::Sub => {
-                let opty = self.synth(env, lhs).or_else(|| self.synth(env, rhs));
-                let l = self.lower_scalar(env, lhs, opty, depth, pos)?;
-                let lty = l.ty;
-                let r = self.lower_scalar(env, rhs, Some(lty), depth, pos)?;
-                let w = lty.width().min(63) + 1;
-                let ty = if lty.is_signed() {
-                    Type::Int(w)
+            BinOp::Add | BinOp::Sub | BinOp::Mul => {
+                let (l, r) = self.lower_operands(env, lhs, rhs, expected, depth, pos)?;
+                let (le, lf) = scalar_parts(&l, &self.ctx, pos)?;
+                let (re, rf) = scalar_parts(&r, &self.ctx, pos)?;
+                let (lty, rty) = (le.ty, re.ty);
+                let signed = lty.is_signed();
+                let (li, ri) = (lty.width() - lf, rty.width() - rf);
+                // Width inference (DESIGN §6.2). F1 has already checked matching
+                // signedness, matching fractional bits for +/-, and the limit.
+                let (ibits, fbits) = if op == BinOp::Mul {
+                    (li + ri, lf + rf)
                 } else {
-                    Type::Uint(w)
+                    (li.max(ri) + 1, lf)
                 };
-                Ok(Val::Scalar(typed(binary(op, l, r), ty)))
+                let ty = int_ty(signed, ibits + fbits);
+                Ok(Val::Scalar(typed(binary(op, le, re), ty), fbits))
             }
             _ => Err(err(&self.ctx, pos, "unsupported operator")),
         }
+    }
+
+    /// Lower the two operands of an arithmetic op, letting a bare literal adopt
+    /// the other operand's type (two concrete operands keep their own types,
+    /// which may differ in integer width).
+    fn lower_operands(
+        &self,
+        env: &Env,
+        lhs: &Expr,
+        rhs: &Expr,
+        expected: Option<&Ty>,
+        depth: usize,
+        pos: Pos,
+    ) -> Result<(Val, Val), CompileError> {
+        let lhs_lit = matches!(lhs, Expr::Literal(_));
+        let rhs_lit = matches!(rhs, Expr::Literal(_));
+        match (lhs_lit, rhs_lit) {
+            (true, true) => Ok((
+                self.lower(env, lhs, expected, depth, pos)?,
+                self.lower(env, rhs, expected, depth, pos)?,
+            )),
+            (true, false) => {
+                let r = self.lower(env, rhs, None, depth, pos)?;
+                let rt = val_ty(&r);
+                let l = self.lower(env, lhs, Some(&rt), depth, pos)?;
+                Ok((l, r))
+            }
+            (false, _) => {
+                let l = self.lower(env, lhs, None, depth, pos)?;
+                let lt = val_ty(&l);
+                let r = self.lower(env, rhs, rhs_lit.then_some(&lt), depth, pos)?;
+                Ok((l, r))
+            }
+        }
+    }
+
+    /// Lower a mode-named cast (DESIGN §6.3) into IR shift/resize/saturate ops.
+    /// Step 1 aligns the fractional bits (shift left to add precision; arithmetic
+    /// shift right — rounding when `round` — to drop them). Step 2 adjusts the
+    /// integer width (sign/zero-extend when widening; truncate, or saturate when
+    /// `sat`, when narrowing).
+    fn lower_cast(
+        &self,
+        env: &Env,
+        inner: &Expr,
+        ty: &TypeRef,
+        mode: CastMode,
+        depth: usize,
+        pos: Pos,
+    ) -> Result<Val, CompileError> {
+        let target = self.resolve(ty, pos)?;
+        let (ts, ti, tf) =
+            target_fx(&target).ok_or_else(|| err(&self.ctx, pos, "cast to a non-numeric type"))?;
+        let val = self.lower(env, inner, None, depth, pos)?;
+        let (mut e, xf) = scalar_parts(&val, &self.ctx, pos)?;
+        let xs = e.ty.is_signed();
+        let xi = e.ty.width() - xf;
+        if xs != ts {
+            return Err(unsupported(&self.ctx, pos, "sign-changing casts (F4+)"));
+        }
+
+        // Step 1: fractional alignment xf -> tf.
+        if tf > xf {
+            let by = tf - xf;
+            e = typed(
+                ir::ExprKind::Shl {
+                    expr: Box::new(e),
+                    amount: by,
+                },
+                int_ty(xs, xi + tf),
+            );
+        } else if tf < xf {
+            let by = xf - tf;
+            if mode == CastMode::Round {
+                // Round half up: add 1<<(by-1) at the source width (a same-width
+                // add that wraps in the rare near-max case), then shift right.
+                let half = typed(
+                    ir::ExprKind::Literal(mask(1u64 << (by - 1), e.ty.width())),
+                    e.ty,
+                );
+                let ety = e.ty;
+                e = typed(binary(BinOp::Add, e, half), ety);
+            }
+            e = typed(
+                ir::ExprKind::Shr {
+                    expr: Box::new(e),
+                    amount: by,
+                },
+                int_ty(xs, xi + tf),
+            );
+        }
+
+        // Step 2: integer width xi -> ti (at fractional bits tf).
+        let target_ty = int_ty(ts, ti + tf);
+        if ti != xi {
+            let cm = if ti < xi && mode == CastMode::Sat {
+                CastMode::Sat
+            } else {
+                CastMode::Wrap
+            };
+            e = typed(
+                ir::ExprKind::Cast {
+                    expr: Box::new(e),
+                    mode: cm,
+                },
+                target_ty,
+            );
+        }
+        Ok(Val::Scalar(e, tf))
     }
 
     fn lower_path(&self, segs: &[String], pos: Pos) -> Result<Val, CompileError> {
@@ -721,7 +842,7 @@ impl Elaborator<'_> {
     /// Multiplex two values of the same shape on a 1-bit condition.
     fn mux(&self, cond: &ir::Expr, t: &Val, e: &Val, pos: Pos) -> Result<Val, CompileError> {
         match (t, e) {
-            (Val::Scalar(a), Val::Scalar(b)) => Ok(Val::Scalar(mux_expr(cond, a, b))),
+            (Val::Scalar(a, fa), Val::Scalar(b, _)) => Ok(Val::Scalar(mux_expr(cond, a, b), *fa)),
             (Val::Enum(n, a), Val::Enum(_, b)) => Ok(Val::Enum(n.clone(), mux_expr(cond, a, b))),
             (Val::Struct(n, fa), Val::Struct(_, fb)) => {
                 let mut out = Vec::new();
@@ -757,55 +878,6 @@ impl Elaborator<'_> {
             .ok_or_else(|| err(&self.ctx, pos, format!("no field `{field}`")))
     }
 
-    /// Best-effort scalar type synthesis for operand inference.
-    fn synth(&self, env: &Env, e: &Expr) -> Option<Type> {
-        match e {
-            Expr::Ident(name) => match env.get(name) {
-                Some(Val::Scalar(x) | Val::Enum(_, x)) => Some(x.ty),
-                Some(_) => None,
-                None => self.consts.get(name).map(|(_, t)| *t),
-            },
-            Expr::Field { base, field } => match self.synth_val(env, base)? {
-                Val::Struct(_, fields) => fields
-                    .iter()
-                    .find(|(n, _)| n == field)
-                    .and_then(|(_, v)| scalar_ty(v)),
-                _ => None,
-            },
-            Expr::Unary { op, expr } => match op {
-                UnaryOp::Not => Some(Type::Uint(1)),
-                UnaryOp::BitNot | UnaryOp::Neg => self.synth(env, expr),
-            },
-            Expr::Binary { op, lhs, rhs } => {
-                if op.is_comparison() {
-                    Some(Type::Uint(1))
-                } else {
-                    self.synth(env, lhs).or_else(|| self.synth(env, rhs))
-                }
-            }
-            Expr::Cast { ty, .. } => self
-                .resolve(ty, Pos::default())
-                .ok()
-                .and_then(|t| t.scalar()),
-            _ => None,
-        }
-    }
-
-    /// Synthesize the structured value of an expression for `.field` synthesis
-    /// (only the cheap, side-effect-free cases).
-    fn synth_val(&self, env: &Env, e: &Expr) -> Option<Val> {
-        match e {
-            Expr::Ident(name) => env.get(name).cloned(),
-            Expr::Field { base, field } => match self.synth_val(env, base)? {
-                Val::Struct(_, fields) => {
-                    fields.into_iter().find(|(n, _)| n == field).map(|(_, v)| v)
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
     // --- binding / patterns -----------------------------------------------
 
     fn bind(&self, pat: &Pattern, v: Val, env: &mut Env, pos: Pos) -> Result<(), CompileError> {
@@ -838,7 +910,15 @@ impl Elaborator<'_> {
     fn resolve(&self, t: &TypeRef, pos: Pos) -> Result<Ty, CompileError> {
         match t {
             TypeRef::Scalar(ty) => Ok(Ty::Scalar(*ty)),
-            TypeRef::Fixed { .. } => Err(unsupported(&self.ctx, pos, "fixed-point types (F4)")),
+            TypeRef::Fixed {
+                signed,
+                int_bits,
+                frac_bits,
+            } => Ok(Ty::Fixed {
+                signed: *signed,
+                ibits: *int_bits,
+                fbits: *frac_bits,
+            }),
             TypeRef::Named(n) => self.resolve_named(n, pos),
             TypeRef::Array { elem, len } => {
                 let et = self.resolve(elem, pos)?;
@@ -993,10 +1073,10 @@ impl Elaborator<'_> {
                     .scalar()
                     .ok_or_else(|| err(&self.ctx, pos, "non-scalar constant"))?;
                 let v = self.fold_scalar(e, t, pos)?;
-                Ok(Val::Scalar(typed(
-                    ir::ExprKind::Literal(mask(v, t.width())),
-                    t,
-                )))
+                Ok(Val::Scalar(
+                    typed(ir::ExprKind::Literal(mask(v, t.width())), t),
+                    ty.fbits(),
+                ))
             }
         }
     }
@@ -1024,6 +1104,11 @@ impl Elaborator<'_> {
     fn flatten_ty(&self, ty: &Ty, path: &str, out: &mut Vec<(String, Type)>) {
         match ty {
             Ty::Scalar(t) => out.push((path.to_string(), *t)),
+            Ty::Fixed {
+                signed,
+                ibits,
+                fbits,
+            } => out.push((path.to_string(), int_ty(*signed, ibits + fbits))),
             Ty::Enum(_, w) => out.push((path.to_string(), Type::Uint(*w))),
             Ty::Struct(name) => {
                 if let Ok(fields) = self.struct_fields(name, Pos::default()) {
@@ -1048,7 +1133,18 @@ impl Elaborator<'_> {
     /// Build the structured value of a type with each leaf an `Ident(path)`.
     fn idents_val(&self, ty: &Ty, path: &str) -> Val {
         match ty {
-            Ty::Scalar(t) => Val::Scalar(typed(ir::ExprKind::Ident(path.to_string()), *t)),
+            Ty::Scalar(t) => Val::Scalar(typed(ir::ExprKind::Ident(path.to_string()), *t), 0),
+            Ty::Fixed {
+                signed,
+                ibits,
+                fbits,
+            } => Val::Scalar(
+                typed(
+                    ir::ExprKind::Ident(path.to_string()),
+                    int_ty(*signed, ibits + fbits),
+                ),
+                *fbits,
+            ),
             Ty::Enum(n, w) => Val::Enum(
                 n.clone(),
                 typed(ir::ExprKind::Ident(path.to_string()), Type::Uint(*w)),
@@ -1112,7 +1208,7 @@ impl Elaborator<'_> {
 
 fn flatten_val(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr)>) {
     match v {
-        Val::Scalar(e) | Val::Enum(_, e) => out.push((path.to_string(), e.clone())),
+        Val::Scalar(e, _) | Val::Enum(_, e) => out.push((path.to_string(), e.clone())),
         Val::Struct(_, fields) => {
             for (f, val) in fields {
                 flatten_val(val, &join(path, f), out);
@@ -1141,14 +1237,46 @@ fn join(prefix: &str, name: &str) -> String {
 
 fn scalar_of(v: &Val, ctx: &str, pos: Pos) -> Result<ir::Expr, CompileError> {
     match v {
-        Val::Scalar(e) | Val::Enum(_, e) => Ok(e.clone()),
+        Val::Scalar(e, _) | Val::Enum(_, e) => Ok(e.clone()),
         _ => Err(err(ctx, pos, "expected a scalar value")),
     }
 }
 
-fn scalar_ty(v: &Val) -> Option<Type> {
+/// A scalar value's IR expression and fractional-bit count (0 for an enum).
+fn scalar_parts(v: &Val, ctx: &str, pos: Pos) -> Result<(ir::Expr, u32), CompileError> {
     match v {
-        Val::Scalar(e) | Val::Enum(_, e) => Some(e.ty),
+        Val::Scalar(e, f) => Ok((e.clone(), *f)),
+        Val::Enum(_, e) => Ok((e.clone(), 0)),
+        _ => Err(err(ctx, pos, "expected a scalar value")),
+    }
+}
+
+/// The resolved type of a (scalar/enum/struct) value, for operand inference.
+fn val_ty(v: &Val) -> Ty {
+    match v {
+        Val::Scalar(e, f) if *f == 0 => Ty::Scalar(e.ty),
+        Val::Scalar(e, f) => Ty::Fixed {
+            signed: e.ty.is_signed(),
+            ibits: e.ty.width() - f,
+            fbits: *f,
+        },
+        Val::Enum(n, e) => Ty::Enum(n.clone(), e.ty.width()),
+        Val::Struct(n, _) => Ty::Struct(n.clone()),
+        // Aggregates are never arithmetic operands (the checker rejects them).
+        Val::Tuple(_) | Val::Array(_) => Ty::Scalar(Type::Uint(1)),
+    }
+}
+
+/// The (signed, integer-bits, fractional-bits) of a scalar/fixed target type.
+fn target_fx(ty: &Ty) -> Option<(bool, u32, u32)> {
+    match ty {
+        Ty::Scalar(Type::Uint(n)) => Some((false, *n, 0)),
+        Ty::Scalar(Type::Int(n)) => Some((true, *n, 0)),
+        Ty::Fixed {
+            signed,
+            ibits,
+            fbits,
+        } => Some((*signed, *ibits, *fbits)),
         _ => None,
     }
 }

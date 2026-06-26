@@ -1,0 +1,5 @@
+// Fixed-point multiply (`*`, DESIGN §6.2) and a mode-named `round` cast over
+// fixed-point types — exercising the multiplicative grammar level.
+fn scale(a: i4.4, b: i4.4) -> i4.4 {
+    (a * b) as i4.4 round
+}

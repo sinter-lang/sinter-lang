@@ -407,6 +407,22 @@ x as i6.10 round   // round
 Any implicit lossy assignment is a **compile error**. (Mechanically enforceable,
 not a convention.)
 
+**Two-dimensional semantics (SETTLED, F4).** A cast `x as TYPE mode` adjusts the
+fractional part then the integer part, lowering to shift/resize IR ops:
+- **fractional bits.** Widening (more frac bits) shifts left (exact). Narrowing
+  drops bits: `round` rounds half up (add `2^(k-1)`, then arithmetic shift
+  right); every other mode truncates (arithmetic shift right toward −∞).
+- **integer bits.** Widening sign/zero-extends (value-preserving). Narrowing
+  truncates the high bits, except `sat` which saturates to the target range.
+
+So the mode picks the frac rounding (`round` vs truncate) and the int overflow
+(`sat` vs wrap): `wrap`/`trunc` = truncate frac + wrap int; `sat` = truncate frac
++ saturate int; `round` = round frac + wrap int. (Combining rounded frac with
+saturated int is two casts.) The fixed-point representation **erases to a plain
+`(I+F)`-bit integer** in the IR (DESIGN §7.2); the binary point lives only in the
+front-end. *Deferred:* `+`/`-` require matching fractional bits (no implicit
+alignment yet); sign-changing casts.
+
 ### 6.4 `?` is for Option/valid propagation only
 
 `?` propagates validity (think data-valid wire on a bus). In a *combinational*
@@ -651,7 +667,7 @@ arithmetic (operand extension); everything else lowers to the existing nodes.
 | **F1** | Resolve + type-check: symbol tables, name resolution, width inference, cast checking, single-clock-domain, single-step, acyclicity. No lowering. | unchanged; `check` reports real diagnostics |
 | **F2** | Elaborate to `ir::Module`: state flattening, SROA, free-fn inline, `Cast`+mixed-width IR extension. | a small functional example passes the oracle |
 | **F3** | enum encoding + `match`→mux, sub-state method inlining, nested state, arrays, tuple destructuring. | **the Go Board example passes the oracle** |
-| **F4** | fixed-point `uI.F`/`iI.F` arithmetic + `trunc`/`round` casts. | a fixed-point example passes the oracle |
+| **F4** | ✅ fixed-point `uI.F`/`iI.F` arithmetic (`+`/`-`/`*`, the `*` operator, IR `Shl`/`Shr`) erasing to integers; the full `wrap`/`sat`/`trunc`/`round` cast set (§6.3); Verilog emits explicit operand extension. | fn_fixed/fn_sat/fn_round pass the oracle |
 | **F5** | pin map (`.pins`) → top-level Verilog wrapper + nextpnr PCF. | `build` emits a synthesizable top + PCF |
 
 **Locked decisions (this milestone):**

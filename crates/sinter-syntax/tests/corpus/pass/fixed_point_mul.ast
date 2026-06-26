@@ -1,0 +1,70 @@
+Program {
+    modules: [],
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                name: "scale",
+                params: [
+                    Typed {
+                        name: "a",
+                        ty: Fixed {
+                            signed: true,
+                            int_bits: 4,
+                            frac_bits: 4,
+                        },
+                        pos: Pos {
+                            line: 3,
+                            col: 10,
+                        },
+                    },
+                    Typed {
+                        name: "b",
+                        ty: Fixed {
+                            signed: true,
+                            int_bits: 4,
+                            frac_bits: 4,
+                        },
+                        pos: Pos {
+                            line: 3,
+                            col: 19,
+                        },
+                    },
+                ],
+                ret: Fixed {
+                    signed: true,
+                    int_bits: 4,
+                    frac_bits: 4,
+                },
+                body: Block {
+                    stmts: [],
+                    tail: Cast {
+                        expr: Binary {
+                            op: Mul,
+                            lhs: Ident(
+                                "a",
+                            ),
+                            rhs: Ident(
+                                "b",
+                            ),
+                        },
+                        ty: Fixed {
+                            signed: true,
+                            int_bits: 4,
+                            frac_bits: 4,
+                        },
+                        mode: Round,
+                    },
+                    pos: Pos {
+                        line: 3,
+                        col: 36,
+                    },
+                },
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}
