@@ -19,11 +19,12 @@ fn input2(a: (&str, u64), b: (&str, u64)) -> HashMap<String, u64> {
         .collect()
 }
 
-fn input3(a: (&str, u64), b: (&str, u64), c: (&str, u64)) -> HashMap<String, u64> {
+fn input4(a: (&str, u64), b: (&str, u64), c: (&str, u64), d: (&str, u64)) -> HashMap<String, u64> {
     [
         (a.0.to_string(), a.1),
         (b.0.to_string(), b.1),
         (c.0.to_string(), c.1),
+        (d.0.to_string(), d.1),
     ]
     .into_iter()
     .collect()
@@ -282,15 +283,16 @@ fn pipeline_elaborates_to_stage_registers() {
         assert_eq!(r.reset, 0, "reset of `{name}` must be a defined 0");
     }
 
-    // Inputs are the pipeline operands; outputs are every `_q` then the result
-    // and its valid bit.
+    // Inputs are the pipeline operands plus the input-valid bit; outputs are
+    // every `_q` then the result and its valid bit.
     let inputs: Vec<&str> = m.inputs().map(|p| p.name.as_str()).collect();
-    assert_eq!(inputs, ["a", "b", "c"]);
+    assert_eq!(inputs, ["a", "b", "c", "valid"]);
     let outputs: Vec<&str> = m.outputs().map(|p| p.name.as_str()).collect();
     assert_eq!(outputs.last(), Some(&"out_1"), "valid is the last output");
     assert!(outputs.contains(&"out_0"), "result output present");
 
-    // Free-running: v0's next-state is the literal 1 (a valid datum every cycle).
+    // PL3b: v0's next-state is the `in_valid` input (here the parent's `valid`
+    // port), not a baked literal — so a bubble (`valid = 0`) enters the chain.
     let v0_next = m
         .reg_updates
         .iter()
@@ -298,33 +300,59 @@ fn pipeline_elaborates_to_stage_registers() {
         .map(|(_, e)| &e.kind)
         .expect("inst_v0 has a next-state");
     assert!(
-        matches!(v0_next, sinter_compiler::ir::ExprKind::Literal(1)),
-        "PL3a free-running: inst_v0 <= 1, got {v0_next:?}"
+        matches!(v0_next, sinter_compiler::ir::ExprKind::Ident(n) if n == "valid"),
+        "PL3b: inst_v0 <= valid input, got {v0_next:?}"
     );
 }
 
 #[test]
 fn pipeline_is_none_during_fill_then_emits_aligned_results() {
-    // valid is 0 for the first `latency` (2) cycles — "None during fill" — then 1,
-    // and each result combines operands from the SAME wavefront (latency cycles
-    // earlier), proving the carried registers keep the datum coherent.
+    // With `valid = 1` every cycle (free-running), out_1 is 0 for the first
+    // `latency` (2) cycles — "None during fill" — then 1, and each result combines
+    // operands from the SAME wavefront (latency cycles earlier), proving the
+    // carried registers keep the datum coherent.
     let design =
         compile_str(include_str!("../../../examples/fn_mac_pipeline.snt")).expect("compile");
     let mut sim = Simulator::new(&design.modules[0]);
 
-    // Feed two distinct wavefronts, then drain with zeros.
-    let d0 = sim.step(&input3(("a", 3), ("b", 4), ("c", 5)));
+    let d0 = sim.step(&input4(("a", 3), ("b", 4), ("c", 5), ("valid", 1)));
     assert_eq!(d0["out_1"], 0, "cycle 0: filling -> invalid");
-    let d1 = sim.step(&input3(("a", 6), ("b", 7), ("c", 8)));
+    let d1 = sim.step(&input4(("a", 6), ("b", 7), ("c", 8), ("valid", 1)));
     assert_eq!(d1["out_1"], 0, "cycle 1: filling -> invalid");
 
-    let d2 = sim.step(&input3(("a", 0), ("b", 0), ("c", 0)));
+    let d2 = sim.step(&input4(("a", 0), ("b", 0), ("c", 0), ("valid", 1)));
     assert_eq!(d2["out_1"], 1, "cycle 2: first result valid");
     assert_eq!(d2["out_0"], 3 * 4 + 5, "result is (a0*b0)+c0 = 17");
 
-    let d3 = sim.step(&input3(("a", 0), ("b", 0), ("c", 0)));
+    let d3 = sim.step(&input4(("a", 0), ("b", 0), ("c", 0), ("valid", 1)));
     assert_eq!(d3["out_1"], 1, "cycle 3: second result valid");
     assert_eq!(d3["out_0"], 6 * 7 + 8, "result is (a1*b1)+c1 = 50");
+}
+
+#[test]
+fn pipeline_input_bubble_becomes_output_bubble_at_latency() {
+    // PL3b: a `valid = 0` cycle injects a bubble that surfaces as `out_1 = 0`
+    // exactly `latency` (2) cycles later, while the valid data on either side
+    // still emerges at the right time and value.
+    let design =
+        compile_str(include_str!("../../../examples/fn_mac_pipeline.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+
+    // cycle 0: valid datum A = (2,3,1) -> (2*3)+1 = 7
+    sim.step(&input4(("a", 2), ("b", 3), ("c", 1), ("valid", 1)));
+    // cycle 1: BUBBLE (valid = 0); the payload values are don't-care
+    sim.step(&input4(("a", 9), ("b", 9), ("c", 9), ("valid", 0)));
+    // cycle 2: valid datum B = (4,5,2) -> (4*5)+2 = 22
+    let c2 = sim.step(&input4(("a", 4), ("b", 5), ("c", 2), ("valid", 1)));
+    assert_eq!(c2["out_1"], 1, "cycle 2: datum A emerges (latency 2)");
+    assert_eq!(c2["out_0"], 2 * 3 + 1, "A = 7");
+    // cycle 3: the bubble from cycle 1 reaches the output -> invalid.
+    let c3 = sim.step(&input4(("a", 0), ("b", 0), ("c", 0), ("valid", 0)));
+    assert_eq!(c3["out_1"], 0, "cycle 3: the input bubble surfaces");
+    // cycle 4: datum B emerges, valid again.
+    let c4 = sim.step(&input4(("a", 0), ("b", 0), ("c", 0), ("valid", 0)));
+    assert_eq!(c4["out_1"], 1, "cycle 4: datum B emerges");
+    assert_eq!(c4["out_0"], 4 * 5 + 2, "B = 22");
 }
 
 #[test]

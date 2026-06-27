@@ -69,8 +69,11 @@ const EXAMPLES: &[Example] = &[
         name: "fn_mac",
         source: include_str!("../../../examples/fn_mac.snt"),
     },
-    // PL3a: a free-running `pipeline fn` (latency 2) — desugared to a stage-register
-    // instance + `advance`, with `None`-during-fill validity (DESIGN §3.1 / §9.3).
+    // PL3a/PL3b: a `pipeline fn` (latency 2) desugared to a stage-register instance
+    // + `advance`. The `valid` input drives `in_valid`, so the pseudo-random
+    // stimulus injects input bubbles (`valid = 0`) that the valid-bit chain carries
+    // to `out_valid` exactly `latency` cycles later — co-simulated sim vs Verilog
+    // bit-for-bit (DESIGN §3.1 / §9.3 / §7.4).
     Example {
         name: "fn_mac_pipeline",
         source: include_str!("../../../examples/fn_mac_pipeline.snt"),

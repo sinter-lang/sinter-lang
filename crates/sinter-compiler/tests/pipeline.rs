@@ -90,7 +90,7 @@ fn value_carried_across_multiple_boundaries_chains() {
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, x: u8) -> (Top, (u8, u1)) {
-                let (i2, result, valid) = self.inst.advance(x);
+                let (i2, result, valid) = self.inst.advance(x, 1);
                 (Top { inst: i2 }, (result, valid))
             }
         }
@@ -152,7 +152,7 @@ fn non_shadowing_match_binding_in_a_stage_compiles() {
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, a: u8) -> (Top, (u8, u1)) {
-                let (i2, r, v) = self.inst.advance(a);
+                let (i2, r, v) = self.inst.advance(a, 1);
                 (Top { inst: i2 }, (r, v))
             }
         }
@@ -181,7 +181,7 @@ fn carried_value_with_a_type_annotation_compiles() {
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, a: u8) -> (Top, (u8, u1)) {
-                let (i2, r, v) = self.inst.advance(a);
+                let (i2, r, v) = self.inst.advance(a, 1);
                 (Top { inst: i2 }, (r, v))
             }
         }
@@ -199,6 +199,36 @@ fn duplicate_pipeline_fn_reports_duplicate_function() {
         "pipeline fn f(a: u8) -> u8 { let p = (a) as u8 wrap; yield; p } \
          pipeline fn f(a: u8) -> u8 { let p = (a) as u8 wrap; yield; p }",
         "duplicate function",
+    );
+}
+
+#[test]
+fn in_valid_is_a_reserved_pipeline_parameter_name() {
+    // `in_valid` is the synthesized input-valid parameter (PL3b); a pipeline
+    // cannot reuse the name.
+    compile_err(
+        "pipeline fn f(a: u8, in_valid: u8) -> u8 { let p = (a) as u8 wrap; yield; p }",
+        "reserved pipeline parameter",
+    );
+}
+
+#[test]
+fn in_valid_is_a_reserved_pipeline_local_name() {
+    // The reservation also covers a top-level `let` binding.
+    compile_err(
+        "pipeline fn f(a: u8) -> u8 { let in_valid = (a) as u8 wrap; yield; in_valid }",
+        "reserved pipeline local",
+    );
+}
+
+#[test]
+fn in_valid_is_reserved_in_a_nested_binder() {
+    // …and a nested block-local `let` (uniform reservation, not just top level).
+    compile_err(
+        "pipeline fn f(a: u8) -> u8 { \
+            let p = (a) as u8 wrap; yield; \
+            { let in_valid = (a) as u8 wrap; (p + in_valid) as u8 wrap } }",
+        "reserved pipeline name",
     );
 }
 
@@ -230,7 +260,7 @@ fn value_used_in_non_consecutive_stages_stays_wavefront_coherent() {
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, a: u8, b: u8) -> (Top, (u8, u1)) {
-                let (i2, r, v) = self.inst.advance(a, b);
+                let (i2, r, v) = self.inst.advance(a, b, 1);
                 (Top { inst: i2 }, (r, v))
             }
         }

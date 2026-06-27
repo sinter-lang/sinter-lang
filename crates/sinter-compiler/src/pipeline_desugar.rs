@@ -33,8 +33,13 @@
 //! `valid` reads the last stage's valid bit (`self.v{L-1}`); since every valid
 //! bit resets to `0` and the chain is `L` deep, the output is *invalid* (a bubble)
 //! for the first `L` cycles after reset — "None during fill" — then valid.
-//! PL3a is **free-running**: `v0`'s next state is the literal `1` (every cycle
-//! feeds a valid datum); input bubbles / `?` arrive in PL3b.
+//!
+//! ## Input bubbles (PL3b)
+//! `advance` takes a trailing `in_valid: u1`: `v0`'s next state is `in_valid`, so
+//! `in_valid = 0` injects a **bubble** that the valid-bit chain carries to the
+//! output `L` cycles later (a bubble in ⇒ a bubble out at the right latency); a
+//! free-running caller passes `1`. (`Option<In>` is the erased `(payload,
+//! in_valid)`; the `Option<T>` sugar and `?`-propagation are a later milestone.)
 //!
 //! ## Phase-1 restrictions (rejected with a clear error)
 //! - a value carried across a `yield` must have an explicit width-fixing cast at
@@ -56,6 +61,11 @@ use crate::error::CompileError;
 
 /// Suffix of the synthesized instance struct (`<pipeline>__pipe`).
 const PIPE_SUFFIX: &str = "__pipe";
+
+/// The synthesized trailing `advance` parameter carrying input validity (PL3b):
+/// `1` admits a datum this cycle, `0` injects a bubble. Reserved as a pipeline
+/// value name.
+const IN_VALID: &str = "in_valid";
 
 /// Desugar every `pipeline fn` in `program` into a synthesized instance struct +
 /// `advance` method, returning the augmented program. A strict no-op (clone) when
@@ -187,7 +197,16 @@ impl Plan {
                 Param::SelfRef { pos } => {
                     return Err(sem(ctx, *pos, "a `pipeline fn` cannot take `self`"))
                 }
-                Param::Typed { name, ty, .. } => params.push((name.clone(), ty.clone())),
+                Param::Typed { name, ty, pos } => {
+                    if name == IN_VALID {
+                        return Err(sem(
+                            ctx,
+                            *pos,
+                            format!("`{IN_VALID}` is a reserved pipeline parameter name"),
+                        ));
+                    }
+                    params.push((name.clone(), ty.clone()));
+                }
             }
         }
 
@@ -257,6 +276,13 @@ impl Plan {
         let mut locals: Vec<Local> = Vec::new();
         for group in &mut groups {
             for local in group.drain(..) {
+                if local.name == IN_VALID {
+                    return Err(sem(
+                        ctx,
+                        local.pos,
+                        format!("`{IN_VALID}` is a reserved pipeline local name"),
+                    ));
+                }
                 if def_group.insert(local.name.clone(), local.group).is_some() {
                     return Err(sem(
                         ctx,
@@ -391,7 +417,8 @@ impl Plan {
 
     /// The synthesized `impl <struct_name> { fn advance(...) -> (Self, Out, u1) }`.
     fn synth_impl(&self, struct_name: &str) -> sinter_syntax::ast::ImplItem {
-        // Params: `self` then the pipeline inputs.
+        // Params: `self`, the pipeline inputs, then the trailing `in_valid: u1`
+        // (PL3b input validity; pass `1` for a free-running caller).
         let mut adv_params = vec![Param::SelfRef {
             pos: Pos::default(),
         }];
@@ -402,6 +429,11 @@ impl Plan {
                 pos: Pos::default(),
             });
         }
+        adv_params.push(Param::Typed {
+            name: IN_VALID.to_string(),
+            ty: TypeRef::Scalar(Type::Uint(1)),
+            pos: Pos::default(),
+        });
 
         // Body: each segment's `let`s, renamed per-segment and with references
         // rewritten to read carried values from `self`.
@@ -419,7 +451,9 @@ impl Plan {
         let mut sfields = Vec::new();
         for k in 0..self.latency {
             let value = if k == 0 {
-                Expr::Literal(1) // free-running: always feed a valid datum (PL3a)
+                // Stage 0 admits a datum iff `in_valid` (a bubble when 0); the
+                // wavefront's validity then marches down the chain (PL3b).
+                Expr::Ident(IN_VALID.to_string())
             } else {
                 self_field(&format!("v{}", k - 1))
             };
@@ -839,6 +873,13 @@ fn check_pattern_shadow(
     let mut names = Vec::new();
     pattern_binds(pat, &mut names);
     for n in names {
+        if n == IN_VALID {
+            return Err(sem(
+                ctx,
+                pos,
+                format!("`{IN_VALID}` is a reserved pipeline name"),
+            ));
+        }
         if defs.contains_key(&n) {
             return Err(sem(
                 ctx,

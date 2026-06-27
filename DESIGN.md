@@ -774,14 +774,18 @@ The first staged function color (DESIGN §3.1). Settled surface (this milestone)
   `yield expr;` taps are not part of the model (the parsed form is rejected).
 - **Driving:** a pipeline instance is ordinary state — a field of the pipeline's
   type in the state struct, advanced one beat per cycle via a generated
-  `advance(self, in: Option<In>) -> (Self, Option<Out>)`, reusing the sub-state +
+  `advance(self, in…, in_valid: u1) -> (Self, Out, u1)`, reusing the sub-state +
   `(new_state, output)` machinery (§2.2/§4 explicit ownership). The honest Mealy
-  step lives in this *generated* method; the source `fn` stays straight-line.
-- **Validity = `Option<T>`** (DESIGN §6.5): `None` is a bubble, `Some` a datum;
-  `?` propagates bubbles (§6.4). This *replaces* a separate `Valid<T>` — they were
-  the same "maybe a value" concept. It erases to a valid bit + payload. (Generic
-  `Option<T>` needs type-parameter support Sinter lacks; phase 1 uses a concrete
-  representation, with the `Option<T>` type-sugar arriving with that machinery.)
+  step lives in this *generated* method; the source `fn` stays straight-line. This
+  is the concrete erasure of the conceptual `advance(Option<In>) -> Option<Out>`:
+  validity is a trailing `u1` on both sides until the `Option<T>` sugar lands.
+- **Validity = `Option<T>`** (DESIGN §6.5): `None` is a bubble, `Some` a datum.
+  This *replaces* a separate `Valid<T>` — they were the same "maybe a value"
+  concept. It erases to a valid bit + payload, which is exactly the concrete
+  `in_valid`/output-`u1` above. The `Option<T>` *type* (with `Some`/`None`,
+  `match`, and `?` bubble-propagation, §6.4) needs type-parameter support Sinter
+  lacks and is its own milestone; the pipeline uses the concrete representation
+  meanwhile.
 - **Reset is fully defined:** valid bits → empty, payload registers → zero, so
   the fill region is defined-but-ignored (oracle-safe). The output is `None` for
   the first `latency` cycles after reset; fill latency and bubbles share the one
@@ -797,12 +801,15 @@ The first staged function color (DESIGN §3.1). Settled surface (this milestone)
 | **PL1** | ✅ Grammar + AST + parse: `pipeline`/`multiplex` function colors, `yield;` / `yield expr;` stage statements. (Compiler rejects them as not-yet-lowered.) | a `pipeline fn` parses into the AST |
 | **PL2** | ✅ Semantic checks: a `pipeline fn` type-checks across `yield` barriers (type-transparent); structural rules — free function only (no `self`/method), top-level `yield` only (no nesting), ≥1 stage; the hazard rule holds structurally (no `self` ⇒ inputs/consts/locals only); a pipeline cannot be called directly (instantiate + advance, PL3); `multiplex` and `yield`-taps are rejected as deferred. | a well-formed pipeline type-checks; misuse is rejected |
 | **PL3a** | ✅ Elaborate the **free-running** pipeline by **desugaring** a `pipeline fn` to a synthesized instance `struct` (a valid bit per stage + a register for every value live across each `yield`, SROA-flattened into the parent) and a generated `advance(self, in…) -> (Self, Out, u1)` — the existing sub-instance / `(new_state, output)` / method-inlining machinery then lowers it with no IR/sim/Verilog changes. Validity is concrete: a trailing `u1` (Option erased to valid-bit + payload); output is invalid for the first `latency` cycles (defined-`0` reset = "None during fill"); `v0` next-state is the literal `1` (free-running — input validity is PL3b). Carried `let`-locals need an explicit cast or type annotation to pin their register width (phase-1). Through the sim↔Verilog oracle (`examples/fn_mac_pipeline.snt`). | a single-output pipeline example passes the oracle bit-for-bit |
-| **PL3b** | Mid-stream bubbles: `Option<In>` inputs and `?` in the body punch holes the valid bits carry — a bubble in ⇒ a bubble out at the right latency. | a pipeline with `?`/`None` inputs matches the oracle |
+| **PL3b** | ✅ Input bubbles: `advance` gains a trailing `in_valid: u1` (`v0` next-state = `in_valid` instead of the literal `1`), so `in_valid = 0` injects a bubble the valid-bit chain carries to the output `latency` cycles later — a bubble in ⇒ a bubble out at the right latency; a free-running caller passes `1`. `in_valid` is a reserved pipeline name. (`?`-propagation needs a real `Option<T>` type and is promoted to its own milestone — see below.) | a gated pipeline with random `in_valid` matches the oracle bit-for-bit |
 | **PL3c** | Global-stall backpressure: the guarded-hold (the caller holds the old instance when not ready to consume), freezing the pipe. | a stalled pipeline holds its state, oracle-checked |
 
-Deferred beyond PL3: elastic `Stream<T>` (per-stage ready/valid + skid buffers),
-the `multiplex` color, and the §3.5 `Bounded`/`Dynamic` latency prover.
-Mid-pipeline `yield expr` taps are **cut** from the model (final-output-only).
+Deferred beyond PL3: a first-class **`Option<T>` type** (`Some`/`None`, `match`,
+and the `?` bubble-propagation operator — `let c = lookup(x)?` turns a present
+datum into a bubble; useful well beyond pipelines, so it is its own milestone);
+elastic `Stream<T>` (per-stage ready/valid + skid buffers); the `multiplex` color;
+and the §3.5 `Bounded`/`Dynamic` latency prover. Mid-pipeline `yield expr` taps
+are **cut** from the model (final-output-only).
 
 ---
 

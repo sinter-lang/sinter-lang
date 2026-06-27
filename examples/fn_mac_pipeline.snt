@@ -1,12 +1,15 @@
-// PL3a free-running pipeline oracle example (DESIGN §3.1 / §9.3).
+// PL3a/PL3b pipeline oracle example (DESIGN §3.1 / §9.3).
 //
 // `mac` computes (a*b)+c across two register stages (latency = 2 yields). All
 // three operands enter in stage 0 so the wavefront stays coherent: the multiply
 // result AND `c` are carried across the first `yield`, then the add result across
-// the second. `Top` owns one instance and advances it once per `#[clock]` tick,
-// always feeding a valid input (free-running). The result and its `valid` bit are
-// surfaced as outputs; `valid` is 0 for the first 2 cycles (the fill latency),
-// then 1, and the first valid result is (a0*b0)+c0.
+// the second. `Top` owns one instance and advances it once per `#[clock]` tick.
+//
+// PL3b — input bubbles: the `valid` input is fed to `advance` as `in_valid`. A
+// cycle with `valid = 0` injects a bubble that the valid-bit chain carries to the
+// output exactly `latency` (2) cycles later, so `out_valid = 0` there. With
+// `valid = 1` every cycle this is the free-running pipeline (the result becomes
+// valid after the 2-cycle fill). All registers reset to a defined 0.
 
 pipeline fn mac(a: u8, b: u8, c: u16) -> u16 {
     // Stage 0: multiply, and carry `c` alongside the product. The casts pin the
@@ -26,10 +29,11 @@ struct Top {
 
 impl Top {
     #[clock(domain = sys)]
-    fn tick(self, a: u8, b: u8, c: u16) -> (Top, (u16, u1)) {
-        // Free-running: advance the pipeline once per cycle.
-        let (inst2, result, valid) = self.inst.advance(a, b, c);
+    fn tick(self, a: u8, b: u8, c: u16, valid: u1) -> (Top, (u16, u1)) {
+        // Advance the pipeline once per cycle, feeding `valid` as the input-valid
+        // bit (`valid = 0` inserts a bubble).
+        let (inst2, result, out_valid) = self.inst.advance(a, b, c, valid);
         // The clock root returns a 2-tuple; the outputs are its 2nd element.
-        (Top { inst: inst2 }, (result, valid))
+        (Top { inst: inst2 }, (result, out_valid))
     }
 }
