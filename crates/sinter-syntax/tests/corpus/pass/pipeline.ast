@@ -1,0 +1,233 @@
+Program {
+    modules: [],
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Pipeline,
+                name: "mac",
+                params: [
+                    Typed {
+                        name: "a",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 17,
+                        },
+                    },
+                    Typed {
+                        name: "b",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 24,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        16,
+                    ),
+                ),
+                body: Block {
+                    stmts: [
+                        Let {
+                            pattern: Binding(
+                                "p",
+                            ),
+                            ty: None,
+                            value: Binary {
+                                op: Mul,
+                                lhs: Ident(
+                                    "a",
+                                ),
+                                rhs: Ident(
+                                    "b",
+                                ),
+                            },
+                            pos: Pos {
+                                line: 6,
+                                col: 5,
+                            },
+                        },
+                        Yield {
+                            value: None,
+                            pos: Pos {
+                                line: 7,
+                                col: 5,
+                            },
+                        },
+                        Let {
+                            pattern: Binding(
+                                "s",
+                            ),
+                            ty: None,
+                            value: Cast {
+                                expr: Binary {
+                                    op: Add,
+                                    lhs: Ident(
+                                        "p",
+                                    ),
+                                    rhs: Ident(
+                                        "p",
+                                    ),
+                                },
+                                ty: Scalar(
+                                    Uint(
+                                        16,
+                                    ),
+                                ),
+                                mode: Wrap,
+                            },
+                            pos: Pos {
+                                line: 8,
+                                col: 5,
+                            },
+                        },
+                        Yield {
+                            value: None,
+                            pos: Pos {
+                                line: 9,
+                                col: 5,
+                            },
+                        },
+                    ],
+                    tail: Ident(
+                        "s",
+                    ),
+                    pos: Pos {
+                        line: 5,
+                        col: 38,
+                    },
+                },
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Pipeline,
+                name: "tapped",
+                params: [
+                    Typed {
+                        name: "x",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 13,
+                            col: 20,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                body: Block {
+                    stmts: [
+                        Let {
+                            pattern: Binding(
+                                "y",
+                            ),
+                            ty: None,
+                            value: Cast {
+                                expr: Binary {
+                                    op: Add,
+                                    lhs: Ident(
+                                        "x",
+                                    ),
+                                    rhs: Literal(
+                                        1,
+                                    ),
+                                },
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                mode: Wrap,
+                            },
+                            pos: Pos {
+                                line: 14,
+                                col: 5,
+                            },
+                        },
+                        Yield {
+                            value: Some(
+                                Ident(
+                                    "y",
+                                ),
+                            ),
+                            pos: Pos {
+                                line: 15,
+                                col: 5,
+                            },
+                        },
+                        Let {
+                            pattern: Binding(
+                                "z",
+                            ),
+                            ty: None,
+                            value: Cast {
+                                expr: Binary {
+                                    op: Add,
+                                    lhs: Ident(
+                                        "y",
+                                    ),
+                                    rhs: Literal(
+                                        1,
+                                    ),
+                                },
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                mode: Wrap,
+                            },
+                            pos: Pos {
+                                line: 16,
+                                col: 5,
+                            },
+                        },
+                        Yield {
+                            value: None,
+                            pos: Pos {
+                                line: 17,
+                                col: 5,
+                            },
+                        },
+                    ],
+                    tail: Ident(
+                        "z",
+                    ),
+                    pos: Pos {
+                        line: 13,
+                        col: 33,
+                    },
+                },
+                pos: Pos {
+                    line: 13,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

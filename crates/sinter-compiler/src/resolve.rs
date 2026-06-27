@@ -544,15 +544,24 @@ impl Resolver {
     ) -> Result<(), CompileError> {
         locals.enter();
         for stmt in &mut b.stmts {
-            let Stmt::Let {
-                pattern, ty, value, ..
-            } = stmt;
-            // The initializer is resolved BEFORE the bindings come into scope.
-            self.rewrite_expr(value, cur, locals, src)?;
-            if let Some(t) = ty {
-                self.rewrite_typeref(t, cur, src)?;
+            match stmt {
+                Stmt::Let {
+                    pattern, ty, value, ..
+                } => {
+                    // The initializer is resolved BEFORE the bindings are in scope.
+                    self.rewrite_expr(value, cur, locals, src)?;
+                    if let Some(t) = ty {
+                        self.rewrite_typeref(t, cur, src)?;
+                    }
+                    bind_pattern(pattern, locals);
+                }
+                // A `yield` stage barrier binds nothing; resolve its optional tap.
+                Stmt::Yield { value, .. } => {
+                    if let Some(v) = value {
+                        self.rewrite_expr(v, cur, locals, src)?;
+                    }
+                }
             }
-            bind_pattern(pattern, locals);
         }
         self.rewrite_expr(&mut b.tail, cur, locals, src)?;
         locals.exit();

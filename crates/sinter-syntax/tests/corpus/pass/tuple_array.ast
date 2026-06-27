@@ -51,6 +51,7 @@ Program {
                     Func {
                         attrs: [],
                         vis: Private,
+                        color: Comb,
                         name: "split",
                         params: [
                             SelfRef {

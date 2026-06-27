@@ -1,0 +1,19 @@
+// Pipeline function (DESIGN §3.1, milestone PL1 — parses today; checking and
+// lowering are PL2/PL3). `yield;` is a bare stage boundary (live locals are
+// auto-registered); `yield expr;` additionally taps a value out at that stage.
+
+pipeline fn mac(a: u8, b: u8) -> u16 {
+    let p = a * b;                // stage 0
+    yield;                        // stage boundary
+    let s = (p + p) as u16 wrap;  // stage 1
+    yield;
+    s                             // output (latency 2)
+}
+
+pipeline fn tapped(x: u8) -> u8 {
+    let y = (x + 1) as u8 wrap;
+    yield y;                      // tap `y` out at this stage
+    let z = (y + 1) as u8 wrap;
+    yield;
+    z
+}

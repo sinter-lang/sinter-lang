@@ -39,6 +39,7 @@ Program {
                     Func {
                         attrs: [],
                         vis: Private,
+                        color: Comb,
                         name: "step",
                         params: [
                             SelfRef {
@@ -142,6 +143,7 @@ Program {
             Func {
                 attrs: [],
                 vis: Private,
+                color: Comb,
                 name: "bump",
                 params: [
                     Typed {

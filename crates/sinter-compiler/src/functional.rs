@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use sinter_syntax::ast::{
-    BinOp, Block, CastMode, Expr, Func, Item, Param, Pattern, Pos, Program, Stmt, Type, TypeRef,
-    UnaryOp, Visibility,
+    BinOp, Block, CastMode, Expr, FnColor, Func, Item, Param, Pattern, Pos, Program, Stmt, Type,
+    TypeRef, UnaryOp, Visibility,
 };
 
 use crate::error::CompileError;
@@ -178,6 +178,22 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
             format!("`{kind}` is parsed but not yet lowered (milestone S2/S3)"),
         ));
     }
+    // The staged function colors (DESIGN §3) parse today (PL1) but are not yet
+    // checked or lowered; reject them rather than treat them as combinational.
+    for f in all_fns(program) {
+        if f.color != FnColor::Comb {
+            let kind = match f.color {
+                FnColor::Pipeline => "pipeline",
+                FnColor::Multiplex => "multiplex",
+                FnColor::Comb => unreachable!(),
+            };
+            return Err(sem(
+                &f.name,
+                f.pos,
+                format!("`{kind} fn` is parsed but not yet lowered (milestone PL2/PL3)"),
+            ));
+        }
+    }
     let tables = build_tables(program)?;
     let checker = Checker::new(&tables);
 
@@ -196,6 +212,19 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
 
     checker.check_clock_root(program)?;
     Ok(())
+}
+
+/// Every function defined in the program — free functions and impl methods.
+fn all_fns(program: &Program) -> Vec<&Func> {
+    let mut fns = Vec::new();
+    for item in &program.items {
+        match item {
+            Item::Func(f) => fns.push(f),
+            Item::Impl(im) => fns.extend(im.methods.iter()),
+            _ => {}
+        }
+    }
+    fns
 }
 
 // --- Symbol-table construction --------------------------------------------
@@ -573,18 +602,31 @@ impl Checker<'_> {
     ) -> Result<FType, CompileError> {
         let mut local = env.clone();
         for stmt in &block.stmts {
-            let Stmt::Let {
-                pattern,
-                ty,
-                value,
-                pos,
-            } = stmt;
+            let (pattern, ty, value, pos) = match stmt {
+                Stmt::Let {
+                    pattern,
+                    ty,
+                    value,
+                    pos,
+                } => (pattern, ty, value, *pos),
+                // `yield` is a pipeline stage boundary; the pipeline color is
+                // rejected up front (PL2/PL3 not lowered), so it cannot appear in
+                // a checked (combinational) body.
+                Stmt::Yield { pos, .. } => {
+                    return Err(sem(
+                        ctx,
+                        *pos,
+                        "`yield` is only valid in a `pipeline fn` (not yet lowered: PL2/PL3)"
+                            .to_string(),
+                    ))
+                }
+            };
             let want = match ty {
-                Some(t) => Some(resolve_type(&self.known(), t, ctx, *pos)?),
+                Some(t) => Some(resolve_type(&self.known(), t, ctx, pos)?),
                 None => None,
             };
-            let vt = self.check_expr(value, &local, want.as_ref(), ctx, *pos)?;
-            self.bind_pattern(pattern, &vt, &mut local, ctx, *pos)?;
+            let vt = self.check_expr(value, &local, want.as_ref(), ctx, pos)?;
+            self.bind_pattern(pattern, &vt, &mut local, ctx, pos)?;
         }
         self.check_expr(&block.tail, &local, expected, ctx, block.pos)
     }

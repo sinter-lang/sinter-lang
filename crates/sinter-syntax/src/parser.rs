@@ -8,9 +8,9 @@ use pest::Parser as _;
 
 use crate::ast::{
     Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, ConstItem, Dir, EnumItem,
-    EnumVariant, Expr, FieldInit, Func, ImplItem, Item, LetBinding, MatchArm, ModItem, Module,
-    Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt, StructField, StructItem, Type,
-    TypeRef, UnaryOp, UseItem, UsePath, Visibility,
+    EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item, LetBinding, MatchArm, ModItem,
+    Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt, StructField, StructItem,
+    Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
 };
 
 /// The `pest`-generated parser and `Rule` enum. Isolated in a submodule so the
@@ -643,6 +643,7 @@ fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
     let pos = pos_of(&pair);
     let mut attrs = Vec::new();
     let mut vis = Visibility::Private;
+    let mut color = FnColor::Comb;
     let mut name = String::new();
     let mut params = Vec::new();
     let mut ret = None;
@@ -651,6 +652,17 @@ fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
         match inner.as_rule() {
             Rule::attr => attrs.push(parse_attr(inner)?),
             Rule::vis => vis = Visibility::Public,
+            Rule::fn_color => {
+                color = match inner.as_str() {
+                    "pipeline" => FnColor::Pipeline,
+                    "multiplex" => FnColor::Multiplex,
+                    other => {
+                        return Err(ParseError::Syntax(format!(
+                            "unknown function color `{other}`"
+                        )))
+                    }
+                };
+            }
             Rule::ident => name = inner.as_str().to_string(),
             Rule::param => params.push(parse_param(inner)?),
             Rule::f_typeref => ret = Some(parse_typeref(inner)?),
@@ -663,6 +675,7 @@ fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
     Ok(Func {
         attrs,
         vis,
+        color,
         name,
         params,
         ret,
@@ -728,6 +741,7 @@ fn parse_fblock(pair: Pair<Rule>) -> Result<Block, ParseError> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::f_let => stmts.push(parse_flet(inner)?),
+            Rule::f_yield => stmts.push(parse_fyield(inner)?),
             Rule::f_expr => tail = Some(parse_expr(inner)?),
             other => return Err(unexpected(other, "block")),
         }
@@ -742,6 +756,19 @@ fn parse_fblock(pair: Pair<Rule>) -> Result<Block, ParseError> {
 
 fn parse_block_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     Ok(Expr::Block(parse_fblock(pair)?))
+}
+
+fn parse_fyield(pair: Pair<Rule>) -> Result<Stmt, ParseError> {
+    let pos = pos_of(&pair);
+    let mut value = None;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::kw_yield => {}
+            Rule::f_expr => value = Some(parse_expr(inner)?),
+            other => return Err(unexpected(other, "yield")),
+        }
+    }
+    Ok(Stmt::Yield { value, pos })
 }
 
 fn parse_flet(pair: Pair<Rule>) -> Result<Stmt, ParseError> {

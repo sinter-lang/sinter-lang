@@ -5,6 +5,7 @@ Program {
             Func {
                 attrs: [],
                 vis: Private,
+                color: Comb,
                 name: "scale",
                 params: [
                     Typed {

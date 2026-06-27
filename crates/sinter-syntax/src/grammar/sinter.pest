@@ -99,7 +99,7 @@ literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 keyword = @{
     ("module" | "in" | "out" | "reg" | "let" | "if" | "else"
    | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as"
-   | "mod" | "use" | "pub")
+   | "mod" | "use" | "pub" | "pipeline" | "multiplex" | "yield")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -143,9 +143,11 @@ enum_variant = { ident ~ ("=" ~ f_expr)? }
 // methods do, via `fn_item`).
 impl_item = { "impl" ~ ident ~ "{" ~ fn_item* ~ "}" }
 
-// `[#[attr]] [pub] fn name(params) -> Type { block }`. The clock-root carries
-// `#[clock(domain = …)]`; combinational sub-steps carry none.
-fn_item     = { attr* ~ vis? ~ "fn" ~ ident ~ "(" ~ (param ~ ("," ~ param)* ~ ","?)? ~ ")" ~ "->" ~ f_typeref ~ f_block }
+// `[#[attr]] [pub] [pipeline|multiplex] fn name(params) -> Type { block }`. The
+// clock-root carries `#[clock(domain = …)]`; combinational sub-steps carry none.
+// A function color (DESIGN §3) precedes `fn`; absent = plain combinational.
+fn_item     = { attr* ~ vis? ~ fn_color? ~ "fn" ~ ident ~ "(" ~ (param ~ ("," ~ param)* ~ ","?)? ~ ")" ~ "->" ~ f_typeref ~ f_block }
+fn_color    = @{ ("pipeline" | "multiplex") ~ !(ASCII_ALPHANUMERIC | "_") }
 param       = { self_param | typed_param }
 self_param  = @{ "self" ~ !(ASCII_ALPHANUMERIC | "_") }
 typed_param = { ident ~ ":" ~ f_typeref }
@@ -156,9 +158,16 @@ attr_args = { "(" ~ attr_arg ~ ("," ~ attr_arg)* ~ ")" }
 attr_arg  = { ident ~ ("=" ~ attr_val)? }
 attr_val  = { ident | literal }
 
-// A block is a sequence of `let` statements then a tail expression (its value).
-f_block = { "{" ~ f_let* ~ f_expr ~ "}" }
+// A block is a sequence of statements then a tail expression (its value). A
+// `pipeline fn` body additionally uses `yield` statements as stage boundaries
+// (DESIGN §3.1); `yield` is grammatically allowed in any block and restricted to
+// pipelines by a later semantic pass.
+f_block = { "{" ~ (f_let | f_yield)* ~ f_expr ~ "}" }
 f_let   = { "let" ~ f_pattern ~ (":" ~ f_typeref)? ~ "=" ~ f_expr ~ ";" }
+// `yield;` is a bare stage barrier (live locals auto-register); `yield expr;`
+// additionally taps `expr` out at that stage (reserved; not yet lowered).
+f_yield  = { kw_yield ~ f_expr? ~ ";" }
+kw_yield = @{ "yield" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Patterns (let bindings and match arms). `f_path_pat` needs at least one `::`
 // so a bare name falls through to `f_binding`; `f_wildcard` needs a word

@@ -181,6 +181,7 @@ Program {
                             Func {
                                 attrs: [],
                                 vis: Public,
+                                color: Comb,
                                 name: "helper",
                                 params: [
                                     Typed {

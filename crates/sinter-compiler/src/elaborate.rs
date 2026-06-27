@@ -266,12 +266,21 @@ impl Elaborator<'_> {
 
         // Body: inline `let`s into the environment, then lower the tail.
         for stmt in &tick.body.stmts {
-            let Stmt::Let {
-                pattern,
-                value,
-                pos,
-                ..
-            } = stmt;
+            let (pattern, value, pos) = match stmt {
+                Stmt::Let {
+                    pattern,
+                    value,
+                    pos,
+                    ..
+                } => (pattern, value, pos),
+                Stmt::Yield { pos, .. } => {
+                    return Err(err(
+                        &self.ctx,
+                        *pos,
+                        "`yield` is only valid in a `pipeline fn` (not yet lowered)",
+                    ))
+                }
+            };
             let v = self.lower(&env, value, None, 0, *pos)?;
             self.bind(pattern, v, &mut env, *pos)?;
         }
@@ -460,12 +469,21 @@ impl Elaborator<'_> {
             Expr::Block(b) => {
                 let mut local = env.clone();
                 for stmt in &b.stmts {
-                    let Stmt::Let {
-                        pattern,
-                        value,
-                        pos,
-                        ..
-                    } = stmt;
+                    let (pattern, value, pos) = match stmt {
+                        Stmt::Let {
+                            pattern,
+                            value,
+                            pos,
+                            ..
+                        } => (pattern, value, pos),
+                        Stmt::Yield { pos, .. } => {
+                            return Err(err(
+                                &self.ctx,
+                                *pos,
+                                "`yield` is only valid in a `pipeline fn` (not yet lowered)",
+                            ))
+                        }
+                    };
                     let v = self.lower(&local, value, None, depth, *pos)?;
                     self.bind(pattern, v, &mut local, *pos)?;
                 }
@@ -791,12 +809,21 @@ impl Elaborator<'_> {
         let ret = self.resolve(&f.ret, f.pos)?;
         let mut local = env.clone();
         for stmt in &f.body.stmts {
-            let Stmt::Let {
-                pattern,
-                value,
-                pos,
-                ..
-            } = stmt;
+            let (pattern, value, pos) = match stmt {
+                Stmt::Let {
+                    pattern,
+                    value,
+                    pos,
+                    ..
+                } => (pattern, value, pos),
+                Stmt::Yield { pos, .. } => {
+                    return Err(err(
+                        &self.ctx,
+                        *pos,
+                        "`yield` is only valid in a `pipeline fn` (not yet lowered)",
+                    ))
+                }
+            };
             let v = self.lower(&local, value, None, depth, *pos)?;
             self.bind(pattern, v, &mut local, *pos)?;
         }

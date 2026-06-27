@@ -468,6 +468,18 @@ pub struct ImplItem {
     pub pos: Pos,
 }
 
+/// A function color (DESIGN §3): plain combinational, or a staged color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FnColor {
+    /// A plain combinational / stateful-step function (the default).
+    #[default]
+    Comb,
+    /// A `pipeline fn` — `yield` marks stage boundaries (DESIGN §3.1).
+    Pipeline,
+    /// A `multiplex fn` — arms folded in time over a shared resource (§3.2).
+    Multiplex,
+}
+
 /// A function or method definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Func {
@@ -475,6 +487,8 @@ pub struct Func {
     pub attrs: Vec<Attr>,
     /// Visibility (DESIGN §10).
     pub vis: Visibility,
+    /// The function color (DESIGN §3); `Comb` unless `pipeline`/`multiplex`.
+    pub color: FnColor,
     /// The function name.
     pub name: String,
     /// The parameters, in order (a leading `self` for methods).
@@ -586,6 +600,14 @@ pub enum Stmt {
         /// The bound value.
         value: Expr,
         /// Source position of the `let` keyword.
+        pos: Pos,
+    },
+    /// A `yield;` stage boundary in a `pipeline fn` (DESIGN §3.1). The optional
+    /// expression taps a value out at that stage (reserved; not yet lowered).
+    Yield {
+        /// The optional tapped value.
+        value: Option<Expr>,
+        /// Source position of the `yield` keyword.
         pos: Pos,
     },
 }

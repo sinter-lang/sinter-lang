@@ -190,6 +190,24 @@ fn module_items_are_rejected_until_lowered() {
 }
 
 #[test]
+fn pipeline_fn_is_rejected_until_lowered() {
+    // A `pipeline fn` parses (PL1) but checking/lowering is PL2/PL3 — reject it
+    // rather than treat it as a plain combinational function.
+    reject(
+        "pipeline fn mac(a: u8, b: u8) -> u16 { let p = a * b; yield; p }",
+        "not yet lowered (milestone PL2/PL3)",
+    );
+}
+
+#[test]
+fn yield_outside_a_pipeline_is_rejected() {
+    reject(
+        "fn f(x: u8) -> u8 { yield; x }",
+        "only valid in a `pipeline fn`",
+    );
+}
+
+#[test]
 fn clock_root_must_return_self() {
     reject(
         "struct A { x: u1 = 0 } impl A { #[clock(domain = sys)] fn tick(self) -> u1 { self.x } }",

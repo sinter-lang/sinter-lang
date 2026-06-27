@@ -165,9 +165,14 @@ a tiered model, **encoded in the type**:
 | Global stall | (enable) | one enable freezes all pipeline regs together | cheap, single flow-control authority only |
 | Elastic / latency-insensitive (**opt-in**) | `Stream<T>` | per-stage valid+ready + 2-deep skid buffers; backpressure propagates one stage/cycle | ~2× pipeline registers |
 
-**Key safety rule:** connecting a free-running `Valid<T>` source to a consumer
+**Key safety rule:** connecting a free-running valid-only source to a consumer
 that needs to stall it is a **type error**, not a silicon bug. (Same move as
 clock-domain safety: make the unsafe composition unrepresentable.)
+
+> **Refinement (PL milestone):** the free-running "valid-only" type is just
+> **`Option<T>`** (DESIGN §6.5) — `None` is a bubble, `Some` a datum — not a
+> separate `Valid<T>`; they are the same "maybe a value," and `?` (§6.4)
+> propagates bubbles. See §9.3.
 
 **Pipeline hazard rule (load-bearing for verifiability):** a `pipeline fn` may
 carry **per-wavefront** state (the marching variables, private to each datum)
@@ -732,6 +737,36 @@ layer is deferred.
 The S3 bit-for-bit check is the key correctness lever: splitting a design across
 files is a pure refactor with zero effect on the elaborated IR or the trace —
 verified by `tests/project.rs` (single-file vs `tests/fixtures/go_board_split/`).
+
+### 9.3 Pipeline functions — ACTIVE milestone (PL1–PL3)
+
+The first staged function color (DESIGN §3.1). Settled surface (this milestone):
+
+- **`pipeline fn`** with **bare `yield;`** stage boundaries; locals live across a
+  boundary are auto-registered. `yield expr;` (tap a value out at that stage) is
+  reserved in the grammar but its lowering is deferred.
+- **Driving:** a pipeline instance is ordinary state — a field of the pipeline's
+  type in the state struct, advanced one beat per cycle, reusing the sub-state +
+  `(new_state, output)` machinery (§2.2/§4 explicit ownership).
+- **Validity = `Option<T>`** (DESIGN §6.5): `None` is a bubble, `Some` a datum;
+  `?` propagates bubbles (§6.4). This *replaces* a separate `Valid<T>` — they were
+  the same "maybe a value" concept. It erases to a valid bit + payload. (Generic
+  `Option<T>` needs type-parameter support Sinter lacks; phase 1 uses a concrete
+  representation, with the `Option<T>` type-sugar arriving with that machinery.)
+- **Backpressure (phase 1) = the global-stall tier (§3.1)** and it falls out of
+  the model for free: the caller reads the output's validity and either commits
+  the advanced state or **holds** the old one (a guarded hold, §6.4) — freezing
+  the whole pipeline. Elastic `Stream<T>` (per-stage ready/valid + skid buffers)
+  is the deferred opt-in tier.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **PL1** | ✅ Grammar + AST + parse: `pipeline`/`multiplex` function colors, `yield;` / `yield expr;` stage statements. (Compiler rejects them as not-yet-lowered.) | a `pipeline fn` parses into the AST |
+| **PL2** | Semantic checks: pipeline-only `yield`, the hazard rule (no external mutable state — inputs/consts/per-wavefront locals only), single-step purity, output typing. | a well-formed pipeline type-checks; bad ones are rejected |
+| **PL3** | Elaborate: liveness-across-`yield` → stage registers + validity propagation; the owned-instance `advance` lowering, through the sim↔Verilog oracle. | a pipeline example passes the oracle bit-for-bit |
+
+Deferred beyond PL3: `yield expr` taps, elastic `Stream<T>`, the `multiplex`
+color, and the §3.5 `Bounded`/`Dynamic` latency prover.
 
 ---
 

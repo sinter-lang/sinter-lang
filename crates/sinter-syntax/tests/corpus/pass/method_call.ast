@@ -39,6 +39,7 @@ Program {
                     Func {
                         attrs: [],
                         vis: Private,
+                        color: Comb,
                         name: "apply",
                         params: [
                             SelfRef {
@@ -119,6 +120,7 @@ Program {
                     Func {
                         attrs: [],
                         vis: Private,
+                        color: Comb,
                         name: "run",
                         params: [
                             SelfRef {
