@@ -19,6 +19,16 @@ fn input2(a: (&str, u64), b: (&str, u64)) -> HashMap<String, u64> {
         .collect()
 }
 
+fn input3(a: (&str, u64), b: (&str, u64), c: (&str, u64)) -> HashMap<String, u64> {
+    [
+        (a.0.to_string(), a.1),
+        (b.0.to_string(), b.1),
+        (c.0.to_string(), c.1),
+    ]
+    .into_iter()
+    .collect()
+}
+
 #[test]
 fn fn_counter_elaborates_to_expected_module() {
     let src = include_str!("../../../examples/fn_counter.snt");
@@ -234,6 +244,87 @@ fn widening_cast_sign_extends() {
     // x = -3 (i4 bits 1101 = 13) -> wide = -3 (i8 bits 1111_1101 = 253).
     sim.step(&input("x", 13));
     assert_eq!(sim.step(&input("x", 0))["wide_q"], 253);
+}
+
+// --- PL3a: pipeline-function elaboration (DESIGN §3.1 / §9.3) ---------------
+
+#[test]
+fn pipeline_elaborates_to_stage_registers() {
+    // The `pipeline fn mac` desugars to a `mac__pipe` instance owned by `Top`,
+    // flattened to leaf registers: a valid bit per stage (v0, v1) and the values
+    // carried across each `yield` (c and prod across boundary 0, sum across
+    // boundary 1) — all reset to a defined 0 (oracle-safe).
+    let design =
+        compile_str(include_str!("../../../examples/fn_mac_pipeline.snt")).expect("compile");
+    assert_eq!(design.modules.len(), 1, "exactly one elaborated module");
+    let m = &design.modules[0];
+    assert_eq!(m.name, "Top");
+
+    let regs: HashMap<&str, &sinter_compiler::ir::Reg> =
+        m.regs.iter().map(|r| (r.name.as_str(), r)).collect();
+    let expect: &[(&str, u32)] = &[
+        ("inst_v0", 1),
+        ("inst_v1", 1),
+        ("inst_c_s0", 16),
+        ("inst_prod_s0", 16),
+        ("inst_sum_s1", 16),
+    ];
+    assert_eq!(
+        m.regs.len(),
+        expect.len(),
+        "no extra/missing stage registers"
+    );
+    for (name, width) in expect {
+        let r = regs
+            .get(name)
+            .unwrap_or_else(|| panic!("missing register `{name}`"));
+        assert_eq!(r.ty.width(), *width, "width of `{name}`");
+        assert_eq!(r.reset, 0, "reset of `{name}` must be a defined 0");
+    }
+
+    // Inputs are the pipeline operands; outputs are every `_q` then the result
+    // and its valid bit.
+    let inputs: Vec<&str> = m.inputs().map(|p| p.name.as_str()).collect();
+    assert_eq!(inputs, ["a", "b", "c"]);
+    let outputs: Vec<&str> = m.outputs().map(|p| p.name.as_str()).collect();
+    assert_eq!(outputs.last(), Some(&"out_1"), "valid is the last output");
+    assert!(outputs.contains(&"out_0"), "result output present");
+
+    // Free-running: v0's next-state is the literal 1 (a valid datum every cycle).
+    let v0_next = m
+        .reg_updates
+        .iter()
+        .find(|(n, _)| n == "inst_v0")
+        .map(|(_, e)| &e.kind)
+        .expect("inst_v0 has a next-state");
+    assert!(
+        matches!(v0_next, sinter_compiler::ir::ExprKind::Literal(1)),
+        "PL3a free-running: inst_v0 <= 1, got {v0_next:?}"
+    );
+}
+
+#[test]
+fn pipeline_is_none_during_fill_then_emits_aligned_results() {
+    // valid is 0 for the first `latency` (2) cycles — "None during fill" — then 1,
+    // and each result combines operands from the SAME wavefront (latency cycles
+    // earlier), proving the carried registers keep the datum coherent.
+    let design =
+        compile_str(include_str!("../../../examples/fn_mac_pipeline.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+
+    // Feed two distinct wavefronts, then drain with zeros.
+    let d0 = sim.step(&input3(("a", 3), ("b", 4), ("c", 5)));
+    assert_eq!(d0["out_1"], 0, "cycle 0: filling -> invalid");
+    let d1 = sim.step(&input3(("a", 6), ("b", 7), ("c", 8)));
+    assert_eq!(d1["out_1"], 0, "cycle 1: filling -> invalid");
+
+    let d2 = sim.step(&input3(("a", 0), ("b", 0), ("c", 0)));
+    assert_eq!(d2["out_1"], 1, "cycle 2: first result valid");
+    assert_eq!(d2["out_0"], 3 * 4 + 5, "result is (a0*b0)+c0 = 17");
+
+    let d3 = sim.step(&input3(("a", 0), ("b", 0), ("c", 0)));
+    assert_eq!(d3["out_1"], 1, "cycle 3: second result valid");
+    assert_eq!(d3["out_0"], 6 * 7 + 8, "result is (a1*b1)+c1 = 50");
 }
 
 #[test]

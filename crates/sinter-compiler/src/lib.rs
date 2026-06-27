@@ -17,6 +17,7 @@ pub mod eval;
 pub mod functional;
 pub mod ir;
 pub mod pinmap;
+pub mod pipeline_desugar;
 pub mod resolve;
 pub mod sim;
 pub mod verilator;
@@ -56,7 +57,23 @@ pub fn compile_project(root: &std::path::Path) -> Result<Design, CompileError> {
 }
 
 /// Check and lower an already-resolved [`Design`] from a flat program.
+///
+/// `pipeline fn`s (DESIGN §3.1) are first desugared to a synthesized instance
+/// `struct` + `advance` method ([`pipeline_desugar`]) so the rest of the pipeline
+/// — type checking and elaboration — handles them as ordinary functional items. A
+/// program with no `pipeline fn` is passed through untouched (byte-identical
+/// legacy path).
 fn compile_program(program: sinter_syntax::ast::Program) -> Result<Design, CompileError> {
+    use sinter_syntax::ast::{FnColor, Item};
+    let has_pipeline = program
+        .items
+        .iter()
+        .any(|it| matches!(it, Item::Func(f) if f.color == FnColor::Pipeline));
+    let program = if has_pipeline {
+        pipeline_desugar::desugar_pipelines(&program)?
+    } else {
+        program
+    };
     functional::check_functional(&program)?;
     let mut design = check::check_program(&program)?;
     if let Some(module) = elaborate::elaborate(&program)? {

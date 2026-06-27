@@ -69,6 +69,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_mac",
         source: include_str!("../../../examples/fn_mac.snt"),
     },
+    // PL3a: a free-running `pipeline fn` (latency 2) — desugared to a stage-register
+    // instance + `advance`, with `None`-during-fill validity (DESIGN §3.1 / §9.3).
+    Example {
+        name: "fn_mac_pipeline",
+        source: include_str!("../../../examples/fn_mac_pipeline.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {
