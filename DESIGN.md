@@ -762,7 +762,7 @@ The first staged function color (DESIGN §3.1). Settled surface (this milestone)
 | Phase | Scope | Done when |
 |---|---|---|
 | **PL1** | ✅ Grammar + AST + parse: `pipeline`/`multiplex` function colors, `yield;` / `yield expr;` stage statements. (Compiler rejects them as not-yet-lowered.) | a `pipeline fn` parses into the AST |
-| **PL2** | Semantic checks: pipeline-only `yield`, the hazard rule (no external mutable state — inputs/consts/per-wavefront locals only), single-step purity, output typing. | a well-formed pipeline type-checks; bad ones are rejected |
+| **PL2** | ✅ Semantic checks: a `pipeline fn` type-checks across `yield` barriers (type-transparent); structural rules — free function only (no `self`/method), top-level `yield` only (no nesting), ≥1 stage; the hazard rule holds structurally (no `self` ⇒ inputs/consts/locals only); a pipeline cannot be called directly (instantiate + advance, PL3); `multiplex` and `yield`-taps are rejected as deferred. | a well-formed pipeline type-checks; misuse is rejected |
 | **PL3** | Elaborate: liveness-across-`yield` → stage registers + validity propagation; the owned-instance `advance` lowering, through the sim↔Verilog oracle. | a pipeline example passes the oracle bit-for-bit |
 
 Deferred beyond PL3: `yield expr` taps, elastic `Stream<T>`, the `multiplex`

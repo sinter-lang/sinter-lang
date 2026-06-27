@@ -190,17 +190,80 @@ fn module_items_are_rejected_until_lowered() {
 }
 
 #[test]
-fn pipeline_fn_is_rejected_until_lowered() {
-    // A `pipeline fn` parses (PL1) but checking/lowering is PL2/PL3 — reject it
-    // rather than treat it as a plain combinational function.
+fn pipeline_fn_definition_type_checks() {
+    // A well-formed `pipeline fn` type-checks across `yield` stage boundaries
+    // (PL2). `a * b` widens u8*u8 -> u16; the tail matches the return type.
+    check("pipeline fn mac(a: u8, b: u8) -> u16 { let p = a * b; yield; p }")
+        .expect("a well-formed pipeline fn should type-check");
+}
+
+#[test]
+fn pipeline_carries_locals_across_stages() {
+    // `p` (stage 0) is used after two `yield`s — it lives across both boundaries
+    // (registered in PL3); types flow through unchanged.
+    check(
+        "pipeline fn f(a: u8, b: u8) -> u16 { \
+            let p = a * b; yield; \
+            let q = (p + p) as u16 wrap; yield; \
+            (p + q) as u16 wrap }",
+    )
+    .expect("cross-stage locals should type-check");
+}
+
+#[test]
+fn pipeline_may_call_a_combinational_fn() {
+    check(
+        "fn dbl(x: u8) -> u9 { x + x } \
+         pipeline fn f(a: u8) -> u9 { let y = dbl(a); yield; y }",
+    )
+    .expect("a pipeline may call a combinational fn (DESIGN §2.2)");
+}
+
+#[test]
+fn calling_a_pipeline_fn_directly_is_rejected() {
+    // A pipeline is instantiated + advanced (PL3), never called inline.
     reject(
-        "pipeline fn mac(a: u8, b: u8) -> u16 { let p = a * b; yield; p }",
-        "not yet lowered (milestone PL2/PL3)",
+        "pipeline fn mac(a: u8, b: u8) -> u16 { let p = a * b; yield; p } \
+         fn use_it(a: u8, b: u8) -> u16 { mac(a, b) }",
+        "cannot be called directly",
+    );
+}
+
+#[test]
+fn pipeline_fn_without_yield_is_rejected() {
+    reject(
+        "pipeline fn f(a: u8) -> u8 { a }",
+        "needs at least one `yield`",
+    );
+}
+
+#[test]
+fn pipeline_yield_tap_is_not_yet_supported() {
+    reject(
+        "pipeline fn f(a: u8) -> u8 { let b = a; yield b; b }",
+        "taps are not yet supported",
+    );
+}
+
+#[test]
+fn pipeline_fn_cannot_be_a_method() {
+    reject(
+        "struct S { x: u1 = 0 } impl S { pipeline fn p(self) -> u1 { yield; self.x } }",
+        "cannot be a method",
+    );
+}
+
+#[test]
+fn multiplex_fn_is_rejected() {
+    reject(
+        "multiplex fn m(a: u8) -> u8 { yield; a }",
+        "not yet supported",
     );
 }
 
 #[test]
 fn yield_outside_a_pipeline_is_rejected() {
+    // `yield` in a combinational fn (or nested in a pipeline's `if`/block).
     reject(
         "fn f(x: u8) -> u8 { yield; x }",
         "only valid in a `pipeline fn`",

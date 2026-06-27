@@ -142,6 +142,9 @@ struct FnSig {
     /// Visibility (DESIGN §10). Enforced for method calls; free-function calls
     /// are already gated by item visibility at name resolution (S2).
     vis: Visibility,
+    /// Function color (DESIGN §3). A non-`Comb` function cannot be called
+    /// directly — a pipeline is instantiated and advanced (PL3).
+    color: FnColor,
 }
 
 /// The program's resolved symbol tables.
@@ -178,31 +181,35 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
             format!("`{kind}` is parsed but not yet lowered (milestone S2/S3)"),
         ));
     }
-    // The staged function colors (DESIGN §3) parse today (PL1) but are not yet
-    // checked or lowered; reject them rather than treat them as combinational.
-    for f in all_fns(program) {
-        if f.color != FnColor::Comb {
-            let kind = match f.color {
-                FnColor::Pipeline => "pipeline",
-                FnColor::Multiplex => "multiplex",
-                FnColor::Comb => unreachable!(),
-            };
-            return Err(sem(
-                &f.name,
-                f.pos,
-                format!("`{kind} fn` is parsed but not yet lowered (milestone PL2/PL3)"),
-            ));
-        }
-    }
     let tables = build_tables(program)?;
     let checker = Checker::new(&tables);
 
-    // Type-check every function body (free functions and methods).
+    // Type-check every function body. Free functions may be combinational or a
+    // staged color (DESIGN §3); methods must be combinational.
     for item in &program.items {
         match item {
-            Item::Func(f) => checker.check_fn(f, None)?,
+            Item::Func(f) => match f.color {
+                FnColor::Comb => checker.check_fn(f, None)?,
+                FnColor::Pipeline => checker.check_pipeline(f)?,
+                FnColor::Multiplex => {
+                    return Err(sem(
+                        &f.name,
+                        f.pos,
+                        "`multiplex fn` is not yet supported (deferred; DESIGN §3.2)".to_string(),
+                    ))
+                }
+            },
             Item::Impl(im) => {
                 for m in &im.methods {
+                    if m.color != FnColor::Comb {
+                        return Err(sem(
+                            &m.name,
+                            m.pos,
+                            "a staged (`pipeline` / `multiplex`) function cannot be a method; \
+                             declare it as a free `fn`"
+                                .to_string(),
+                        ));
+                    }
                     checker.check_fn(m, Some(&im.type_name))?;
                 }
             }
@@ -212,19 +219,6 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
 
     checker.check_clock_root(program)?;
     Ok(())
-}
-
-/// Every function defined in the program — free functions and impl methods.
-fn all_fns(program: &Program) -> Vec<&Func> {
-    let mut fns = Vec::new();
-    for item in &program.items {
-        match item {
-            Item::Func(f) => fns.push(f),
-            Item::Impl(im) => fns.extend(im.methods.iter()),
-            _ => {}
-        }
-    }
-    fns
 }
 
 // --- Symbol-table construction --------------------------------------------
@@ -419,6 +413,7 @@ fn resolve_sig(known: &KnownTypes, f: &Func) -> Result<FnSig, CompileError> {
         params,
         ret,
         vis: f.vis,
+        color: f.color,
     })
 }
 
@@ -582,6 +577,76 @@ impl Checker<'_> {
         let known = self.known();
         let ret = resolve_type(&known, &f.ret, &f.name, f.pos)?;
         let got = self.check_block(&f.body, &env, Some(&ret), &f.name)?;
+        self.expect(&ret, &got, &f.name, f.body.pos)?;
+        Ok(())
+    }
+
+    /// Type-check a `pipeline fn` definition (DESIGN §3.1, PL2). The body is a
+    /// per-datum dataflow; `yield;` stage boundaries are type-transparent here
+    /// (the stage registers are inserted in PL3). The hazard rule (§3.1) holds
+    /// structurally: a pipeline is a free function with no `self`, so it can only
+    /// touch its inputs, `const`s, and its own locals. `yield` may only appear at
+    /// the top level of the body — a `yield` nested in an `if`/`match`/block is
+    /// rejected by `check_block` (data-dependent staging is deferred).
+    fn check_pipeline(&self, f: &Func) -> Result<(), CompileError> {
+        self.enter_module(&f.name);
+        let known = self.known();
+        let mut local = Env::new();
+        for p in &f.params {
+            match p {
+                Param::SelfRef { pos } => {
+                    return Err(sem(
+                        &f.name,
+                        *pos,
+                        "a `pipeline fn` cannot take `self` (it is pure dataflow over its inputs)"
+                            .to_string(),
+                    ))
+                }
+                Param::Typed { name, ty, pos } => {
+                    local.insert(name.clone(), resolve_type(&known, ty, &f.name, *pos)?);
+                }
+            }
+        }
+        let ret = resolve_type(&known, &f.ret, &f.name, f.pos)?;
+
+        let mut stages = 0u32;
+        for stmt in &f.body.stmts {
+            match stmt {
+                Stmt::Let {
+                    pattern,
+                    ty,
+                    value,
+                    pos,
+                } => {
+                    let want = match ty {
+                        Some(t) => Some(resolve_type(&known, t, &f.name, *pos)?),
+                        None => None,
+                    };
+                    let vt = self.check_expr(value, &local, want.as_ref(), &f.name, *pos)?;
+                    self.bind_pattern(pattern, &vt, &mut local, &f.name, *pos)?;
+                }
+                Stmt::Yield { value, pos } => {
+                    if value.is_some() {
+                        return Err(sem(
+                            &f.name,
+                            *pos,
+                            "`yield <expr>` taps are not yet supported (deferred); use a bare \
+                             `yield;`"
+                                .to_string(),
+                        ));
+                    }
+                    stages += 1;
+                }
+            }
+        }
+        if stages == 0 {
+            return Err(sem(
+                &f.name,
+                f.body.pos,
+                "a `pipeline fn` needs at least one `yield` stage boundary".to_string(),
+            ));
+        }
+        let got = self.check_expr(&f.body.tail, &local, Some(&ret), &f.name, f.body.pos)?;
         self.expect(&ret, &got, &f.name, f.body.pos)?;
         Ok(())
     }
@@ -783,6 +848,16 @@ impl Checker<'_> {
             .funcs
             .get(name)
             .ok_or_else(|| sem(ctx, pos, format!("unknown function `{name}`")))?;
+        if sig.color != FnColor::Comb {
+            return Err(sem(
+                ctx,
+                pos,
+                format!(
+                    "`{name}` is a `pipeline fn` and cannot be called directly; instantiate it \
+                     and `advance` it once per cycle (PL3)"
+                ),
+            ));
+        }
         self.check_args(name, &sig.params, args, env, ctx, pos)?;
         Ok(sig.ret.clone())
     }
