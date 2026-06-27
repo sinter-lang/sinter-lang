@@ -178,7 +178,34 @@ clock-domain safety: make the unsafe composition unrepresentable.)
 carry **per-wavefront** state (the marching variables, private to each datum)
 but may **not** touch externally-owned mutable state except through an
 explicitly hazard-managed primitive. Keeping pipelines pure dataflow avoids
-reintroducing CPU-style RAW/WAW/WAR hazards and forwarding.
+reintroducing CPU-style RAW/WAW/WAR hazards and forwarding. In this
+implementation the rule holds **structurally**: a `pipeline fn` takes no `self`,
+so it can only read its inputs, `const`s, and its own per-wavefront locals.
+
+**Driving, validity, and reset (settled; PL3 lowering).** A `pipeline fn` is the
+*source* for an auto-generated stateful instance; the honest Mealy step lives in
+that generated instance, not the source signature:
+
+- The source stays straight-line `pipeline fn f(in…) -> Out` (no `self`). The
+  compiler synthesizes an **instance type** (one register per live-across-`yield`
+  local, plus a valid bit per stage) and an
+  `advance(self, in: Option<In>) -> (Self, Option<Out>)` method — the existing
+  sub-state `(new_state, output)` pattern (§2.2), just generated.
+- The instance is **owned state**: a field of the parent struct, advanced once
+  per cycle inside the parent's clocked `tick`; the returned new-instance is
+  stored back into the parent's next state, the returned `Option<Out>` consumed
+  combinationally that cycle.
+- **Output is `Option<Out>`** — `None` during the `latency` fill cycles after
+  reset and for any bubble; `Some` once a wavefront reaches the end. Validity is
+  the consumer's "a real result popped out vs. values still in flight" signal,
+  not a junk value masquerading as data.
+- **Reset is fully defined** (oracle-safe): valid bits reset to 0 (empty), payload
+  registers to their type's zero — so the fill-region payload is
+  defined-but-ignored, never undefined. Fill latency and mid-stream bubbles are
+  the **same** mechanism (the marching valid bits), not separate cases.
+- **Outputs are final-only**: a pipeline has one output point (the tail).
+  Mid-pipeline `yield expr` taps are **not** part of the model (the parsed form
+  is rejected); revisit only if a concrete need appears.
 
 ### 3.2 `multiplex fn`
 
@@ -743,16 +770,22 @@ verified by `tests/project.rs` (single-file vs `tests/fixtures/go_board_split/`)
 The first staged function color (DESIGN §3.1). Settled surface (this milestone):
 
 - **`pipeline fn`** with **bare `yield;`** stage boundaries; locals live across a
-  boundary are auto-registered. `yield expr;` (tap a value out at that stage) is
-  reserved in the grammar but its lowering is deferred.
+  boundary are auto-registered. Outputs are **final-only** (the tail); mid-pipeline
+  `yield expr;` taps are not part of the model (the parsed form is rejected).
 - **Driving:** a pipeline instance is ordinary state — a field of the pipeline's
-  type in the state struct, advanced one beat per cycle, reusing the sub-state +
-  `(new_state, output)` machinery (§2.2/§4 explicit ownership).
+  type in the state struct, advanced one beat per cycle via a generated
+  `advance(self, in: Option<In>) -> (Self, Option<Out>)`, reusing the sub-state +
+  `(new_state, output)` machinery (§2.2/§4 explicit ownership). The honest Mealy
+  step lives in this *generated* method; the source `fn` stays straight-line.
 - **Validity = `Option<T>`** (DESIGN §6.5): `None` is a bubble, `Some` a datum;
   `?` propagates bubbles (§6.4). This *replaces* a separate `Valid<T>` — they were
   the same "maybe a value" concept. It erases to a valid bit + payload. (Generic
   `Option<T>` needs type-parameter support Sinter lacks; phase 1 uses a concrete
   representation, with the `Option<T>` type-sugar arriving with that machinery.)
+- **Reset is fully defined:** valid bits → empty, payload registers → zero, so
+  the fill region is defined-but-ignored (oracle-safe). The output is `None` for
+  the first `latency` cycles after reset; fill latency and bubbles share the one
+  valid-bit mechanism.
 - **Backpressure (phase 1) = the global-stall tier (§3.1)** and it falls out of
   the model for free: the caller reads the output's validity and either commits
   the advanced state or **holds** the old one (a guarded hold, §6.4) — freezing
@@ -763,10 +796,13 @@ The first staged function color (DESIGN §3.1). Settled surface (this milestone)
 |---|---|---|
 | **PL1** | ✅ Grammar + AST + parse: `pipeline`/`multiplex` function colors, `yield;` / `yield expr;` stage statements. (Compiler rejects them as not-yet-lowered.) | a `pipeline fn` parses into the AST |
 | **PL2** | ✅ Semantic checks: a `pipeline fn` type-checks across `yield` barriers (type-transparent); structural rules — free function only (no `self`/method), top-level `yield` only (no nesting), ≥1 stage; the hazard rule holds structurally (no `self` ⇒ inputs/consts/locals only); a pipeline cannot be called directly (instantiate + advance, PL3); `multiplex` and `yield`-taps are rejected as deferred. | a well-formed pipeline type-checks; misuse is rejected |
-| **PL3** | Elaborate: liveness-across-`yield` → stage registers + validity propagation; the owned-instance `advance` lowering, through the sim↔Verilog oracle. | a pipeline example passes the oracle bit-for-bit |
+| **PL3a** | Elaborate the **free-running** pipeline: liveness-across-`yield` → stage registers (SROA-flattened into the parent), a valid bit per stage, and the generated `advance(self, Option<In>) -> (Self, Option<Out>)`; output `None` during fill, fully-defined reset; one advance/cycle (parent always feeds). Through the sim↔Verilog oracle. | a single-output pipeline example passes the oracle bit-for-bit |
+| **PL3b** | Mid-stream bubbles: `Option<In>` inputs and `?` in the body punch holes the valid bits carry — a bubble in ⇒ a bubble out at the right latency. | a pipeline with `?`/`None` inputs matches the oracle |
+| **PL3c** | Global-stall backpressure: the guarded-hold (the caller holds the old instance when not ready to consume), freezing the pipe. | a stalled pipeline holds its state, oracle-checked |
 
-Deferred beyond PL3: `yield expr` taps, elastic `Stream<T>`, the `multiplex`
-color, and the §3.5 `Bounded`/`Dynamic` latency prover.
+Deferred beyond PL3: elastic `Stream<T>` (per-stage ready/valid + skid buffers),
+the `multiplex` color, and the §3.5 `Bounded`/`Dynamic` latency prover.
+Mid-pipeline `yield expr` taps are **cut** from the model (final-output-only).
 
 ---
 
