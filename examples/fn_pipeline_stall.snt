@@ -1,0 +1,37 @@
+// PL3c global-stall backpressure via a guarded hold (DESIGN §3.1 / §9.3 / §6.4).
+//
+// A pipeline instance is ordinary owned state, so freezing it needs no special
+// compiler support — the parent simply re-commits the PREVIOUS instance instead
+// of the advanced one. `en` is the global stall enable: when `en = 1` the parent
+// commits `advance`'s result (the pipeline steps and the output is captured);
+// when `en = 0` it holds the previous instance and outputs, freezing every
+// pipeline register together. (Per-stage elastic `Stream<T>` backpressure is a
+// separate, deferred tier.)
+
+pipeline fn mac(a: u8, b: u8) -> u16 {
+    let prod = (a * b) as u16 wrap;
+    yield;
+    let sum = (prod + prod) as u16 wrap;
+    yield;
+    sum
+}
+
+struct Top {
+    inst: mac,
+    y: u16 = 0,
+    valid: u1 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, a: u8, b: u8, en: u1) -> Top {
+        let (inst2, result, ok) = self.inst.advance(a, b, 1);
+        if en == 1 {
+            // Advance: commit the stepped instance and capture its output.
+            Top { inst: inst2, y: result, valid: ok }
+        } else {
+            // Stall: hold the previous instance + outputs — the whole pipe freezes.
+            Top { inst: self.inst, y: self.y, valid: self.valid }
+        }
+    }
+}

@@ -287,3 +287,55 @@ fn value_used_in_non_consecutive_stages_stays_wavefront_coherent() {
     // r = a0 = 2; t = (b0 + 1) = 4; (r + t) = 6 — operands from the same wavefront.
     assert_eq!(d2["out_0"], 6);
 }
+
+// --- PL3c: global-stall backpressure (guarded hold) ------------------------
+
+#[test]
+fn pipeline_global_stall_freezes_and_resumes() {
+    // `fn_pipeline_stall.snt`: `en` gates the guarded hold. With `en = 0` every
+    // pipeline register (and the captured outputs) freezes; `en = 1` advances.
+    let design =
+        compile_str(include_str!("../../../examples/fn_pipeline_stall.snt")).expect("compile");
+    let m = &design.modules[0];
+    let mut sim = Simulator::new(m);
+    let step = |sim: &mut Simulator, a: u64, b: u64, en: u64| {
+        sim.step(
+            &[
+                ("a".to_string(), a),
+                ("b".to_string(), b),
+                ("en".to_string(), en),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    };
+    // Run advancing for a few cycles so the stage registers hold real data.
+    step(&mut sim, 3, 4, 1);
+    step(&mut sim, 5, 6, 1);
+    step(&mut sim, 7, 8, 1);
+
+    // The observable register set (every `_q`), captured each cycle.
+    let snapshot = |m: &sinter_compiler::ir::Module, row: &HashMap<String, u64>| -> Vec<u64> {
+        m.outputs()
+            .map(|p| p.name.as_str())
+            .filter(|n| n.ends_with("_q"))
+            .map(|n| row[n])
+            .collect()
+    };
+
+    // Two consecutive stall cycles (with DIFFERENT garbage inputs) must observe
+    // the identical register state — the pipe is frozen.
+    let s1 = step(&mut sim, 99, 99, 0);
+    let s2 = step(&mut sim, 11, 22, 0);
+    let f1 = snapshot(m, &s1);
+    let f2 = snapshot(m, &s2);
+    assert_eq!(f1, f2, "every register frozen across the stall");
+
+    // Resuming (en = 1) advances again. Mealy timing: the resumed step commits
+    // its advance *after* the observation, so the change is visible the next
+    // cycle — step twice and confirm the register set moved off the frozen value.
+    step(&mut sim, 1, 1, 1);
+    let r = step(&mut sim, 1, 1, 1);
+    let f3 = snapshot(m, &r);
+    assert_ne!(f3, f2, "the pipeline advances once `en` is high again");
+}

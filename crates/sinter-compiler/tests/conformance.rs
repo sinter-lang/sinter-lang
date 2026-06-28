@@ -78,6 +78,13 @@ const EXAMPLES: &[Example] = &[
         name: "fn_mac_pipeline",
         source: include_str!("../../../examples/fn_mac_pipeline.snt"),
     },
+    // PL3c: global-stall backpressure — an `en`-gated guarded hold freezes the
+    // whole pipeline; the random `en` stimulus exercises stall + advance, co-sim
+    // bit-for-bit (DESIGN §3.1 / §9.3).
+    Example {
+        name: "fn_pipeline_stall",
+        source: include_str!("../../../examples/fn_pipeline_stall.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {
