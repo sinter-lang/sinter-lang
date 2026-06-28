@@ -293,6 +293,8 @@ impl Checker<'_> {
             | AstExpr::StructLit { .. }
             | AstExpr::Tuple(_)
             | AstExpr::Array(_)
+            | AstExpr::Some(_)
+            | AstExpr::None
             | AstExpr::Cast { .. }
             | AstExpr::Match { .. }
             | AstExpr::Block(_) => Err(CompileError::semantic(
@@ -518,6 +520,8 @@ impl Checker<'_> {
             | AstExpr::StructLit { .. }
             | AstExpr::Tuple(_)
             | AstExpr::Array(_)
+            | AstExpr::Some(_)
+            | AstExpr::None
             | AstExpr::Cast { .. }
             | AstExpr::Match { .. }
             | AstExpr::Block(_) => None,

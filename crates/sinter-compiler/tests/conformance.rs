@@ -46,6 +46,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_updown",
         source: include_str!("../../../examples/fn_updown.snt"),
     },
+    // O1 `Option<T>`: Some/None construction, an Option-typed register (reset
+    // `None`), and a `match` that lowers to a mux on the validity bit.
+    Example {
+        name: "fn_option",
+        source: include_str!("../../../examples/fn_option.snt"),
+    },
     // Signed arithmetic + signed narrowing `wrap` cast.
     Example {
         name: "fn_signed",

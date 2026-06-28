@@ -295,6 +295,10 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     /// An array literal `[a, b, ...]`.
     Array(Vec<Expr>),
+    /// `Some(x)` — an `Option` carrying a value (DESIGN §6.5).
+    Some(Box<Expr>),
+    /// `None` — the empty `Option` (DESIGN §6.5).
+    None,
     /// A mode-named narrowing cast `expr as Type mode` (DESIGN §6.3).
     Cast {
         /// The operand being narrowed.
@@ -571,6 +575,9 @@ pub enum TypeRef {
     },
     /// A named type (struct or enum), e.g. `Buttons`.
     Named(String),
+    /// An `Option<T>` — "maybe a value" (DESIGN §6.5). Erases to a valid bit plus
+    /// a `T` payload.
+    Option(Box<TypeRef>),
     /// An array `[T; N]` of `N` elements (DESIGN §6.6 vector-of-registers).
     Array {
         /// The element type.
@@ -645,6 +652,10 @@ pub enum Pattern {
     Path(Vec<String>),
     /// A tuple pattern, e.g. `(ones, ones_wrap)`.
     Tuple(Vec<Pattern>),
+    /// `Some(p)` — matches a present `Option`, binding the payload via `p`.
+    Some(Box<Pattern>),
+    /// `None` — matches the empty `Option`.
+    None,
 }
 
 /// A field initializer in a struct literal.

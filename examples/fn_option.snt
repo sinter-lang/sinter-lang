@@ -1,0 +1,34 @@
+// O1 Option oracle example (DESIGN §6.5 / §9.4).
+//
+// `classify` returns `Some(x + x)` for small inputs and `None` otherwise — an
+// `Option<u9>` built with both constructors. `Top` stores the latest classified
+// value in an `Option<u9>` register (reset `None`) and, each cycle, drives an
+// output decoded from the PREVIOUS cycle's stored value via `match` (`Some` →
+// the value, `None` → 0). This exercises Some/None construction, a `match` that
+// lowers to a mux on the validity bit, and an Option-typed register whose reset
+// is the fully-defined `None` — all leaves defined for bit-for-bit agreement.
+
+fn classify(x: u8) -> Option<u9> {
+    if x < 128 {
+        Some((x + x) as u9 wrap)
+    } else {
+        None
+    }
+}
+
+struct Top {
+    // An Option-typed register; with no `= …` it resets to `None`.
+    last: Option<u9>,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> (Top, u9) {
+        // Decode the previous cycle's stored value (0 when absent).
+        let shown: u9 = match self.last {
+            Some(v) => v,
+            None => 0,
+        };
+        (Top { last: classify(x) }, shown)
+    }
+}

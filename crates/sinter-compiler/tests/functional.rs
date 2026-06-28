@@ -293,3 +293,84 @@ fn clock_root_must_return_self() {
         "must return",
     );
 }
+
+// --- O1: Option<T> type, Some/None, match-on-Option (DESIGN §6.5 / §9.4) ----
+
+#[test]
+fn option_construction_type_checks() {
+    check(
+        "fn classify(x: u8) -> Option<u9> { \
+            if x < 128 { Some((x + x) as u9 wrap) } else { None } }",
+    )
+    .expect("Some/None construction should type-check");
+}
+
+#[test]
+fn match_on_option_type_checks() {
+    check("fn show(o: Option<u9>) -> u9 { match o { Some(v) => v, None => 0 } }")
+        .expect("a match over Some/None should type-check");
+}
+
+#[test]
+fn option_typed_struct_field_resolves() {
+    check("struct S { last: Option<u9> } fn f(s: S) -> Option<u9> { s.last }")
+        .expect("an Option-typed field should resolve");
+}
+
+#[test]
+fn non_exhaustive_option_match_is_rejected() {
+    // Missing the `None` arm (and no wildcard).
+    reject(
+        "fn f(o: Option<u8>) -> u8 { match o { Some(v) => v } }",
+        "non-exhaustive",
+    );
+}
+
+#[test]
+fn none_without_a_type_is_rejected() {
+    reject(
+        "fn f(x: u8) -> u8 { let y = None; x }",
+        "cannot infer the type of `None`",
+    );
+}
+
+#[test]
+fn some_pattern_on_a_non_option_is_rejected() {
+    reject(
+        "fn f(x: u8) -> u8 { match x { Some(v) => v, None => 0 } }",
+        "non-`Option`",
+    );
+}
+
+#[test]
+fn refutable_option_pattern_in_let_is_rejected() {
+    reject(
+        "fn f(o: Option<u8>) -> u8 { let Some(v) = o; v }",
+        "refutable pattern in `let`",
+    );
+}
+
+#[test]
+fn some_payload_type_mismatch_is_rejected() {
+    // The payload of `Some(..)` must match the declared `Option<T>`.
+    reject(
+        "enum E { X } fn f() -> Option<u8> { Some(E::X) }",
+        "type mismatch",
+    );
+}
+
+#[test]
+fn some_accepts_a_trailing_comma() {
+    // `Some(x,)` parses like every other paren list (consistency with calls).
+    check("fn f() -> Option<u8> { Some(1,) }").expect("Some(x,) should parse and check");
+}
+
+#[test]
+fn comparison_on_option_is_rejected() {
+    // Comparisons are scalar/enum only — an aggregate operand is a located F1
+    // error, not a late elaboration failure.
+    reject(
+        "fn f(a: Option<u8>, b: Option<u8>) -> u1 { a == b }",
+        "comparison needs a scalar or enum",
+    );
+}

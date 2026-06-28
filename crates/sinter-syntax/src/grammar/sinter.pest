@@ -96,10 +96,16 @@ literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 // Identifiers, excluding reserved words. `self` is intentionally NOT reserved
 // (it is a contextual keyword, matched only in parameter position), so it reads
 // as an ordinary identifier inside expressions (`self.value`).
+//
+// `Option` / `Some` / `None` (DESIGN §6.5) are reserved program-wide via this
+// shared atom — including the otherwise-frozen legacy `module` surface, since
+// both surfaces share `ident`. No shipped/legacy program uses them as
+// identifiers, so the goldens and the conformance oracle are unaffected.
 keyword = @{
     ("module" | "in" | "out" | "reg" | "let" | "if" | "else"
    | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as"
-   | "mod" | "use" | "pub" | "pipeline" | "multiplex" | "yield")
+   | "mod" | "use" | "pub" | "pipeline" | "multiplex" | "yield"
+   | "Option" | "Some" | "None")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -172,7 +178,9 @@ kw_yield = @{ "yield" ~ !(ASCII_ALPHANUMERIC | "_") }
 // Patterns (let bindings and match arms). `f_path_pat` needs at least one `::`
 // so a bare name falls through to `f_binding`; `f_wildcard` needs a word
 // boundary so `_tens_wrap` binds rather than matching the `_` wildcard.
-f_pattern   = { f_tuple_pat | f_wildcard | f_lit_pat | f_path_pat | f_binding }
+f_pattern   = { f_some_pat | f_none_pat | f_tuple_pat | f_wildcard | f_lit_pat | f_path_pat | f_binding }
+f_some_pat  = { "Some" ~ "(" ~ f_pattern ~ ","? ~ ")" }
+f_none_pat  = @{ "None" ~ !(ASCII_ALPHANUMERIC | "_") }
 f_tuple_pat = { "(" ~ f_pattern ~ ("," ~ f_pattern)* ~ ","? ~ ")" }
 f_wildcard  = @{ "_" ~ !(ASCII_ALPHANUMERIC | "_") }
 f_lit_pat   = { literal }
@@ -182,7 +190,8 @@ f_binding   = { ident }
 // Type references. Fixed-point `uI.F` / `iI.F` (DESIGN §6.1) is admitted in the
 // scalar form; the dotted frac requires a digit so it never clashes with `..`
 // or member access. Order matters: scalar before named so `u4` is not a name.
-f_typeref   = { f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_scalar_ty | ident }
+f_typeref   = { f_option_ty | f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_scalar_ty | ident }
+f_option_ty = { "Option" ~ "<" ~ f_typeref ~ ">" }
 f_array_ty  = { "[" ~ f_typeref ~ ";" ~ f_expr ~ "]" }
 f_tuple_ty  = { "(" ~ f_typeref ~ ("," ~ f_typeref)+ ~ ","? ~ ")" }
 f_mem_ty    = { "mem" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
@@ -230,13 +239,17 @@ f_args  = { "(" ~ (f_expr ~ ("," ~ f_expr)* ~ ","?)? ~ ")" }
 // is a first-class expression: a `let` initializer, a match-arm body, a struct
 // field value, a call argument, etc. It starts with `{`, disjoint from every
 // other alternative, so there is no ambiguity.
-f_primary = { f_match | f_if | f_block | f_include_hex | f_struct_lit | f_path | f_group_or_tuple | f_array | literal | ident }
+f_primary = { f_match | f_if | f_block | f_include_hex | f_some | f_none | f_struct_lit | f_path | f_group_or_tuple | f_array | literal | ident }
 
 // `include_hex!("path")` — embed a file of line-delimited hex words as an array
 // literal at compile time (DESIGN §9.7); used to initialize a `rom`.
 f_include_hex = { "include_hex!" ~ "(" ~ string ~ ")" }
 // A double-quoted string (no escapes in the MVP — a file path rarely needs them).
 string        = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+// `Option` constructors (DESIGN §6.5). `Some(x)` carries a payload; `None` is
+// atomic with a word boundary so `Nonexyz` stays an ordinary identifier.
+f_some = { "Some" ~ "(" ~ f_expr ~ ","? ~ ")" }
+f_none = @{ "None" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 f_if         = { "if" ~ f_expr ~ f_block ~ "else" ~ (f_if | f_block) }
 f_match      = { "match" ~ f_expr ~ "{" ~ (f_match_arm ~ ("," ~ f_match_arm)* ~ ","?)? ~ "}" }

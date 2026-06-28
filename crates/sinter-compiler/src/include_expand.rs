@@ -114,7 +114,8 @@ fn expand_expr(e: &mut Expr, base: Option<&Path>, ctx: &str) -> Result<(), Compi
                 .try_for_each(|MatchArm { body, .. }| expand_expr(body, base, ctx))
         }
         Expr::Block(b) => expand_block(b, base, ctx),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
+        Expr::Some(inner) => expand_expr(inner, base, ctx),
+        Expr::None | Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
     }
 }
 

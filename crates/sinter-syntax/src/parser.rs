@@ -236,6 +236,11 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::f_if => parse_fif(pair),
         Rule::f_block => parse_block_expr(pair),
         Rule::f_match => parse_fmatch(pair),
+        Rule::f_some => Ok(Expr::Some(Box::new(parse_expr(first_inner(
+            pair,
+            "Some payload",
+        )?)?))),
+        Rule::f_none => Ok(Expr::None),
         Rule::f_struct_lit => parse_struct_lit(pair),
         Rule::f_path => parse_fpath(pair),
         Rule::f_group_or_tuple => parse_group_or_tuple(pair),
@@ -813,6 +818,11 @@ fn parse_pattern(pair: Pair<Rule>) -> Result<Pattern, ParseError> {
                 .map(parse_pattern)
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Rule::f_some_pat => Ok(Pattern::Some(Box::new(parse_pattern(first_inner(
+            inner,
+            "Some pattern",
+        )?)?))),
+        Rule::f_none_pat => Ok(Pattern::None),
         Rule::f_wildcard => Ok(Pattern::Wildcard),
         Rule::f_lit_pat => Ok(Pattern::Literal(literal_value(&first_inner(
             inner,
@@ -862,6 +872,10 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
             })
         }
         Rule::f_scalar_ty => parse_scalar_typeref(&inner),
+        Rule::f_option_ty => Ok(TypeRef::Option(Box::new(parse_typeref(first_inner(
+            inner,
+            "Option type argument",
+        )?)?))),
         Rule::ident => Ok(TypeRef::Named(inner.as_str().to_string())),
         other => Err(unexpected(other, "type")),
     }

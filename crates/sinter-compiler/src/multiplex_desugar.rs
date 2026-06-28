@@ -181,7 +181,8 @@ fn reject_reserved_in_pattern(
         Pattern::Tuple(ps) => ps
             .iter()
             .try_for_each(|p| reject_reserved_in_pattern(p, ctx, pos)),
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Path(_) => Ok(()),
+        Pattern::Some(inner) => reject_reserved_in_pattern(inner, ctx, pos),
+        Pattern::Wildcard | Pattern::None | Pattern::Literal(_) | Pattern::Path(_) => Ok(()),
     }
 }
 
@@ -229,7 +230,8 @@ fn reject_reserved_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
         Expr::Tuple(items) | Expr::Array(items) => items
             .iter()
             .try_for_each(|i| reject_reserved_in_expr(i, ctx)),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) => Ok(()),
+        Expr::Some(inner) => reject_reserved_in_expr(inner, ctx),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => Ok(()),
     }
 }
 
@@ -430,7 +432,8 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
             Some(_) => self_field(&reg_name(x)),
             None => Expr::Ident(x.clone()),
         },
-        Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) => e.clone(),
+        Expr::Some(inner) => Expr::Some(Box::new(mux_rewrite(plan, inner, seg, muls))),
+        Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => e.clone(),
         Expr::Unary { op, expr } => Expr::Unary {
             op: *op,
             expr: Box::new(mux_rewrite(plan, expr, seg, muls)),
@@ -631,7 +634,8 @@ fn count_muls(e: &Expr) -> usize {
                 .sum::<usize>()
                 + count_muls(&b.tail)
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) => 0,
+        Expr::Some(inner) => count_muls(inner),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => 0,
     }
 }
 

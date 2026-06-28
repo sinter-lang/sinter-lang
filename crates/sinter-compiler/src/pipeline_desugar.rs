@@ -560,7 +560,8 @@ impl Plan {
                 Some(_) => self_field(&reg_name(x, seg - 1)),
                 None => Expr::Ident(x.clone()),
             },
-            Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) => e.clone(),
+            Expr::Some(inner) => Expr::Some(Box::new(self.rewrite(inner, seg))),
+            Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => e.clone(),
             Expr::Unary { op, expr } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite(expr, seg)),
@@ -692,7 +693,8 @@ pub(crate) fn idents(e: &Expr) -> Vec<String> {
 fn collect_idents(e: &Expr, out: &mut Vec<String>) {
     match e {
         Expr::Ident(x) => out.push(x.clone()),
-        Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) => {}
+        Expr::Some(inner) => collect_idents(inner, out),
+        Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => {}
         Expr::Unary { expr, .. } => collect_idents(expr, out),
         Expr::Binary { lhs, rhs, .. } => {
             collect_idents(lhs, out);
@@ -809,7 +811,8 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
             arms.iter()
                 .try_for_each(|arm| reject_yields_in_expr(&arm.body, ctx))
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) => Ok(()),
+        Expr::Some(inner) => reject_yields_in_expr(inner, ctx),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => Ok(()),
     }
 }
 
@@ -878,7 +881,8 @@ pub(crate) fn reject_shadowing(
         Expr::Tuple(items) | Expr::Array(items) => items
             .iter()
             .try_for_each(|i| reject_shadowing(i, defs, ctx)),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) => Ok(()),
+        Expr::Some(inner) => reject_shadowing(inner, defs, ctx),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => Ok(()),
     }
 }
 
@@ -918,7 +922,8 @@ fn pattern_binds(pat: &Pattern, out: &mut Vec<String>) {
     match pat {
         Pattern::Binding(n) => out.push(n.clone()),
         Pattern::Tuple(ps) => ps.iter().for_each(|p| pattern_binds(p, out)),
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Path(_) => {}
+        Pattern::Some(inner) => pattern_binds(inner, out),
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Path(_) | Pattern::None => {}
     }
 }
 

@@ -369,3 +369,66 @@ fn go_board_example_elaborates() {
     assert_eq!(m.inputs().count(), 2);
     assert_eq!(m.outputs().count(), 11);
 }
+
+// --- O1: Option<T> elaboration (DESIGN §6.5 / §9.4) ------------------------
+
+#[test]
+fn fn_option_elaborates_to_validity_and_payload_regs() {
+    // An `Option<u9>` register erases to two leaves — `last_is_some` (u1) and
+    // `last_payload` (u9) — both resetting to a defined 0 (i.e. `None`).
+    let design = compile_str(include_str!("../../../examples/fn_option.snt")).expect("compile");
+    let m = &design.modules[0];
+    let regs: HashMap<&str, &sinter_compiler::ir::Reg> =
+        m.regs.iter().map(|r| (r.name.as_str(), r)).collect();
+    assert_eq!(m.regs.len(), 2, "Option<u9> flattens to is_some + payload");
+    let is_some = regs.get("last_is_some").expect("validity register");
+    assert_eq!(is_some.ty.width(), 1);
+    assert_eq!(is_some.reset, 0, "reset is `None`");
+    let payload = regs.get("last_payload").expect("payload register");
+    assert_eq!(payload.ty.width(), 9);
+    assert_eq!(payload.reset, 0, "None payload resets to a defined 0");
+    let outs: Vec<&str> = m.outputs().map(|p| p.name.as_str()).collect();
+    for o in ["last_is_some_q", "last_payload_q", "out"] {
+        assert!(outs.contains(&o), "expected output `{o}` in {outs:?}");
+    }
+}
+
+#[test]
+fn option_leaf_colliding_with_a_sibling_input_field_is_rejected() {
+    // An `Option<u8>` field flattens to `_is_some`/`_payload` leaves; a sibling
+    // field whose name matches one of them would emit a duplicate Verilog port
+    // (which Verilator rejects), so the elaborator rejects it up front.
+    let src = "
+        struct In { a: Option<u8>, a_is_some: u1 }
+        struct Top { x: u8 = 0 }
+        impl Top {
+            #[clock(domain = sys)]
+            fn tick(self, i: In) -> Top { Top { x: 0 } }
+        }
+    ";
+    match compile_str(src) {
+        Ok(_) => panic!("expected a port-collision rejection"),
+        Err(e) => assert!(e.to_string().contains("collides"), "unexpected error: {e}"),
+    }
+}
+
+#[test]
+fn fn_option_some_none_and_match_simulate() {
+    // classify(x) = Some(x+x) for x<128 else None; `out` decodes the PREVIOUS
+    // cycle's stored Option via `match` (Some -> value, None -> 0).
+    let design = compile_str(include_str!("../../../examples/fn_option.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+
+    let d0 = sim.step(&input("x", 10)); // store Some(20); last was None
+    assert_eq!(d0["out"], 0);
+    assert_eq!(d0["last_is_some_q"], 0);
+    let d1 = sim.step(&input("x", 200)); // store None; last was Some(20)
+    assert_eq!(d1["out"], 20);
+    assert_eq!(d1["last_is_some_q"], 1);
+    let d2 = sim.step(&input("x", 5)); // store Some(10); last was None
+    assert_eq!(d2["out"], 0);
+    assert_eq!(d2["last_is_some_q"], 0);
+    let d3 = sim.step(&input("x", 0)); // last was Some(10)
+    assert_eq!(d3["out"], 10);
+    assert_eq!(d3["last_is_some_q"], 1);
+}

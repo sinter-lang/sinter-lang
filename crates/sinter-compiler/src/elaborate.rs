@@ -59,6 +59,8 @@ enum Ty {
     /// An enum: its name and the bit width of its discriminant encoding.
     Enum(String, u32),
     Struct(String),
+    /// `Option<T>` (DESIGN §6.5) — erases to `(is_some: u1, payload: T)`.
+    Option(Box<Ty>),
     Array(Box<Ty>, usize),
     Tuple(Vec<Ty>),
     /// A ported memory (DESIGN §6.6/§9.6/§9.7): an opaque block-RAM array, never
@@ -132,6 +134,14 @@ enum Val {
         /// Compile-time contents for a `rom` (per-word init); `None` for a `mem`
         /// (zero-init) and on runtime handles. Set only on the reset/default path.
         data: Option<Vec<u64>>,
+    },
+    /// An `Option<T>` value: a 1-bit validity flag plus the (always-present,
+    /// defined) payload. `None` is `(0, zero(T))`; a `match` muxes on `is_some`.
+    Option {
+        /// The 1-bit "is this `Some`?" flag.
+        is_some: ir::Expr,
+        /// The payload (defined even when `is_some` is 0).
+        payload: Box<Val>,
     },
 }
 
@@ -325,18 +335,19 @@ impl Elaborator<'_> {
                             ),
                         ));
                     }
-                    // Inputs share the flat name space with registers (a port and a
-                    // `logic` of the same name would double-declare in Verilog and
-                    // be silently shadowed in the sim). Reserve each input leaf so a
-                    // clash with a state field — or a synthesized `<mem>_rdata`
-                    // register added below — is rejected up front.
+                    // Every emitted name shares one flat namespace: a port and a
+                    // `logic` (or two ports) of the same name would double-declare
+                    // in Verilog. `seen` holds the state fields + synthesized
+                    // `<mem>_rdata` registers; reserve each input leaf against it
+                    // (this also rejects the duplicate ports an `Option<T>` field's
+                    // `_is_some`/`_payload` leaves could otherwise produce — §6.5).
                     if seen.insert(pname.clone(), ()).is_some() {
                         return Err(err(
                             &self.ctx,
                             *pos,
                             format!(
-                                "input `{pname}` collides with a state field or another input; \
-                                 rename the parameter or field"
+                                "input `{pname}` collides with a state field, register, or another \
+                                 input; rename the parameter or field"
                             ),
                         ));
                     }
@@ -352,13 +363,13 @@ impl Elaborator<'_> {
 
         // Body: inline `let`s into the environment, then lower the tail.
         for stmt in &tick.body.stmts {
-            let (pattern, value, pos) = match stmt {
+            let (pattern, ty, value, pos) = match stmt {
                 Stmt::Let {
                     pattern,
+                    ty,
                     value,
                     pos,
-                    ..
-                } => (pattern, value, pos),
+                } => (pattern, ty, value, pos),
                 Stmt::Yield { pos, .. } => {
                     return Err(err(
                         &self.ctx,
@@ -367,7 +378,8 @@ impl Elaborator<'_> {
                     ))
                 }
             };
-            let v = self.lower(&env, value, None, 0, *pos)?;
+            let want = self.let_hint(ty.as_ref(), *pos)?;
+            let v = self.lower(&env, value, want.as_ref(), 0, *pos)?;
             self.bind(pattern, v, &mut env, *pos)?;
         }
         let result = self.lower(&env, &tick.body.tail, Some(&state), 0, tick.body.pos)?;
@@ -451,10 +463,18 @@ impl Elaborator<'_> {
             }
         }
 
-        // Observation outputs: every register, plus any explicit outputs.
+        // Observation outputs: every register, plus any explicit outputs. Each
+        // `_q` name must be fresh in the flat namespace (`seen`).
         let mut out_drives = Vec::new();
         for r in &regs {
             let name = format!("{}_q", r.name);
+            if seen.insert(name.clone(), ()).is_some() {
+                return Err(err(
+                    &self.ctx,
+                    tick.body.pos,
+                    format!("output port `{name}` collides with another port; rename a field"),
+                ));
+            }
             ports.push(ir::Port {
                 dir: sinter_syntax::ast::Dir::Out,
                 name: name.clone(),
@@ -466,6 +486,13 @@ impl Elaborator<'_> {
             let mut outs = Vec::new();
             flatten_val(&out, "out", &mut outs);
             for (name, value) in outs {
+                if seen.insert(name.clone(), ()).is_some() {
+                    return Err(err(
+                        &self.ctx,
+                        tick.body.pos,
+                        format!("output port `{name}` collides with another port; rename a field"),
+                    ));
+                }
                 ports.push(ir::Port {
                     dir: sinter_syntax::ast::Dir::Out,
                     name: name.clone(),
@@ -524,6 +551,9 @@ impl Elaborator<'_> {
             Val::Tuple(items) => items.iter().enumerate().try_for_each(|(i, val)| {
                 self.mem_transitions(val, &join(path, &i.to_string()), out, pos)
             }),
+            Val::Option { payload, .. } => {
+                self.mem_transitions(payload, &join(path, "payload"), out, pos)
+            }
             Val::Scalar(..) | Val::Enum(..) => Ok(()),
         }
     }
@@ -626,6 +656,26 @@ impl Elaborator<'_> {
                 }
                 Ok(Val::Array(out))
             }
+            Expr::Some(inner) => {
+                let hint = match expected {
+                    Some(Ty::Option(t)) => Some((**t).clone()),
+                    _ => None,
+                };
+                let payload = self.lower(env, inner, hint.as_ref(), depth, pos)?;
+                Ok(Val::Option {
+                    is_some: typed(ir::ExprKind::Literal(1), Type::Uint(1)),
+                    payload: Box::new(payload),
+                })
+            }
+            Expr::None => {
+                let Some(Ty::Option(t)) = expected else {
+                    return Err(err(&self.ctx, pos, "cannot infer the type of `None`"));
+                };
+                Ok(Val::Option {
+                    is_some: typed(ir::ExprKind::Literal(0), Type::Uint(1)),
+                    payload: Box::new(self.zero_val(t)),
+                })
+            }
             Expr::Unary { op, expr: inner } => {
                 self.lower_unary(env, *op, inner, expected, depth, pos)
             }
@@ -654,13 +704,13 @@ impl Elaborator<'_> {
             Expr::Block(b) => {
                 let mut local = env.clone();
                 for stmt in &b.stmts {
-                    let (pattern, value, pos) = match stmt {
+                    let (pattern, ty, value, pos) = match stmt {
                         Stmt::Let {
                             pattern,
+                            ty,
                             value,
                             pos,
-                            ..
-                        } => (pattern, value, pos),
+                        } => (pattern, ty, value, pos),
                         Stmt::Yield { pos, .. } => {
                             return Err(err(
                                 &self.ctx,
@@ -669,7 +719,8 @@ impl Elaborator<'_> {
                             ))
                         }
                     };
-                    let v = self.lower(&local, value, None, depth, *pos)?;
+                    let want = self.let_hint(ty.as_ref(), *pos)?;
+                    let v = self.lower(&local, value, want.as_ref(), depth, *pos)?;
                     self.bind(pattern, v, &mut local, *pos)?;
                 }
                 self.lower(&local, &b.tail, expected, depth, b.pos)
@@ -1105,17 +1156,25 @@ impl Elaborator<'_> {
         Ok(inner)
     }
 
+    /// Resolve an optional `let` type annotation to an expected [`Ty`], so an
+    /// annotated binding (e.g. `let x: u9 = match …`) hints the value's lowering —
+    /// needed where the value cannot self-infer (a bare literal / a literal match
+    /// arm). An un-annotated `let` keeps `None` (self-inferring), as before.
+    fn let_hint(&self, ty: Option<&TypeRef>, pos: Pos) -> Result<Option<Ty>, CompileError> {
+        ty.map(|t| self.resolve(t, pos)).transpose()
+    }
+
     fn lower_body(&self, env: &Env, f: &Func, depth: usize) -> Result<Val, CompileError> {
         let ret = self.resolve(&f.ret, f.pos)?;
         let mut local = env.clone();
         for stmt in &f.body.stmts {
-            let (pattern, value, pos) = match stmt {
+            let (pattern, ty, value, pos) = match stmt {
                 Stmt::Let {
                     pattern,
+                    ty,
                     value,
                     pos,
-                    ..
-                } => (pattern, value, pos),
+                } => (pattern, ty, value, pos),
                 Stmt::Yield { pos, .. } => {
                     return Err(err(
                         &self.ctx,
@@ -1124,7 +1183,8 @@ impl Elaborator<'_> {
                     ))
                 }
             };
-            let v = self.lower(&local, value, None, depth, *pos)?;
+            let want = self.let_hint(ty.as_ref(), *pos)?;
+            let v = self.lower(&local, value, want.as_ref(), depth, *pos)?;
             self.bind(pattern, v, &mut local, *pos)?;
         }
         self.lower(&local, &f.body.tail, Some(&ret), depth, f.body.pos)
@@ -1201,6 +1261,35 @@ impl Elaborator<'_> {
                 )))
             }
             Pattern::Tuple(_) => Err(err(&self.ctx, pos, "tuple patterns in match are F3+")),
+            // `Some(p)` selects when `is_some` is set and binds the payload; `None`
+            // selects when it is clear. (Match exhaustiveness is checked in F1.)
+            Pattern::Some(inner) => {
+                let Val::Option { is_some, payload } = scrut else {
+                    return Err(err(&self.ctx, pos, "`Some(..)` pattern on a non-`Option`"));
+                };
+                self.bind(inner, (**payload).clone(), env, pos)?;
+                Ok(Some(typed(
+                    binary(
+                        BinOp::Eq,
+                        is_some.clone(),
+                        typed(ir::ExprKind::Literal(1), Type::Uint(1)),
+                    ),
+                    Type::Uint(1),
+                )))
+            }
+            Pattern::None => {
+                let Val::Option { is_some, .. } = scrut else {
+                    return Err(err(&self.ctx, pos, "`None` pattern on a non-`Option`"));
+                };
+                Ok(Some(typed(
+                    binary(
+                        BinOp::Eq,
+                        is_some.clone(),
+                        typed(ir::ExprKind::Literal(0), Type::Uint(1)),
+                    ),
+                    Type::Uint(1),
+                )))
+            }
         }
     }
 
@@ -1246,6 +1335,19 @@ impl Elaborator<'_> {
                     ))
                 }
             }
+            (
+                Val::Option {
+                    is_some: sa,
+                    payload: pa,
+                },
+                Val::Option {
+                    is_some: sb,
+                    payload: pb,
+                },
+            ) => Ok(Val::Option {
+                is_some: mux_expr(cond, sa, sb),
+                payload: Box::new(self.mux(cond, pa, pb, pos)?),
+            }),
             _ => Err(err(&self.ctx, pos, "branches have different shapes")),
         }
     }
@@ -1282,7 +1384,7 @@ impl Elaborator<'_> {
                 }
                 Ok(())
             }
-            Pattern::Literal(_) | Pattern::Path(_) => {
+            Pattern::Literal(_) | Pattern::Path(_) | Pattern::Some(_) | Pattern::None => {
                 Err(err(&self.ctx, pos, "refutable pattern in `let`"))
             }
         }
@@ -1303,6 +1405,7 @@ impl Elaborator<'_> {
                 fbits: *frac_bits,
             }),
             TypeRef::Named(n) => self.resolve_named(n, pos),
+            TypeRef::Option(t) => Ok(Ty::Option(Box::new(self.resolve(t, pos)?))),
             TypeRef::Array { elem, len } => {
                 let et = self.resolve(elem, pos)?;
                 let n = self.const_index(len, pos)?;
@@ -1441,7 +1544,58 @@ impl Elaborator<'_> {
                 }
                 Ok(Val::Struct(name.clone(), out))
             }
+            // An `Option<T>` field defaults to `None` when no reset is written.
+            Ty::Option(_) => Ok(self.zero_val(ty)),
             _ => Err(err(&self.ctx, pos, "field needs a reset value (`= …`)")),
+        }
+    }
+
+    /// The all-zero value of a type: scalars/enums to `0`, aggregates recursively,
+    /// an `Option` to `None`. Used for a `None` payload (a defined don't-care) and
+    /// for an `Option` field's `None` reset.
+    fn zero_val(&self, ty: &Ty) -> Val {
+        match ty {
+            Ty::Scalar(t) => Val::Scalar(typed(ir::ExprKind::Literal(0), *t), 0),
+            Ty::Fixed {
+                signed,
+                ibits,
+                fbits,
+            } => Val::Scalar(
+                typed(ir::ExprKind::Literal(0), int_ty(*signed, ibits + fbits)),
+                *fbits,
+            ),
+            Ty::Enum(n, w) => Val::Enum(n.clone(), typed(ir::ExprKind::Literal(0), Type::Uint(*w))),
+            Ty::Struct(name) => {
+                let fields = self.struct_fields(name, Pos::default()).unwrap_or_default();
+                Val::Struct(
+                    name.clone(),
+                    fields
+                        .into_iter()
+                        .map(|(f, fty)| (f, self.zero_val(&fty)))
+                        .collect(),
+                )
+            }
+            Ty::Array(et, n) => Val::Array((0..*n).map(|_| self.zero_val(et)).collect()),
+            Ty::Tuple(ts) => Val::Tuple(ts.iter().map(|t| self.zero_val(t)).collect()),
+            // A memory is opaque state, not a zeroable value, and cannot be an
+            // `Option` payload — unreachable, but keep the match total.
+            Ty::Mem {
+                elem,
+                addr_bits,
+                writable,
+                ..
+            } => Val::Mem {
+                name: String::new(),
+                elem: elem.clone(),
+                addr_bits: *addr_bits,
+                writable: *writable,
+                pending: None,
+                data: None,
+            },
+            Ty::Option(inner) => Val::Option {
+                is_some: typed(ir::ExprKind::Literal(0), Type::Uint(1)),
+                payload: Box::new(self.zero_val(inner)),
+            },
         }
     }
 
@@ -1518,6 +1672,11 @@ impl Elaborator<'_> {
                 pending: None,
                 data: None,
             }),
+            (Expr::None, Ty::Option(_)) => Ok(self.zero_val(ty)),
+            (Expr::Some(inner), Ty::Option(it)) => Ok(Val::Option {
+                is_some: typed(ir::ExprKind::Literal(1), Type::Uint(1)),
+                payload: Box::new(self.const_val(inner, it, pos)?),
+            }),
             (_, _) => {
                 let t = ty
                     .scalar()
@@ -1578,9 +1737,14 @@ impl Elaborator<'_> {
                 }
             }
             // A memory is not a scalar register: its array is collected by
-            // `collect_mems`, and its read-data register is added when a `.read`
-            // is lowered. So it contributes no leaf here.
+            // `collect_mem_decls`, and its read-data register is added when a
+            // `.read`/`next()` is lowered. So it contributes no leaf here.
             Ty::Mem { .. } => {}
+            // An `Option<T>` flattens to a validity leaf + the payload leaves.
+            Ty::Option(inner) => {
+                out.push((join(path, "is_some"), Type::Uint(1)));
+                self.flatten_ty(inner, &join(path, "payload"), out);
+            }
         }
     }
 
@@ -1634,6 +1798,9 @@ impl Elaborator<'_> {
             Val::Tuple(items) => items.iter().enumerate().try_for_each(|(i, val)| {
                 self.collect_mem_decls(val, &join(path, &i.to_string()), out, pos)
             }),
+            Val::Option { payload, .. } => {
+                self.collect_mem_decls(payload, &join(path, "payload"), out, pos)
+            }
             Val::Scalar(..) | Val::Enum(..) => Ok(()),
         }
     }
@@ -1694,6 +1861,10 @@ impl Elaborator<'_> {
                 pending: None,
                 data: None,
             },
+            Ty::Option(inner) => Val::Option {
+                is_some: typed(ir::ExprKind::Ident(join(path, "is_some")), Type::Uint(1)),
+                payload: Box::new(self.idents_val(inner, &join(path, "payload"))),
+            },
         }
     }
 
@@ -1748,6 +1919,10 @@ fn flatten_val(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr)>) {
         // A memory is opaque: its next-state is its `MemWrite`, not a scalar
         // register update, so it contributes no leaf.
         Val::Mem { .. } => {}
+        Val::Option { is_some, payload } => {
+            out.push((join(path, "is_some"), is_some.clone()));
+            flatten_val(payload, &join(path, "payload"), out);
+        }
     }
 }
 
@@ -1786,6 +1961,7 @@ fn val_ty(v: &Val) -> Ty {
         },
         Val::Enum(n, e) => Ty::Enum(n.clone(), e.ty.width()),
         Val::Struct(n, _) => Ty::Struct(n.clone()),
+        Val::Option { payload, .. } => Ty::Option(Box::new(val_ty(payload))),
         // Aggregates and memories are never arithmetic operands (rejected by the
         // checker); the placeholder is unreachable in a well-typed program.
         Val::Tuple(_) | Val::Array(_) | Val::Mem { .. } => Ty::Scalar(Type::Uint(1)),

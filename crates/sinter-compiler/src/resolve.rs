@@ -535,6 +535,7 @@ impl Resolver {
                 // The depth is a const expression (like an array length).
                 self.rewrite_expr(depth, cur, &mut Locals::new(), src)?;
             }
+            TypeRef::Option(t) => self.rewrite_typeref(t, cur, src)?,
             TypeRef::Scalar(_) | TypeRef::Fixed { .. } => {}
         }
         Ok(())
@@ -650,6 +651,8 @@ impl Resolver {
                 }
             }
             Expr::Block(b) => self.rewrite_block(b, cur, locals, src)?,
+            Expr::Some(inner) => self.rewrite_expr(inner, cur, locals, src)?,
+            Expr::None => {}
         }
         Ok(())
     }
@@ -755,6 +758,8 @@ impl Resolver {
                     self.rewrite_pattern(p, cur, locals, src)?;
                 }
             }
+            Pattern::Some(inner) => self.rewrite_pattern(inner, cur, locals, src)?,
+            Pattern::None => {}
         }
         Ok(())
     }
@@ -809,7 +814,8 @@ fn bind_pattern(pat: &Pattern, locals: &mut Locals) {
                 bind_pattern(p, locals);
             }
         }
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Path(_) => {}
+        Pattern::Some(inner) => bind_pattern(inner, locals),
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Path(_) | Pattern::None => {}
     }
 }
 

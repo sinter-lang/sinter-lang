@@ -1,0 +1,186 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "S",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "last",
+                        ty: Option(
+                            Scalar(
+                                Uint(
+                                    9,
+                                ),
+                            ),
+                        ),
+                        default: None,
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "classify",
+                params: [
+                    Typed {
+                        name: "x",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 8,
+                            col: 13,
+                        },
+                    },
+                ],
+                ret: Option(
+                    Scalar(
+                        Uint(
+                            9,
+                        ),
+                    ),
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: If {
+                        cond: Binary {
+                            op: Lt,
+                            lhs: Ident(
+                                "x",
+                            ),
+                            rhs: Literal(
+                                128,
+                            ),
+                        },
+                        then: Block(
+                            Block {
+                                stmts: [],
+                                tail: Some(
+                                    Cast {
+                                        expr: Binary {
+                                            op: Add,
+                                            lhs: Ident(
+                                                "x",
+                                            ),
+                                            rhs: Ident(
+                                                "x",
+                                            ),
+                                        },
+                                        ty: Scalar(
+                                            Uint(
+                                                9,
+                                            ),
+                                        ),
+                                        mode: Wrap,
+                                    },
+                                ),
+                                pos: Pos {
+                                    line: 9,
+                                    col: 16,
+                                },
+                            },
+                        ),
+                        els: Block(
+                            Block {
+                                stmts: [],
+                                tail: None,
+                                pos: Pos {
+                                    line: 11,
+                                    col: 12,
+                                },
+                            },
+                        ),
+                    },
+                    pos: Pos {
+                        line: 8,
+                        col: 34,
+                    },
+                },
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "show",
+                params: [
+                    Typed {
+                        name: "o",
+                        ty: Option(
+                            Scalar(
+                                Uint(
+                                    9,
+                                ),
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 16,
+                            col: 9,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        9,
+                    ),
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: Match {
+                        scrutinee: Ident(
+                            "o",
+                        ),
+                        arms: [
+                            MatchArm {
+                                pattern: Some(
+                                    Binding(
+                                        "v",
+                                    ),
+                                ),
+                                body: Ident(
+                                    "v",
+                                ),
+                            },
+                            MatchArm {
+                                pattern: None,
+                                body: Literal(
+                                    0,
+                                ),
+                            },
+                        ],
+                    },
+                    pos: Pos {
+                        line: 16,
+                        col: 30,
+                    },
+                },
+                pos: Pos {
+                    line: 16,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

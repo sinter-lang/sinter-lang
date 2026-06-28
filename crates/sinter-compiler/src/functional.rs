@@ -46,6 +46,8 @@ enum FType {
     Struct(String),
     /// A named enum type.
     Enum(String),
+    /// An `Option<T>` (DESIGN §6.5) — erases to `(is_some: u1, payload: T)`.
+    Option(Box<FType>),
     /// An array `[T; N]`.
     Array(Box<FType>, u64),
     /// A tuple `(T, U, …)`.
@@ -111,6 +113,7 @@ impl fmt::Display for FType {
                 "{}<{elem}, {depth}>",
                 if *writable { "mem" } else { "rom" }
             ),
+            FType::Option(t) => write!(f, "Option<{t}>"),
             FType::Array(t, n) => write!(f, "[{t}; {n}]"),
             FType::Tuple(ts) => {
                 write!(f, "(")?;
@@ -520,6 +523,7 @@ fn resolve_type(
                 return Err(sem(ctx, pos, format!("unknown type `{n}`")));
             }
         }
+        TypeRef::Option(t) => FType::Option(Box::new(resolve_type(known, t, ctx, pos)?)),
         TypeRef::Array { elem, len } => {
             let et = resolve_type(known, elem, ctx, pos)?;
             let n = const_len(len, "array length", ctx, pos)?;
@@ -960,6 +964,26 @@ impl Checker<'_> {
                 FType::Tuple(parts)
             }
             Expr::Array(items) => self.check_array(items, expected, env, ctx, pos)?,
+            Expr::Some(inner) => {
+                // `Some(x)` has type `Option<typeof x>`; an expected `Option<T>`
+                // hints the payload as `T`.
+                let payload_hint = match expected {
+                    Some(FType::Option(t)) => Some(t.as_ref()),
+                    _ => None,
+                };
+                let it = self.check_expr(inner, env, payload_hint, ctx, pos)?;
+                FType::Option(Box::new(it))
+            }
+            Expr::None => {
+                match expected {
+                    Some(FType::Option(t)) => FType::Option(t.clone()),
+                    _ => return Err(sem(
+                        ctx,
+                        pos,
+                        "cannot infer the type of `None`; give the surrounding `Option<T>` type",
+                    )),
+                }
+            }
             Expr::Unary { op, expr: inner } => {
                 self.check_unary(*op, inner, env, expected, ctx, pos)?
             }
@@ -1458,6 +1482,16 @@ impl Checker<'_> {
         if op.is_comparison() {
             let (l, r) = self.check_operands(lhs, rhs, env, None, ctx, pos)?;
             self.expect(&l, &r, ctx, pos)?;
+            // Comparisons are over a scalar or an enum discriminant; reject the
+            // aggregates (`Option`, tuple, struct, array) with a located F1 error
+            // rather than letting elaboration bail later (`Option` is new in O1).
+            if !(l.is_scalar() || matches!(l, FType::Enum(_))) {
+                return Err(sem(
+                    ctx,
+                    pos,
+                    format!("cannot compare `{l}`; comparison needs a scalar or enum"),
+                ));
+            }
             // Result is 1-bit; the caller's `expected` is checked by `check_expr`.
             return Ok(FType::Uint(1));
         }
@@ -1571,6 +1605,22 @@ impl Checker<'_> {
                         }
                     }
                 }
+                FType::Option(_) => {
+                    let missing: Vec<&str> = ["Some", "None"]
+                        .into_iter()
+                        .filter(|v| !covered.contains(*v))
+                        .collect();
+                    if !missing.is_empty() {
+                        return Err(sem(
+                            ctx,
+                            pos,
+                            format!(
+                                "non-exhaustive match on `{st}`: missing {}",
+                                missing.join(", ")
+                            ),
+                        ));
+                    }
+                }
                 _ => {
                     return Err(sem(
                         ctx,
@@ -1631,6 +1681,30 @@ impl Checker<'_> {
                     self.check_arm_pattern(p, t, env, covered, has_wildcard, ctx, pos)?;
                 }
             }
+            // `Some(p)` / `None` cover one arm of an `Option` scrutinee — neither is
+            // a `_`-style wildcard for the whole match. `Some`'s payload pattern is
+            // an irrefutable binding (a refutable inner pattern is deferred).
+            Pattern::Some(inner) => {
+                let FType::Option(payload) = st else {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("`Some(..)` pattern against non-`Option` `{st}`"),
+                    ));
+                };
+                self.bind_pattern(inner, payload, env, ctx, pos)?;
+                covered.insert("Some".to_string());
+            }
+            Pattern::None => {
+                if !matches!(st, FType::Option(_)) {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("`None` pattern against non-`Option` `{st}`"),
+                    ));
+                }
+                covered.insert("None".to_string());
+            }
         }
         Ok(())
     }
@@ -1680,7 +1754,7 @@ impl Checker<'_> {
                     self.bind_pattern(p, t, env, ctx, pos)?;
                 }
             }
-            Pattern::Literal(_) | Pattern::Path(_) => {
+            Pattern::Literal(_) | Pattern::Path(_) | Pattern::Some(_) | Pattern::None => {
                 return Err(sem(ctx, pos, "refutable pattern in `let`".to_string()))
             }
         }

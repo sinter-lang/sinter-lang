@@ -1,0 +1,21 @@
+// Option<T> surface (DESIGN §6.5): the type, the Some/None constructors, a
+// `match` with `Some(v)` / `None` arms, and an Option-typed struct field.
+
+struct S {
+    last: Option<u9>,
+}
+
+fn classify(x: u8) -> Option<u9> {
+    if x < 128 {
+        Some((x + x) as u9 wrap)
+    } else {
+        None
+    }
+}
+
+fn show(o: Option<u9>) -> u9 {
+    match o {
+        Some(v) => v,
+        None => 0,
+    }
+}
