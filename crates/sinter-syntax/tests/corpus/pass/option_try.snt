@@ -1,0 +1,9 @@
+// The postfix `?` operator (DESIGN §6.4) — Option/validity propagation. Parses
+// as `Expr::Try`; it is restricted to Option-returning functions by a later
+// semantic pass, not by the grammar.
+
+fn band(x: u8, lo: Option<u8>, hi: Option<u8>) -> Option<u8> {
+    let a = lo?;
+    let b = hi?;
+    Some((a + b) as u8 wrap)
+}

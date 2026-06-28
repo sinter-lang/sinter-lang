@@ -983,6 +983,7 @@ fn parse_fpostfix(pair: Pair<Rule>) -> Result<Expr, ParseError> {
                 base: Box::new(expr),
                 index: Box::new(parse_expr(first_inner(op, "index")?)?),
             },
+            Rule::f_try => Expr::Try(Box::new(expr)),
             other => return Err(unexpected(other, "postfix")),
         };
     }

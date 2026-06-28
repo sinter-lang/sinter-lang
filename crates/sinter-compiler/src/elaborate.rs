@@ -27,7 +27,7 @@
 //! *widening* casts (all F4 — `wrap` casts must narrow today); the pin map (F5);
 //! multiple clock domains.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use sinter_syntax::ast::{
@@ -182,6 +182,7 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         tables,
         consts: const_values(program)?,
         branch_depth: Cell::new(0),
+        guards: RefCell::new(Vec::new()),
     };
     el.build(state_ty, tick, &domain).map(Some)
 }
@@ -253,6 +254,11 @@ struct Elaborator<'p> {
     /// mux the address explicitly (DESIGN §9.6). `value()` is a pure read and is
     /// unrestricted.
     branch_depth: Cell<usize>,
+    /// Validity bits collected from `?` operators (DESIGN §6.4) in the function
+    /// body currently being lowered. `lower_body` swaps in a fresh accumulator
+    /// per inlined function and AND-folds whatever it collected into that
+    /// function's `Option` result.
+    guards: RefCell<Vec<ir::Expr>>,
 }
 
 impl Elaborator<'_> {
@@ -675,6 +681,17 @@ impl Elaborator<'_> {
                     is_some: typed(ir::ExprKind::Literal(0), Type::Uint(1)),
                     payload: Box::new(self.zero_val(t)),
                 })
+            }
+            Expr::Try(inner) => {
+                // `?` (DESIGN §6.4): record the operand's validity bit and yield
+                // its payload unconditionally; `lower_body` AND-folds the recorded
+                // bits into the enclosing function's `Option` result.
+                let v = self.lower(env, inner, None, depth, pos)?;
+                let Val::Option { is_some, payload } = v else {
+                    return Err(err(&self.ctx, pos, "`?` operand is not an `Option`"));
+                };
+                self.guards.borrow_mut().push(is_some);
+                Ok(*payload)
             }
             Expr::Unary { op, expr: inner } => {
                 self.lower_unary(env, *op, inner, expected, depth, pos)
@@ -1166,6 +1183,44 @@ impl Elaborator<'_> {
 
     fn lower_body(&self, env: &Env, f: &Func, depth: usize) -> Result<Val, CompileError> {
         let ret = self.resolve(&f.ret, f.pos)?;
+        // `?` operators in THIS body contribute validity bits to THIS function's
+        // result; swap in a fresh accumulator and restore the caller's on the way
+        // out (so a nested call's `?`s do not leak into ours, and vice-versa).
+        let outer_guards = self.guards.replace(Vec::new());
+        let result = self.lower_body_inner(env, f, &ret, depth);
+        let my_guards = self.guards.replace(outer_guards);
+        let body = result?;
+
+        if my_guards.is_empty() {
+            return Ok(body);
+        }
+        // `?` was used, so this function returns `Option<U>` (the checker enforced
+        // it): AND every collected validity bit into the result's `is_some`.
+        let Val::Option { is_some, payload } = body else {
+            return Err(err(
+                &self.ctx,
+                f.body.pos,
+                "`?` used in a function that does not return an `Option`",
+            ));
+        };
+        let combined = my_guards.into_iter().fold(is_some, |acc, g| {
+            typed(binary(BinOp::And, acc, g), Type::Uint(1))
+        });
+        Ok(Val::Option {
+            is_some: combined,
+            payload,
+        })
+    }
+
+    /// Lower a function body's `let`s + tail (shared by `lower_body`, which wraps
+    /// it with the `?`-guard accumulator).
+    fn lower_body_inner(
+        &self,
+        env: &Env,
+        f: &Func,
+        ret: &Ty,
+        depth: usize,
+    ) -> Result<Val, CompileError> {
         let mut local = env.clone();
         for stmt in &f.body.stmts {
             let (pattern, ty, value, pos) = match stmt {
@@ -1187,7 +1242,7 @@ impl Elaborator<'_> {
             let v = self.lower(&local, value, want.as_ref(), depth, *pos)?;
             self.bind(pattern, v, &mut local, *pos)?;
         }
-        self.lower(&local, &f.body.tail, Some(&ret), depth, f.body.pos)
+        self.lower(&local, &f.body.tail, Some(ret), depth, f.body.pos)
     }
 
     fn lower_match(

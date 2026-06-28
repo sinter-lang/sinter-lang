@@ -374,3 +374,43 @@ fn comparison_on_option_is_rejected() {
         "comparison needs a scalar or enum",
     );
 }
+
+// --- O2: the `?` operator (DESIGN §6.4) -------------------------------------
+
+#[test]
+fn try_propagates_validity_in_an_option_fn() {
+    check(
+        "fn band(lo: Option<u8>, hi: Option<u8>) -> Option<u8> { \
+            let a = lo?; let b = hi?; Some((a + b) as u8 wrap) }",
+    )
+    .expect("`?` in an Option-returning fn should type-check");
+}
+
+#[test]
+fn try_outside_an_option_fn_is_rejected() {
+    // The enclosing fn returns `u8`, so there is nowhere for the validity to go.
+    reject(
+        "fn f(o: Option<u8>) -> u8 { let a = o?; a }",
+        "only valid in an `Option`-returning function",
+    );
+}
+
+#[test]
+fn try_on_a_non_option_is_rejected() {
+    reject(
+        "fn f(x: u8) -> Option<u8> { let a = x?; Some(a) }",
+        "`?` operand must be an `Option`",
+    );
+}
+
+#[test]
+fn try_feeding_a_register_write_is_rejected() {
+    // `?` in a `#[clock]` root (which returns `Self`, not `Option`) is rejected:
+    // a register has no "skip" (DESIGN §6.4 — use a guarded hold instead).
+    reject(
+        "fn maybe(x: u8) -> Option<u8> { Some(x) } \
+         struct S { v: u8 = 0 } \
+         impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { v: maybe(x)? } } }",
+        "only valid in an `Option`-returning function",
+    );
+}

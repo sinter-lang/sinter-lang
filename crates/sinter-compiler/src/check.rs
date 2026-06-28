@@ -295,6 +295,7 @@ impl Checker<'_> {
             | AstExpr::Array(_)
             | AstExpr::Some(_)
             | AstExpr::None
+            | AstExpr::Try(_)
             | AstExpr::Cast { .. }
             | AstExpr::Match { .. }
             | AstExpr::Block(_) => Err(CompileError::semantic(
@@ -522,6 +523,7 @@ impl Checker<'_> {
             | AstExpr::Array(_)
             | AstExpr::Some(_)
             | AstExpr::None
+            | AstExpr::Try(_)
             | AstExpr::Cast { .. }
             | AstExpr::Match { .. }
             | AstExpr::Block(_) => None,

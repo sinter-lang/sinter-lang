@@ -394,6 +394,29 @@ fn fn_option_elaborates_to_validity_and_payload_regs() {
 }
 
 #[test]
+fn try_and_reduces_validity() {
+    // `band(x)` = Some(2x) iff BOTH `lo` (x<200) and `hi` (x>10) accept x — the
+    // `?`-validities AND together. `Top` stores the result when valid, else holds.
+    let design = compile_str(include_str!("../../../examples/fn_option_try.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    let step = |sim: &mut Simulator, x: u64| sim.step(&input("x", x));
+
+    // Mealy: outputs are the registered (previous-cycle) values.
+    assert_eq!(step(&mut sim, 50)["valid_q"], 0); // reset
+    let c1 = step(&mut sim, 5); // observes band(50) = Some(100)
+    assert_eq!(c1["y_q"], 100);
+    assert_eq!(c1["valid_q"], 1);
+    let c2 = step(&mut sim, 250); // observes band(5) = None (hi fails) -> held
+    assert_eq!(c2["valid_q"], 0);
+    assert_eq!(c2["y_q"], 100, "held previous value");
+    let c3 = step(&mut sim, 30); // observes band(250) = None (lo fails)
+    assert_eq!(c3["valid_q"], 0);
+    let c4 = step(&mut sim, 0); // observes band(30) = Some(60)
+    assert_eq!(c4["y_q"], 60);
+    assert_eq!(c4["valid_q"], 1);
+}
+
+#[test]
 fn option_leaf_colliding_with_a_sibling_input_field_is_rejected() {
     // An `Option<u8>` field flattens to `_is_some`/`_payload` leaves; a sibling
     // field whose name matches one of them would emit a duplicate Verilog port

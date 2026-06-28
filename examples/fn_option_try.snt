@@ -1,0 +1,36 @@
+// O2 `?` oracle example (DESIGN §6.4): valid-bit AND-reduction.
+//
+// `band(x)` returns `Some(2x)` only when BOTH `lo` and `hi` accept `x`, via `?`:
+// each `?` yields its operand's payload and folds the operand's validity into
+// `band`'s result. So `band` is `Some` exactly when `10 < x < 200`, else `None`
+// — the AND of two validities, with no control flow. `Top` stores the result
+// when valid and holds the previous value otherwise (a guarded hold, §6.4).
+
+fn lo(x: u8) -> Option<u8> {
+    if x < 200 { Some(x) } else { None }
+}
+
+fn hi(x: u8) -> Option<u8> {
+    if x > 10 { Some(x) } else { None }
+}
+
+fn band(x: u8) -> Option<u8> {
+    let a = lo(x)?;
+    let b = hi(x)?;
+    Some((a + b) as u8 wrap)
+}
+
+struct Top {
+    y: u8 = 0,
+    valid: u1 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> Top {
+        match band(x) {
+            Some(v) => Top { y: v, valid: 1 },
+            None => Top { y: self.y, valid: 0 },
+        }
+    }
+}

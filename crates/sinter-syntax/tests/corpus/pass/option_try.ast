@@ -1,0 +1,123 @@
+Program {
+    modules: [],
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "band",
+                params: [
+                    Typed {
+                        name: "x",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 9,
+                        },
+                    },
+                    Typed {
+                        name: "lo",
+                        ty: Option(
+                            Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 16,
+                        },
+                    },
+                    Typed {
+                        name: "hi",
+                        ty: Option(
+                            Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 32,
+                        },
+                    },
+                ],
+                ret: Option(
+                    Scalar(
+                        Uint(
+                            8,
+                        ),
+                    ),
+                ),
+                body: Block {
+                    stmts: [
+                        Let {
+                            pattern: Binding(
+                                "a",
+                            ),
+                            ty: None,
+                            value: Try(
+                                Ident(
+                                    "lo",
+                                ),
+                            ),
+                            pos: Pos {
+                                line: 6,
+                                col: 5,
+                            },
+                        },
+                        Let {
+                            pattern: Binding(
+                                "b",
+                            ),
+                            ty: None,
+                            value: Try(
+                                Ident(
+                                    "hi",
+                                ),
+                            ),
+                            pos: Pos {
+                                line: 7,
+                                col: 5,
+                            },
+                        },
+                    ],
+                    tail: Some(
+                        Cast {
+                            expr: Binary {
+                                op: Add,
+                                lhs: Ident(
+                                    "a",
+                                ),
+                                rhs: Ident(
+                                    "b",
+                                ),
+                            },
+                            ty: Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                            mode: Wrap,
+                        },
+                    ),
+                    pos: Pos {
+                        line: 5,
+                        col: 62,
+                    },
+                },
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

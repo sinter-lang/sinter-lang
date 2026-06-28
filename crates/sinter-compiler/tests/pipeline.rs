@@ -213,6 +213,19 @@ fn duplicate_pipeline_fn_reports_duplicate_function() {
 }
 
 #[test]
+fn carrying_an_aggregate_across_a_yield_is_rejected() {
+    // A stage register is scalar (it resets to `0`); carrying an `Option<T>`
+    // across a `yield` is rejected with a clear error (not a misleading
+    // `literal 0 does not fit` from the synthesized register default).
+    compile_err(
+        "pipeline fn p(x: u8) -> u8 { \
+            let a: Option<u8> = Some(x); yield; \
+            match a { Some(v) => v, None => 0 } }",
+        "must be a scalar",
+    );
+}
+
+#[test]
 fn in_valid_is_a_reserved_pipeline_parameter_name() {
     // `in_valid` is the synthesized input-valid parameter (PL3b); a pipeline
     // cannot reuse the name.

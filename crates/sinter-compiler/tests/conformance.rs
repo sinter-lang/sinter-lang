@@ -52,6 +52,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_option",
         source: include_str!("../../../examples/fn_option.snt"),
     },
+    // O2 `?`: validity AND-reduction (DESIGN §6.4) — two `?`s combine into a
+    // single result validity, consumed by a guarded hold.
+    Example {
+        name: "fn_option_try",
+        source: include_str!("../../../examples/fn_option_try.snt"),
+    },
     // Signed arithmetic + signed narrowing `wrap` cast.
     Example {
         name: "fn_signed",

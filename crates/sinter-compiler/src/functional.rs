@@ -625,6 +625,9 @@ struct Checker<'a> {
     /// module), derived from the enclosing item's canonical name. Used to
     /// enforce struct-field visibility (DESIGN §10). Set per item/function.
     acc_mod: RefCell<String>,
+    /// Whether the function currently being checked returns an `Option<T>`. The
+    /// `?` operator (DESIGN §6.4) is valid only in such a body. Set per function.
+    in_option: RefCell<bool>,
 }
 
 /// Lexical environment: local/parameter/`self` names to their types.
@@ -635,6 +638,7 @@ impl<'a> Checker<'a> {
         Checker {
             tables,
             acc_mod: RefCell::new(String::new()),
+            in_option: RefCell::new(false),
         }
     }
 
@@ -695,6 +699,9 @@ impl Checker<'_> {
         }
         let known = self.known();
         let ret = resolve_type(&known, &f.ret, &f.name, f.pos)?;
+        // `?` (DESIGN §6.4) is valid only when the enclosing function returns an
+        // `Option` (so the propagated validity has somewhere to go).
+        *self.in_option.borrow_mut() = matches!(ret, FType::Option(_));
         let got = self.check_block(&f.body, &env, Some(&ret), &f.name)?;
         self.expect(&ret, &got, &f.name, f.body.pos)?;
         Ok(())
@@ -709,6 +716,9 @@ impl Checker<'_> {
     /// rejected by `check_block` (data-dependent staging is deferred).
     fn check_pipeline(&self, f: &Func) -> Result<(), CompileError> {
         self.enter_module(&f.name);
+        // `?` inside a `pipeline fn` (mid-stream bubbles) is a separate, deferred
+        // feature; it is not an `Option`-returning combinational body here.
+        *self.in_option.borrow_mut() = false;
         let known = self.known();
         let mut local = Env::new();
         for p in &f.params {
@@ -983,6 +993,26 @@ impl Checker<'_> {
                         "cannot infer the type of `None`; give the surrounding `Option<T>` type",
                     )),
                 }
+            }
+            Expr::Try(inner) => {
+                // `?` yields the payload and folds the operand's validity into the
+                // enclosing `Option`-returning function's result (DESIGN §6.4).
+                if !*self.in_option.borrow() {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        "`?` is only valid in an `Option`-returning function (DESIGN §6.4)",
+                    ));
+                }
+                let it = self.check_expr(inner, env, None, ctx, pos)?;
+                let FType::Option(payload) = it else {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("`?` operand must be an `Option`, found `{it}`"),
+                    ));
+                };
+                (*payload).clone()
             }
             Expr::Unary { op, expr: inner } => {
                 self.check_unary(*op, inner, env, expected, ctx, pos)?

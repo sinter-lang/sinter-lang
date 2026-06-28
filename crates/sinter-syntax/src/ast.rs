@@ -299,6 +299,10 @@ pub enum Expr {
     Some(Box<Expr>),
     /// `None` — the empty `Option` (DESIGN §6.5).
     None,
+    /// Postfix `expr?` — Option/validity propagation (DESIGN §6.4): yields the
+    /// payload and folds the operand's validity into the enclosing
+    /// `Option`-returning function's result.
+    Try(Box<Expr>),
     /// A mode-named narrowing cast `expr as Type mode` (DESIGN §6.3).
     Cast {
         /// The operand being narrowed.

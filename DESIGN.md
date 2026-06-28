@@ -813,13 +813,45 @@ The first staged function color (DESIGN §3.1). Settled surface (this milestone)
 | **PL3b** | ✅ Input bubbles: `advance` gains a trailing `in_valid: u1` (`v0` next-state = `in_valid` instead of the literal `1`), so `in_valid = 0` injects a bubble the valid-bit chain carries to the output `latency` cycles later — a bubble in ⇒ a bubble out at the right latency; a free-running caller passes `1`. `in_valid` is a reserved pipeline name. (`?`-propagation needs a real `Option<T>` type and is promoted to its own milestone — see below.) | a gated pipeline with random `in_valid` matches the oracle bit-for-bit |
 | **PL3c** | ✅ Global-stall backpressure as a **guarded hold** — it falls out of the owned-instance model with **no new compiler support**: the parent re-commits the *previous* instance instead of the advanced one (`if en { Top { inst: inst2, … } } else { Top { inst: self.inst, … } }`), so every flattened pipeline register's next-state becomes `mux(en, advanced, current)` — freezing the whole pipe together when `en = 0`. (Per-stage elastic `Stream<T>` backpressure is the deferred opt-in tier.) Through the sim↔Verilog oracle with random `en` (`examples/fn_pipeline_stall.snt`). | a stalled pipeline holds its state, oracle-checked |
 
-<<<<<<< HEAD
-Deferred beyond PL3: a first-class **`Option<T>` type** (`Some`/`None`, `match`,
-and the `?` bubble-propagation operator — `let c = lookup(x)?` turns a present
-datum into a bubble; useful well beyond pipelines, so it is its own milestone);
-elastic `Stream<T>` (per-stage ready/valid + skid buffers); and the §3.5
-`Bounded`/`Dynamic` latency prover. Mid-pipeline `yield expr` taps are **cut**
-from the model (final-output-only).
+Deferred beyond PL3: elastic `Stream<T>` (per-stage ready/valid + skid buffers)
+and the §3.5 `Bounded`/`Dynamic` latency prover. Mid-pipeline `yield expr` taps
+are **cut** from the model (final-output-only). The `Option<T>` type + the `?`
+operator are their own milestone (§9.4); the `multiplex` color is §9.5.
+
+### 9.4 `Option<T>` type — ACTIVE milestone (O1–O2)
+
+A first-class **`Option<T>`** (DESIGN §6.4/§6.5): the "maybe a value" type that
+underlies the pipeline validity model, broadly useful beyond pipelines (channel
+reads, lookups, guarded results). Settled surface:
+
+- **Syntax (Rust-style):** the type `Option<T>`; the constructors `Some(x)` and
+  `None`; `match o { Some(v) => …, None => … }`; (O2) the `?` operator.
+  `Option` / `Some` / `None` are reserved keywords (program-wide, including the
+  otherwise-frozen legacy `module` surface, since both share one identifier rule).
+- **`T` is any concrete type** — scalar, fixed-point, `struct`, `enum`, tuple, or
+  array. `Option<T>` **erases** to a 2-leaf aggregate `(is_some: u1, payload: T)`,
+  reusing the existing SROA / flatten / mux machinery, so nothing in the IR,
+  simulator, or Verilog backend changes. `None` is `(0, zero(T))` — a fully
+  defined reset/payload (oracle-safe); the payload of a `None`/non-taken arm is
+  computed but gated by `is_some`.
+- **`match` lowers to a mux** on `is_some` (the same per-leaf multiplexing as any
+  match); exhaustiveness requires `Some` and `None` (or a `_`). `Some(v)` binds
+  the payload; `None` matches the empty case. Option patterns are refutable, so
+  they are a `match`-only form (not a `let` binding).
+- **`?` (O2)** is *valid-bit propagation*, not control flow (§6.4): in a
+  combinational Option-returning body, `let v = e?` yields `e`'s payload
+  unconditionally and AND-reduces `e`'s `is_some` into the result's validity. It
+  is only valid in an `Option`-returning context; `reg <= compute()?` is rejected
+  (a register has no "skip"; use a guarded hold).
+- **Not in scope:** general user-defined generics and payload-bearing `enum`s
+  (`Option` is the built-in one-variant-payload special case, monomorphized per
+  `T`); retrofitting the pipeline `advance` to return `Option<Out>` instead of the
+  concrete `(payload, u1)` is a later follow-on.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **O1** | The `Option<T>` type + `Some`/`None` + `match`-on-Option, in combinational code: grammar/AST/parse, type checking (typing `Some`/`None`, exhaustive `match` with payload binding), and elaboration (erase to `(is_some, payload)`; `match` → mux). Through the sim↔Verilog oracle. | an `Option` example (construct + match) passes the oracle bit-for-bit |
+| **O2** | ✅ The postfix `?` operator (`Expr::Try`): in an `Option`-returning combinational body, `e?` yields `e`'s payload unconditionally and AND-reduces `e`'s `is_some` into the function's result validity (no control flow, DESIGN §6.4) — elaboration accumulates the `?` validity bits per inlined function and folds them into its `Option` result. Rejected outside an `Option`-returning function (so a register next-state cannot use it — a register has no "skip"; use a guarded hold) and on a non-`Option` operand. | a `?`-using helper (validity AND-reduction) passes the oracle (`examples/fn_option_try.snt`) |
 
 ### 9.5 `multiplex fn` — ACTIVE milestone (M1)
 
@@ -990,47 +1022,6 @@ container formats (Intel HEX, SREC, `.coe`, `.mif`), an optional runtime
 `$readmemh` / generated-data-file emit mode for very large ROMs, and multi-read
 ROMs (the shared-data / multiple-cursor split — folds into the §9.6 multi-port
 axis).
-=======
-Deferred beyond PL3: elastic `Stream<T>` (per-stage ready/valid + skid buffers);
-the `multiplex` color; and the §3.5 `Bounded`/`Dynamic` latency prover. Mid-pipeline
-`yield expr` taps are **cut** from the model (final-output-only). The `Option<T>`
-type + `?` operator (needed for mid-stream `?` bubbles) is its own milestone, §9.4.
-
-### 9.4 `Option<T>` type — ACTIVE milestone (O1–O2)
-
-A first-class **`Option<T>`** (DESIGN §6.4/§6.5): the "maybe a value" type that
-underlies the pipeline validity model, broadly useful beyond pipelines (channel
-reads, lookups, guarded results). Settled surface:
-
-- **Syntax (Rust-style):** the type `Option<T>`; the constructors `Some(x)` and
-  `None`; `match o { Some(v) => …, None => … }`; (O2) the `?` operator.
-  `Option` / `Some` / `None` are reserved keywords (program-wide, including the
-  otherwise-frozen legacy `module` surface, since both share one identifier rule).
-- **`T` is any concrete type** — scalar, fixed-point, `struct`, `enum`, tuple, or
-  array. `Option<T>` **erases** to a 2-leaf aggregate `(is_some: u1, payload: T)`,
-  reusing the existing SROA / flatten / mux machinery, so nothing in the IR,
-  simulator, or Verilog backend changes. `None` is `(0, zero(T))` — a fully
-  defined reset/payload (oracle-safe); the payload of a `None`/non-taken arm is
-  computed but gated by `is_some`.
-- **`match` lowers to a mux** on `is_some` (the same per-leaf multiplexing as any
-  match); exhaustiveness requires `Some` and `None` (or a `_`). `Some(v)` binds
-  the payload; `None` matches the empty case. Option patterns are refutable, so
-  they are a `match`-only form (not a `let` binding).
-- **`?` (O2)** is *valid-bit propagation*, not control flow (§6.4): in a
-  combinational Option-returning body, `let v = e?` yields `e`'s payload
-  unconditionally and AND-reduces `e`'s `is_some` into the result's validity. It
-  is only valid in an `Option`-returning context; `reg <= compute()?` is rejected
-  (a register has no "skip"; use a guarded hold).
-- **Not in scope:** general user-defined generics and payload-bearing `enum`s
-  (`Option` is the built-in one-variant-payload special case, monomorphized per
-  `T`); retrofitting the pipeline `advance` to return `Option<Out>` instead of the
-  concrete `(payload, u1)` is a later follow-on.
-
-| Phase | Scope | Done when |
-|---|---|---|
-| **O1** | The `Option<T>` type + `Some`/`None` + `match`-on-Option, in combinational code: grammar/AST/parse, type checking (typing `Some`/`None`, exhaustive `match` with payload binding), and elaboration (erase to `(is_some, payload)`; `match` → mux). Through the sim↔Verilog oracle. | an `Option` example (construct + match) passes the oracle bit-for-bit |
-| **O2** | The `?` operator: valid-bit AND-reduction in an `Option`-returning combinational body; rejected outside one and on register writes (§6.4). | a `?`-using helper matches the oracle |
->>>>>>> ddd815e (O1: first-class Option<T> type (Some/None/match) — DESIGN §6.5/§9.4)
 
 ---
 

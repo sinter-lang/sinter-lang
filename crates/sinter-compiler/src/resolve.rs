@@ -651,7 +651,7 @@ impl Resolver {
                 }
             }
             Expr::Block(b) => self.rewrite_block(b, cur, locals, src)?,
-            Expr::Some(inner) => self.rewrite_expr(inner, cur, locals, src)?,
+            Expr::Some(inner) | Expr::Try(inner) => self.rewrite_expr(inner, cur, locals, src)?,
             Expr::None => {}
         }
         Ok(())

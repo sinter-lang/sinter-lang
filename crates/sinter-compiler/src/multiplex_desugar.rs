@@ -230,8 +230,10 @@ fn reject_reserved_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
         Expr::Tuple(items) | Expr::Array(items) => items
             .iter()
             .try_for_each(|i| reject_reserved_in_expr(i, ctx)),
-        Expr::Some(inner) => reject_reserved_in_expr(inner, ctx),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => Ok(()),
+        Expr::Some(inner) | Expr::Try(inner) => reject_reserved_in_expr(inner, ctx),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => {
+            Ok(())
+        }
     }
 }
 
@@ -433,6 +435,7 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
             None => Expr::Ident(x.clone()),
         },
         Expr::Some(inner) => Expr::Some(Box::new(mux_rewrite(plan, inner, seg, muls))),
+        Expr::Try(inner) => Expr::Try(Box::new(mux_rewrite(plan, inner, seg, muls))),
         Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => e.clone(),
         Expr::Unary { op, expr } => Expr::Unary {
             op: *op,
@@ -634,7 +637,7 @@ fn count_muls(e: &Expr) -> usize {
                 .sum::<usize>()
                 + count_muls(&b.tail)
         }
-        Expr::Some(inner) => count_muls(inner),
+        Expr::Some(inner) | Expr::Try(inner) => count_muls(inner),
         Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => 0,
     }
 }
