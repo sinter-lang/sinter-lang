@@ -47,6 +47,16 @@ fn carried_value_without_a_cast_is_rejected() {
 }
 
 #[test]
+fn non_scalar_carried_value_is_rejected() {
+    // A value carried across a `yield` must be a scalar — an aggregate (here the
+    // array param `a`, read in both stages) has no `0` reset literal.
+    compile_err(
+        "pipeline fn f(a: [u8; 2]) -> u8 { let p = (a[0]) as u8 wrap; yield; (p + a[1]) as u8 wrap }",
+        "must be a scalar",
+    );
+}
+
+#[test]
 fn nested_yield_is_rejected() {
     // `yield` may only appear at the top level of a `pipeline fn`.
     compile_err(

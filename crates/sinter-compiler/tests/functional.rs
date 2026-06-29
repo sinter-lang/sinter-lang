@@ -254,10 +254,26 @@ fn pipeline_fn_cannot_be_a_method() {
 }
 
 #[test]
-fn multiplex_fn_is_rejected() {
+fn multiplex_fn_definition_type_checks() {
+    // A well-formed `multiplex fn` type-checks across its `yield` phase
+    // boundaries (M1). `a * b` widens u8*u8 -> u16; the tail matches the return.
+    check("multiplex fn mac(a: u8, b: u8) -> u16 { let p = (a * b) as u16 wrap; yield; p }")
+        .expect("a well-formed multiplex fn should type-check");
+}
+
+#[test]
+fn multiplex_fn_cannot_be_a_method() {
     reject(
-        "multiplex fn m(a: u8) -> u8 { yield; a }",
-        "not yet supported",
+        "struct S { x: u1 = 0 } impl S { multiplex fn m(self) -> u1 { yield; self.x } }",
+        "cannot be a method",
+    );
+}
+
+#[test]
+fn multiplex_fn_without_yield_is_rejected() {
+    reject(
+        "multiplex fn m(a: u8) -> u8 { a }",
+        "needs at least one `yield`",
     );
 }
 

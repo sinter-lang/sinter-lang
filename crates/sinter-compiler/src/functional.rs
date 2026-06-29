@@ -212,13 +212,7 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
             Item::Func(f) => match f.color {
                 FnColor::Comb => checker.check_fn(f, None)?,
                 FnColor::Pipeline => checker.check_pipeline(f)?,
-                FnColor::Multiplex => {
-                    return Err(sem(
-                        &f.name,
-                        f.pos,
-                        "`multiplex fn` is not yet supported (deferred; DESIGN §3.2)".to_string(),
-                    ))
-                }
+                FnColor::Multiplex => checker.check_multiplex(f)?,
             },
             Item::Impl(im) => {
                 for m in &im.methods {
@@ -765,6 +759,75 @@ impl Checker<'_> {
                 &f.name,
                 f.body.pos,
                 "a `pipeline fn` needs at least one `yield` stage boundary".to_string(),
+            ));
+        }
+        let got = self.check_expr(&f.body.tail, &local, Some(&ret), &f.name, f.body.pos)?;
+        self.expect(&ret, &got, &f.name, f.body.pos)?;
+        Ok(())
+    }
+
+    /// Type-check a `multiplex fn` definition (DESIGN §3.2, M1). Like a
+    /// `pipeline fn` the body is a per-datum dataflow with type-transparent
+    /// `yield` phase boundaries and no `self`; it differs only in *time-folded*
+    /// lowering (one reused register per value + a phase counter, §3.3). The M1
+    /// operator-sharing restriction (≤1 `*` per phase) is enforced by
+    /// `multiplex_desugar` (which runs first); this pass type-checks the body.
+    fn check_multiplex(&self, f: &Func) -> Result<(), CompileError> {
+        self.enter_module(&f.name);
+        let known = self.known();
+        let mut local = Env::new();
+        for p in &f.params {
+            match p {
+                Param::SelfRef { pos } => {
+                    return Err(sem(
+                        &f.name,
+                        *pos,
+                        "a `multiplex fn` cannot take `self` (it is pure dataflow over its inputs)"
+                            .to_string(),
+                    ))
+                }
+                Param::Typed { name, ty, pos } => {
+                    local.insert(name.clone(), resolve_type(&known, ty, &f.name, *pos)?);
+                }
+            }
+        }
+        let ret = resolve_type(&known, &f.ret, &f.name, f.pos)?;
+
+        let mut phases = 0u32;
+        for stmt in &f.body.stmts {
+            match stmt {
+                Stmt::Let {
+                    pattern,
+                    ty,
+                    value,
+                    pos,
+                } => {
+                    let want = match ty {
+                        Some(t) => Some(resolve_type(&known, t, &f.name, *pos)?),
+                        None => None,
+                    };
+                    let vt = self.check_expr(value, &local, want.as_ref(), &f.name, *pos)?;
+                    self.bind_pattern(pattern, &vt, &mut local, &f.name, *pos)?;
+                }
+                Stmt::Yield { value, pos } => {
+                    if value.is_some() {
+                        return Err(sem(
+                            &f.name,
+                            *pos,
+                            "`yield <expr>` taps are not part of the multiplex model; use a bare \
+                             `yield;`"
+                                .to_string(),
+                        ));
+                    }
+                    phases += 1;
+                }
+            }
+        }
+        if phases == 0 {
+            return Err(sem(
+                &f.name,
+                f.body.pos,
+                "a `multiplex fn` needs at least one `yield` phase boundary".to_string(),
             ));
         }
         let got = self.check_expr(&f.body.tail, &local, Some(&ret), &f.name, f.body.pos)?;

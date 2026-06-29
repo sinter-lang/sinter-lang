@@ -17,6 +17,8 @@ pub mod eval;
 pub mod functional;
 pub mod include_expand;
 pub mod ir;
+pub mod ir_cse;
+pub mod multiplex_desugar;
 pub mod pinmap;
 pub mod pipeline_desugar;
 pub mod resolve;
@@ -63,11 +65,14 @@ pub fn compile_project(root: &std::path::Path) -> Result<Design, CompileError> {
 /// the source directory `include_hex!` paths resolve against (`None` for a bare
 /// string).
 ///
-/// `include_hex!` is expanded first (DESIGN §9.7), then `pipeline fn`s (DESIGN
-/// §3.1) are desugared to a synthesized instance `struct` + `advance` method
-/// ([`pipeline_desugar`]) so the rest of the pipeline — type checking and
-/// elaboration — handles them as ordinary functional items. A program with no
-/// `pipeline fn` is passed through untouched (byte-identical legacy path).
+/// `include_hex!` is expanded first (DESIGN §9.7), then staged function colors
+/// are desugared to a synthesized instance struct (with an `advance` method) so
+/// the rest of the pipeline — type checking and elaboration — handles them as
+/// ordinary functional items: `pipeline fn`s (DESIGN §3.1) via
+/// [`pipeline_desugar`], `multiplex fn`s (§3.2) via [`multiplex_desugar`]. A
+/// `multiplex` design additionally runs the IR-level multiply-CSE pass
+/// ([`ir_cse`]) so its shared multiply becomes one physical multiplier. A program
+/// with no staged color is passed through untouched (byte-identical legacy path).
 fn compile_program(
     program: sinter_syntax::ast::Program,
     base: Option<&std::path::Path>,
@@ -79,14 +84,28 @@ fn compile_program(
         .items
         .iter()
         .any(|it| matches!(it, Item::Func(f) if f.color == FnColor::Pipeline));
+    let has_multiplex = program
+        .items
+        .iter()
+        .any(|it| matches!(it, Item::Func(f) if f.color == FnColor::Multiplex));
     let program = if has_pipeline {
         pipeline_desugar::desugar_pipelines(&program)?
     } else {
         program
     };
+    let program = if has_multiplex {
+        multiplex_desugar::desugar_multiplexes(&program)?
+    } else {
+        program
+    };
     functional::check_functional(&program)?;
     let mut design = check::check_program(&program)?;
-    if let Some(module) = elaborate::elaborate(&program)? {
+    if let Some(mut module) = elaborate::elaborate(&program)? {
+        if has_multiplex {
+            // Collapse the desugar's shared (then SROA-duplicated) multiply into
+            // one physical multiplier (DESIGN §3.2).
+            ir_cse::share_muls(&mut module);
+        }
         design.modules.push(module);
     }
     Ok(design)

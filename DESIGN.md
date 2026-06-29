@@ -816,9 +816,41 @@ The first staged function color (DESIGN §3.1). Settled surface (this milestone)
 Deferred beyond PL3: a first-class **`Option<T>` type** (`Some`/`None`, `match`,
 and the `?` bubble-propagation operator — `let c = lookup(x)?` turns a present
 datum into a bubble; useful well beyond pipelines, so it is its own milestone);
-elastic `Stream<T>` (per-stage ready/valid + skid buffers); the `multiplex` color;
-and the §3.5 `Bounded`/`Dynamic` latency prover. Mid-pipeline `yield expr` taps
-are **cut** from the model (final-output-only).
+elastic `Stream<T>` (per-stage ready/valid + skid buffers); and the §3.5
+`Bounded`/`Dynamic` latency prover. Mid-pipeline `yield expr` taps are **cut**
+from the model (final-output-only).
+
+### 9.5 `multiplex fn` — ACTIVE milestone (M1)
+
+The second staged function color (DESIGN §3.2/§3.3): the **time-folded** dual of
+the pipeline. Same surface — `yield`-separated phases, an owned instance +
+`advance` — but it folds in time. Settled M1 surface:
+
+- **`multiplex fn`** with `yield` phase boundaries; const selector (a phase
+  counter `ph`). Where a pipeline runs every stage every cycle (a depth-`N`
+  register chain, 1 result/cycle), a multiplex processes one datum at a time over
+  `N+1` phases using **one register per carried value** (written in its producing
+  phase, held otherwise) plus the small counter — **latency `N`, throughput
+  ~1/(N+1), static** (§3.4 `Static`). Reuses the pipeline liveness/desugar
+  machinery (`multiplex_desugar` mirrors `pipeline_desugar`).
+- **Operator sharing — the one-DSP win (§3.2):** each phase may use **at most one
+  `*`** (rejected otherwise); the desugar hoists the per-phase multiply operands
+  into phase-muxes and emits a single shared multiply. Because the elaborator
+  inlines `let`s by value, an IR-level multiply-CSE pass (`ir_cse::share_muls`,
+  run only for multiplex designs) then collapses the (SROA-duplicated) shared
+  multiply into **one physical multiplier**. Mutual exclusion (one phase/cycle)
+  makes the sharing free/structural — no cost model.
+- **Driving** is free-running like the pipeline: `advance(self, in…, in_valid: u1)
+  -> (Self, Out, u1)`; inputs sampled at phase 0, `valid = (ph == N)`. Defined
+  reset (`ph = 0`, every latch 0). `ph` / `shared` / `in_valid` are reserved names.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **M1** | ✅ Time-folded `multiplex fn` (const selector) + **one shared multiplier** via operand-hoisting + IR multiply-CSE. One register per carried value + a phase counter; `≤1 *` per phase (rejected otherwise). Through the sim↔Verilog oracle (`examples/fn_dot2_multiplex.snt` power-of-two period, `fn_dot3_multiplex.snt` non-power-of-two wrap-to-0). | a dot-product multiplex passes the oracle bit-for-bit with exactly one multiplier in the IR |
+
+Deferred beyond M1: `k`-way operator sharing (>1 unit), sharing cheap ops, a clean
+per-phase operand-width check, and the **runtime selector** (data-dependent FSM,
+§3.4 `Bounded`/`Dynamic` with the §3.5 latency-bound prover).
 
 ### 9.6 Memories — ACTIVE milestone (MEM1)
 

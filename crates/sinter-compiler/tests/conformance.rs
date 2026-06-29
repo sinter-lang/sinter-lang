@@ -101,6 +101,18 @@ const EXAMPLES: &[Example] = &[
         name: "fn_rom",
         source: include_str!("../../../examples/fn_rom.snt"),
     },
+    // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
+    // register per carried value + a phase counter, sharing ONE multiplier across
+    // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,
+    // wrap-to-0) co-sim sim vs Verilog bit-for-bit (DESIGN §3.2 / §3.3 / §7.4).
+    Example {
+        name: "fn_dot2_multiplex",
+        source: include_str!("../../../examples/fn_dot2_multiplex.snt"),
+    },
+    Example {
+        name: "fn_dot3_multiplex",
+        source: include_str!("../../../examples/fn_dot3_multiplex.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {

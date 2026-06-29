@@ -1,0 +1,27 @@
+// M1 multiplex oracle example (DESIGN §3.2/§3.3): a 3-phase dot product reusing
+// ONE multiplier. `dot3` computes a0*b0 + a1*b1 + a2*b2 over three phases (two
+// yields), so the three `*` uses fold onto a single shared multiplier. With three
+// phases the 2-bit phase counter is non-power-of-two: it counts 0,1,2 and the
+// explicit wrap (2 -> 0) is co-simulated (state 3 is unreachable). `a2`/`b2`
+// (used only in phase 2) are latched at phase 0 and HELD across phase 1 — a value
+// live across two phase boundaries. All registers reset 0.
+
+multiplex fn dot3(a0: u8, b0: u8, a1: u8, b1: u8, a2: u8, b2: u8) -> u18 {
+    let acc0 = (a0 * b0) as u18 wrap;            // phase 0
+    yield;
+    let acc1 = (acc0 + (a1 * b1)) as u18 wrap;   // phase 1: SAME multiplier
+    yield;
+    (acc1 + (a2 * b2)) as u18 wrap               // phase 2: SAME multiplier
+}
+
+struct Top {
+    inst: dot3,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, a0: u8, b0: u8, a1: u8, b1: u8, a2: u8, b2: u8) -> (Top, (u18, u1)) {
+        let (inst2, result, valid) = self.inst.advance(a0, b0, a1, b1, a2, b2, 1);
+        (Top { inst: inst2 }, (result, valid))
+    }
+}

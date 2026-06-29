@@ -117,7 +117,7 @@ pub fn desugar_pipelines(program: &Program) -> Result<Program, CompileError> {
 
     let mut items = program.items.clone();
     for f in &pipelines {
-        let plan = Plan::build(f)?;
+        let plan = Plan::build(f, "pipeline")?;
         let struct_name = format!("{}{PIPE_SUFFIX}", f.name);
         if !type_names.insert(struct_name.clone()) {
             return Err(sem(
@@ -151,58 +151,61 @@ pub fn desugar_pipelines(program: &Program) -> Result<Program, CompileError> {
 }
 
 /// A single `let`-local of a pipeline body.
-struct Local {
-    name: String,
+pub(crate) struct Local {
+    pub(crate) name: String,
     /// 0-based stage the `let` lives in (segment index).
-    group: usize,
+    pub(crate) group: usize,
     /// The bound expression.
-    rhs: Expr,
+    pub(crate) rhs: Expr,
     /// The optional `let` type annotation (a fallback width source for a carried
     /// value when the `let` has no explicit cast).
-    ty: Option<TypeRef>,
+    pub(crate) ty: Option<TypeRef>,
     /// Source position.
-    pos: Pos,
+    pub(crate) pos: Pos,
 }
 
 /// The analyzed plan for one `pipeline fn`, ready to synthesize from.
-struct Plan {
+pub(crate) struct Plan {
     /// `advance` parameters (the pipeline params, in order): `(name, type)`.
-    params: Vec<(String, TypeRef)>,
+    pub(crate) params: Vec<(String, TypeRef)>,
     /// Latency = number of `yield`s.
-    latency: usize,
+    pub(crate) latency: usize,
     /// The output (tail) type.
-    out_ty: TypeRef,
+    pub(crate) out_ty: TypeRef,
     /// The tail expression (output payload, in the final segment `L`).
-    tail: Expr,
+    pub(crate) tail: Expr,
     /// `let`-locals across all segments, in source order.
-    locals: Vec<Local>,
+    pub(crate) locals: Vec<Local>,
     /// Defining segment of every value (param or local).
-    def_group: HashMap<String, usize>,
+    pub(crate) def_group: HashMap<String, usize>,
     /// Whether a name is an input parameter.
-    is_param: HashSet<String>,
+    pub(crate) is_param: HashSet<String>,
     /// Highest segment a value is *read* in (the tail counts as segment `L`).
-    max_use: HashMap<String, usize>,
+    pub(crate) max_use: HashMap<String, usize>,
     /// The carried register type of each value (param type, or a local's cast).
-    carried_ty: HashMap<String, TypeRef>,
+    pub(crate) carried_ty: HashMap<String, TypeRef>,
 }
 
 impl Plan {
-    fn build(f: &Func) -> Result<Plan, CompileError> {
+    /// Analyze a staged function (`pipeline`/`multiplex`) into a [`Plan`]. `kind`
+    /// is the function-color noun used in the structural-restriction diagnostics
+    /// (`"pipeline"` or `"multiplex"`), since the same analysis backs both colors.
+    pub(crate) fn build(f: &Func, kind: &str) -> Result<Plan, CompileError> {
         let ctx = &f.name;
 
-        // Parameters (a `pipeline fn` takes no `self`; PL2 already rejects it).
+        // Parameters (a staged fn takes no `self`; PL2 already rejects it).
         let mut params = Vec::new();
         for p in &f.params {
             match p {
                 Param::SelfRef { pos } => {
-                    return Err(sem(ctx, *pos, "a `pipeline fn` cannot take `self`"))
+                    return Err(sem(ctx, *pos, format!("a `{kind} fn` cannot take `self`")))
                 }
                 Param::Typed { name, ty, pos } => {
                     if name == IN_VALID {
                         return Err(sem(
                             ctx,
                             *pos,
-                            format!("`{IN_VALID}` is a reserved pipeline parameter name"),
+                            format!("`{IN_VALID}` is a reserved {kind} parameter name"),
                         ));
                     }
                     params.push((name.clone(), ty.clone()));
@@ -226,8 +229,10 @@ impl Plan {
                         return Err(sem(
                             ctx,
                             *pos,
-                            "a `pipeline fn` `let` must bind a simple name in PL3a (no tuple / `_` \
-                             destructuring)",
+                            format!(
+                                "a `{kind} fn` `let` must bind a simple name (no tuple / `_` \
+                                 destructuring)"
+                            ),
                         ));
                     };
                     let group = groups.len() - 1;
@@ -247,8 +252,10 @@ impl Plan {
                         return Err(sem(
                             ctx,
                             *pos,
-                            "`yield <expr>` taps are not part of the pipeline model (final output \
-                             only); use a bare `yield;`",
+                            format!(
+                                "`yield <expr>` taps are not part of the {kind} model (final output \
+                                 only); use a bare `yield;`"
+                            ),
                         ));
                     }
                     groups.push(Vec::new());
@@ -260,7 +267,7 @@ impl Plan {
             return Err(sem(
                 ctx,
                 f.body.pos,
-                "a `pipeline fn` needs at least one `yield` stage boundary",
+                format!("a `{kind} fn` needs at least one `yield` boundary"),
             ));
         }
 
@@ -280,7 +287,7 @@ impl Plan {
                     return Err(sem(
                         ctx,
                         local.pos,
-                        format!("`{IN_VALID}` is a reserved pipeline local name"),
+                        format!("`{IN_VALID}` is a reserved {kind} local name"),
                     ));
                 }
                 if def_group.insert(local.name.clone(), local.group).is_some() {
@@ -288,8 +295,8 @@ impl Plan {
                         ctx,
                         local.pos,
                         format!(
-                            "a `pipeline fn` cannot redefine `{}` (shadowing across stages is not \
-                             supported in PL3a)",
+                            "a `{kind} fn` cannot redefine `{}` (redefining a value across `yield` \
+                             boundaries is not supported)",
                             local.name
                         ),
                     ));
@@ -349,7 +356,7 @@ impl Plan {
 
     /// All values in deterministic order: parameters first, then `let`-locals in
     /// source order. Used to order synthesized fields.
-    fn value_order(&self) -> Vec<String> {
+    pub(crate) fn value_order(&self) -> Vec<String> {
         let mut order: Vec<String> = self.params.iter().map(|(n, _)| n.clone()).collect();
         order.extend(self.locals.iter().map(|l| l.name.clone()));
         order
@@ -357,38 +364,52 @@ impl Plan {
 
     /// Whether value `v` must be held in a register across boundary `k`: defined
     /// at or before `k` and still read after `k`.
-    fn live_across(&self, v: &str, k: usize) -> bool {
+    pub(crate) fn live_across(&self, v: &str, k: usize) -> bool {
         let def = self.def_group.get(v).copied().unwrap_or(0);
         let last = self.max_use.get(v).copied().unwrap_or(0);
         def <= k && last > k
     }
 
     /// The carried register type of `v`: a param's declared type, or — for a
-    /// `let`-local — its explicit cast target or `let` type annotation. PL3a
-    /// requires one of those two so the register width is readable from the
-    /// source without re-running type inference.
-    fn carried_type(&self, v: &str, ctx: &str) -> Result<TypeRef, CompileError> {
-        if let Some((_, ty)) = self.params.iter().find(|(n, _)| n == v) {
-            return Ok(ty.clone());
+    /// `let`-local — its explicit cast target or `let` type annotation. One of
+    /// those two is required so the register width is readable from the source
+    /// without re-running type inference, and the type must be a scalar (a carried
+    /// aggregate has no `0` reset literal and is out of scope this milestone).
+    pub(crate) fn carried_type(&self, v: &str, ctx: &str) -> Result<TypeRef, CompileError> {
+        let (ty, pos) = if let Some((_, ty)) = self.params.iter().find(|(n, _)| n == v) {
+            (ty.clone(), Pos::default())
+        } else {
+            let local = self
+                .locals
+                .iter()
+                .find(|l| l.name == v)
+                .expect("carried value is a param or local");
+            let ty = match &local.rhs {
+                Expr::Cast { ty, .. } => ty.clone(),
+                _ => local.ty.clone().ok_or_else(|| {
+                    sem(
+                        ctx,
+                        local.pos,
+                        format!(
+                            "value `{v}` is carried across a `yield` and needs an explicit \
+                             width-fixing cast (e.g. `as u16 wrap`) or a `let` type annotation"
+                        ),
+                    )
+                })?,
+            };
+            (ty, local.pos)
+        };
+        if !matches!(ty, TypeRef::Scalar(_) | TypeRef::Fixed { .. }) {
+            return Err(sem(
+                ctx,
+                pos,
+                format!(
+                    "value `{v}` is carried across a `yield` but its type is not a scalar; a \
+                     carried value must be a scalar (`uN` / `iN` / fixed-point) in this milestone"
+                ),
+            ));
         }
-        let local = self
-            .locals
-            .iter()
-            .find(|l| l.name == v)
-            .expect("carried value is a param or local");
-        match &local.rhs {
-            Expr::Cast { ty, .. } => Ok(ty.clone()),
-            _ => local.ty.clone().ok_or_else(|| {
-                sem(
-                    ctx,
-                    local.pos,
-                    format!(
-                        "value `{v}` is carried across a `yield` and needs an explicit width-fixing \
-                         cast (e.g. `as u16 wrap`) or a `let` type annotation in PL3a"
-                    ),
-                )
-            }),
-        }
+        Ok(ty)
     }
 
     /// The synthesized instance struct: valid bits then carried stage registers,
@@ -637,12 +658,12 @@ fn reg_name(v: &str, k: usize) -> String {
 }
 
 /// The per-segment local name used inside `advance` for a `let`-local.
-fn local_name(v: &str, seg: usize) -> String {
+pub(crate) fn local_name(v: &str, seg: usize) -> String {
     format!("{v}__p{seg}")
 }
 
 /// A `self.<field>` access expression.
-fn self_field(field: &str) -> Expr {
+pub(crate) fn self_field(field: &str) -> Expr {
     Expr::Field {
         base: Box::new(Expr::Ident("self".to_string())),
         field: field.to_string(),
@@ -650,7 +671,7 @@ fn self_field(field: &str) -> Expr {
 }
 
 /// A struct field of the given type defaulting to `0`.
-fn zero_field(name: &str, ty: TypeRef) -> StructField {
+pub(crate) fn zero_field(name: &str, ty: TypeRef) -> StructField {
     StructField {
         vis: Visibility::Private,
         name: name.to_string(),
@@ -662,7 +683,7 @@ fn zero_field(name: &str, ty: TypeRef) -> StructField {
 
 /// Collect the identifier names *read* by an expression (for use analysis). Field
 /// names, struct-literal names, and `::` paths are not identifier reads.
-fn idents(e: &Expr) -> Vec<String> {
+pub(crate) fn idents(e: &Expr) -> Vec<String> {
     let mut out = Vec::new();
     collect_idents(e, &mut out);
     out
@@ -729,7 +750,7 @@ fn collect_idents(e: &Expr, out: &mut Vec<String>) {
 
 /// Reject a `yield` nested below the top level of a `pipeline fn` body (PL3a only
 /// splits on top-level `yield`s; data-dependent staging is deferred).
-fn reject_nested_yields(body: &Block, ctx: &str) -> Result<(), CompileError> {
+pub(crate) fn reject_nested_yields(body: &Block, ctx: &str) -> Result<(), CompileError> {
     for stmt in &body.stmts {
         if let Stmt::Let { value, .. } = stmt {
             reject_yields_in_expr(value, ctx)?;
@@ -743,14 +764,12 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
         Expr::Block(b) => {
             for s in &b.stmts {
                 match s {
-                    Stmt::Yield { pos, .. } => {
-                        return Err(sem(
-                            ctx,
-                            *pos,
-                            "`yield` may only appear at the top level of a `pipeline fn` (nested \
+                    Stmt::Yield { pos, .. } => return Err(sem(
+                        ctx,
+                        *pos,
+                        "`yield` may only appear at the top level of a staged function (nested \
                              staging is not supported)",
-                        ))
-                    }
+                    )),
                     Stmt::Let { value, .. } => reject_yields_in_expr(value, ctx)?,
                 }
             }
@@ -798,7 +817,7 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
 /// shadows a pipeline value. The reference rewrite resolves identifiers by name
 /// against the pipeline's values, so a shadow would be silently miscompiled into a
 /// stage-register read; PL3a forbids it (full lexical scoping is a later option).
-fn reject_shadowing(
+pub(crate) fn reject_shadowing(
     e: &Expr,
     defs: &HashMap<String, usize>,
     ctx: &str,
@@ -885,8 +904,8 @@ fn check_pattern_shadow(
                 ctx,
                 pos,
                 format!(
-                    "a `pipeline fn` cannot shadow `{n}` with a nested `let` / `match` binding \
-                     (not supported in PL3a)"
+                    "a staged function cannot shadow `{n}` with a nested `let` / `match` binding \
+                     across `yield` boundaries (not supported)"
                 ),
             ));
         }
@@ -906,7 +925,7 @@ fn pattern_binds(pat: &Pattern, out: &mut Vec<String>) {
 /// Rewrite a pipeline instance field type `inst: f` to `inst: f__pipe`. A pipeline
 /// name nested inside an array/tuple field is rejected (PL3a holds a pipeline only
 /// in a plain field).
-fn rewrite_field_ty(
+pub(crate) fn rewrite_field_ty(
     ty: &mut TypeRef,
     pipe_names: &HashSet<String>,
     ctx: &str,
@@ -937,6 +956,6 @@ fn rewrite_field_ty(
     }
 }
 
-fn sem(ctx: &str, pos: Pos, msg: impl Into<String>) -> CompileError {
+pub(crate) fn sem(ctx: &str, pos: Pos, msg: impl Into<String>) -> CompileError {
     CompileError::semantic(ctx, pos, msg)
 }
