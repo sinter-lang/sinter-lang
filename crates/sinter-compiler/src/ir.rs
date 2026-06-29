@@ -34,8 +34,17 @@ pub struct Module {
     pub lets: Vec<Let>,
     /// Output drives: `(output port name, value)`.
     pub out_drives: Vec<(String, Expr)>,
-    /// Register next-state: `(register name, next value)`.
+    /// Register next-state: `(register name, next value)`. Excludes the read-data
+    /// registers of any [`MemRead`] (their next-state is the memory read).
     pub reg_updates: Vec<(String, Expr)>,
+    /// Block-RAM memories (DESIGN §6.6/§6.9), held as opaque indexed arrays — not
+    /// SROA-flattened to registers. Empty on the legacy `module` path.
+    pub mems: Vec<Mem>,
+    /// Memory read ports: each drives a read-data register (in `regs`) from the
+    /// pre-edge array contents.
+    pub mem_reads: Vec<MemRead>,
+    /// Memory write ports: each commits to its array on the clock edge.
+    pub mem_writes: Vec<MemWrite>,
 }
 
 impl Module {
@@ -70,6 +79,55 @@ pub struct Reg {
     pub ty: Type,
     /// Reset value (already constant-folded to a masked bit pattern).
     pub reset: u64,
+}
+
+/// A block-RAM memory primitive (DESIGN §6.6/§6.9). Held as one indexed array,
+/// **never** SROA-split into registers — that distinction (vs the `[T; N]`
+/// vector-of-registers) is what lets it lower to BRAM.
+#[derive(Debug, Clone)]
+pub struct Mem {
+    /// Name (the flattened struct-field path, e.g. `data` or `inst_data`).
+    pub name: String,
+    /// Element (word) type.
+    pub elem_ty: Type,
+    /// Depth in words (a power of two in MEM1).
+    pub depth: usize,
+    /// Address width = `log2(depth)` bits; read/write addresses are masked to it.
+    pub addr_bits: u32,
+    /// Per-word reset/power-up contents (MEM1: all zero), length `depth`.
+    pub reset: Vec<u64>,
+}
+
+/// A synchronous memory write port (MEM1: one per memory). `we`/`addr`/`data` are
+/// combinational expressions sampled from the pre-edge environment; the write
+/// commits on the clock edge. `addr` is already masked to the memory's
+/// `addr_bits` (a `Cast` to `uN`), so backends index in range.
+#[derive(Debug, Clone)]
+pub struct MemWrite {
+    /// Target memory name.
+    pub mem: String,
+    /// Write-enable (1-bit).
+    pub we: Expr,
+    /// Write address (masked to `addr_bits`).
+    pub addr: Expr,
+    /// Write data (element-typed).
+    pub data: Expr,
+}
+
+/// A synchronous memory read port (MEM1: one per memory). It drives a dedicated
+/// read-data register `rdata` (an ordinary [`Reg`], reset 0, excluded from
+/// `reg_updates`): on the clock edge `rdata <= mem[addr]` against the *pre-edge*
+/// array contents, so a same-address read+write returns the OLD value
+/// (`READ_FIRST`, DESIGN §9.6). The read result is `Ident(rdata)` (last cycle's
+/// value — the `Static(1)` read latency).
+#[derive(Debug, Clone)]
+pub struct MemRead {
+    /// The read-data register this read drives.
+    pub rdata: String,
+    /// Source memory name.
+    pub mem: String,
+    /// Read address (masked to `addr_bits`).
+    pub addr: Expr,
 }
 
 /// A checked combinational wire binding.

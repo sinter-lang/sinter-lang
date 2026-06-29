@@ -575,6 +575,21 @@ pub enum TypeRef {
     },
     /// A tuple `(T, U, ...)`.
     Tuple(Vec<TypeRef>),
+    /// A ported memory `mem<T, N>` (DESIGN §6.6/§6.9): an `N`-deep array of `T`
+    /// that lowers to block RAM, *distinct* from the `[T; N]` vector-of-registers.
+    /// Port count is part of the type; MEM1 fixes it at 1R1W (`read_ports` /
+    /// `write_ports` = 1), with the fields present so `mem<T, N, R, W>` is additive
+    /// later (DESIGN §9.6).
+    Mem {
+        /// The element type.
+        elem: Box<TypeRef>,
+        /// The depth (number of words) — a constant expression.
+        depth: Box<Expr>,
+        /// Number of read ports (MEM1: always 1).
+        read_ports: u32,
+        /// Number of write ports (MEM1: always 1).
+        write_ports: u32,
+    },
 }
 
 /// A block: zero or more statements followed by a tail expression (its value).

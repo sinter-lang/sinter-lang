@@ -85,6 +85,14 @@ const EXAMPLES: &[Example] = &[
         name: "fn_pipeline_stall",
         source: include_str!("../../../examples/fn_pipeline_stall.snt"),
     },
+    // MEM1: a 1R1W synchronous block RAM (`mem<u8, 16>`). The pseudo-random
+    // stimulus drives we/waddr/wdata/raddr, exercising write+read round-trips,
+    // the `Static(1)` read latency, and same-address READ_FIRST collisions —
+    // co-simulated sim vs Verilog bit-for-bit (DESIGN §6.6/§6.9/§9.6/§7.4).
+    Example {
+        name: "fn_ram",
+        source: include_str!("../../../examples/fn_ram.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {

@@ -835,9 +835,34 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 .map(parse_typeref)
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Rule::f_mem_ty => {
+            // `mem<T, N>` — element type + depth. Port counts are fixed at 1R1W
+            // in MEM1 (the type carries them so `mem<T, N, R, W>` is additive).
+            let mut it = inner.into_inner();
+            let elem = parse_typeref(next_pair(&mut it, "memory element type")?)?;
+            let depth = parse_mem_depth(next_pair(&mut it, "memory depth")?)?;
+            Ok(TypeRef::Mem {
+                elem: Box::new(elem),
+                depth: Box::new(depth),
+                read_ports: 1,
+                write_ports: 1,
+            })
+        }
         Rule::f_scalar_ty => parse_scalar_typeref(&inner),
         Rule::ident => Ok(TypeRef::Named(inner.as_str().to_string())),
         other => Err(unexpected(other, "type")),
+    }
+}
+
+/// Parse a `f_mem_depth` token: a constant memory depth (a literal or a `const`
+/// name). Restricted to these forms so the closing `>` of `mem<T, N>` is never
+/// swallowed by a relational operator in the full expression grammar.
+fn parse_mem_depth(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let inner = first_inner(pair, "memory depth")?;
+    match inner.as_rule() {
+        Rule::literal => Ok(Expr::Literal(literal_value(&inner)?)),
+        Rule::ident => Ok(Expr::Ident(inner.as_str().to_string())),
+        other => Err(unexpected(other, "memory depth")),
     }
 }
 

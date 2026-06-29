@@ -50,6 +50,14 @@ enum FType {
     Array(Box<FType>, u64),
     /// A tuple `(T, U, …)`.
     Tuple(Vec<FType>),
+    /// A ported memory `mem<T, N>` (DESIGN §6.6/§6.9). MEM1 is 1R1W, so the port
+    /// counts are not carried here (they are validated `= 1` at resolution).
+    Mem {
+        /// Element (word) type.
+        elem: Box<FType>,
+        /// Depth in words.
+        depth: u64,
+    },
 }
 
 impl FType {
@@ -90,6 +98,7 @@ impl fmt::Display for FType {
                 if *signed { 'i' } else { 'u' }
             ),
             FType::Struct(n) | FType::Enum(n) => write!(f, "{n}"),
+            FType::Mem { elem, depth } => write!(f, "mem<{elem}, {depth}>"),
             FType::Array(t, n) => write!(f, "[{t}; {n}]"),
             FType::Tuple(ts) => {
                 write!(f, "(")?;
@@ -264,6 +273,14 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                         ));
                     }
                     let ty = resolve_type(&known, &fld.ty, &s.name, fld.pos)?;
+                    if is_mem_bearing(&ty) && !matches!(ty, FType::Mem { .. }) {
+                        return Err(sem(
+                            &s.name,
+                            fld.pos,
+                            "a memory must be a plain struct field, not nested in an array or \
+                             tuple (MEM1)",
+                        ));
+                    }
                     fields.push((fld.name.clone(), ty, fld.vis));
                 }
                 structs.insert(s.name.clone(), StructInfo { fields });
@@ -286,6 +303,7 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
             }
             Item::Const(c) => {
                 let ty = resolve_type(&known, &c.ty, &c.name, c.pos)?;
+                reject_mem_value(&ty, &c.name, c.pos)?;
                 if consts.insert(c.name.clone(), ty).is_some() {
                     return Err(sem(&c.name, c.pos, format!("duplicate const `{}`", c.name)));
                 }
@@ -367,8 +385,32 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
             Item::Struct(s) => {
                 checker.enter_module(&s.name);
                 for f in &s.fields {
+                    let want = resolve_type(&checker.known(), &f.ty, &s.name, f.pos)?;
+                    // A memory is zero-initialized (`= 0`); ROM/per-word init is
+                    // deferred. (A `mem` literal `0` does not "fit" the type, so it
+                    // must not go through the normal literal check.)
+                    if matches!(want, FType::Mem { .. }) {
+                        match &f.default {
+                            Some(Expr::Literal(0)) => {}
+                            Some(_) => {
+                                return Err(sem(
+                                    &s.name,
+                                    f.pos,
+                                    "a memory must be zero-initialized (`= 0`); per-word / ROM \
+                                     init is deferred (MEM1)",
+                                ))
+                            }
+                            None => {
+                                return Err(sem(
+                                    &s.name,
+                                    f.pos,
+                                    "a memory field needs an explicit `= 0` (zero-init) in MEM1",
+                                ))
+                            }
+                        }
+                        continue;
+                    }
                     if let Some(default) = &f.default {
-                        let want = resolve_type(&checker.known(), &f.ty, &s.name, f.pos)?;
                         checker.check_expr(default, &env, Some(&want), &s.name, f.pos)?;
                     }
                 }
@@ -404,10 +446,15 @@ fn resolve_sig(known: &KnownTypes, f: &Func) -> Result<FnSig, CompileError> {
     for p in &f.params {
         match p {
             Param::SelfRef { .. } => has_self = true,
-            Param::Typed { ty, pos, .. } => params.push(resolve_type(known, ty, &f.name, *pos)?),
+            Param::Typed { ty, pos, .. } => {
+                let pt = resolve_type(known, ty, &f.name, *pos)?;
+                reject_mem_value(&pt, &f.name, *pos)?;
+                params.push(pt);
+            }
         }
     }
     let ret = resolve_type(known, &f.ret, &f.name, f.pos)?;
+    reject_mem_value(&ret, &f.name, f.pos)?;
     Ok(FnSig {
         has_self,
         params,
@@ -415,6 +462,32 @@ fn resolve_sig(known: &KnownTypes, f: &Func) -> Result<FnSig, CompileError> {
         vis: f.vis,
         color: f.color,
     })
+}
+
+/// Whether a type *is* or *contains* (in an array/tuple, but not through a named
+/// struct) a memory. A memory is opaque, single-instance state; it may only be a
+/// plain struct field, never a function parameter / return or an array/tuple
+/// element (MEM1, DESIGN §9.6).
+fn is_mem_bearing(t: &FType) -> bool {
+    match t {
+        FType::Mem { .. } => true,
+        FType::Array(e, _) => is_mem_bearing(e),
+        FType::Tuple(ts) => ts.iter().any(is_mem_bearing),
+        _ => false,
+    }
+}
+
+/// Reject a memory used as a function parameter or return type.
+fn reject_mem_value(t: &FType, ctx: &str, pos: Pos) -> Result<(), CompileError> {
+    if is_mem_bearing(t) {
+        return Err(sem(
+            ctx,
+            pos,
+            "a memory (`mem<…>`) can only be a struct field, not a function \
+             parameter or return value (MEM1)",
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_type(
@@ -446,7 +519,7 @@ fn resolve_type(
         }
         TypeRef::Array { elem, len } => {
             let et = resolve_type(known, elem, ctx, pos)?;
-            let n = const_len(len, ctx, pos)?;
+            let n = const_len(len, "array length", ctx, pos)?;
             FType::Array(Box::new(et), n)
         }
         TypeRef::Tuple(ts) => FType::Tuple(
@@ -454,6 +527,43 @@ fn resolve_type(
                 .map(|t| resolve_type(known, t, ctx, pos))
                 .collect::<Result<_, _>>()?,
         ),
+        TypeRef::Mem {
+            elem,
+            depth,
+            read_ports,
+            write_ports,
+        } => {
+            if *read_ports != 1 || *write_ports != 1 {
+                return Err(sem(
+                    ctx,
+                    pos,
+                    "only a 1-read / 1-write (1R1W) memory is supported (MEM1); \
+                     multi-port memories are deferred (DESIGN §9.6)",
+                ));
+            }
+            let et = resolve_type(known, elem, ctx, pos)?;
+            if !et.is_scalar() {
+                return Err(sem(
+                    ctx,
+                    pos,
+                    format!(
+                        "a memory element must be a scalar (`uN`/`iN`/fixed-point), not `{et}`"
+                    ),
+                ));
+            }
+            let n = const_len(depth, "memory depth", ctx, pos)?;
+            if n < 2 || !n.is_power_of_two() {
+                return Err(sem(
+                    ctx,
+                    pos,
+                    format!("memory depth `{n}` must be a power of two ≥ 2 in MEM1"),
+                ));
+            }
+            FType::Mem {
+                elem: Box::new(et),
+                depth: n,
+            }
+        }
     };
     if let Some(w) = ty.scalar_width() {
         if w == 0 {
@@ -471,12 +581,12 @@ fn resolve_type(
 }
 
 /// Evaluate an array length: a literal (F1 supports literals only here).
-fn const_len(expr: &Expr, ctx: &str, pos: Pos) -> Result<u64, CompileError> {
+fn const_len(expr: &Expr, noun: &str, ctx: &str, pos: Pos) -> Result<u64, CompileError> {
     match expr {
         Expr::Literal(v) => {
-            u64::try_from(*v).map_err(|_| sem(ctx, pos, format!("array length `{v}` is too large")))
+            u64::try_from(*v).map_err(|_| sem(ctx, pos, format!("{noun} `{v}` is too large")))
         }
-        _ => Err(sem(ctx, pos, "array length must be a literal".to_string())),
+        _ => Err(sem(ctx, pos, format!("{noun} must be a literal"))),
     }
 }
 
@@ -872,6 +982,9 @@ impl Checker<'_> {
         pos: Pos,
     ) -> Result<FType, CompileError> {
         let recv = self.check_expr(receiver, env, None, ctx, pos)?;
+        if let FType::Mem { elem, depth } = &recv {
+            return self.check_mem_method(elem, *depth, method, args, env, ctx, pos);
+        }
         let type_name = match &recv {
             FType::Struct(s) | FType::Enum(s) => s.clone(),
             _ => return Err(sem(ctx, pos, format!("`{recv}` has no methods"))),
@@ -908,6 +1021,65 @@ impl Checker<'_> {
         }
         self.check_args(method, &sig.params, args, env, ctx, pos)?;
         Ok(sig.ret.clone())
+    }
+
+    /// Type-check the built-in memory methods (DESIGN §6.6/§9.6):
+    /// `read(addr) -> T` and `write(we: u1, addr, data: T) -> mem<T, N>`. The
+    /// write returns the (same) memory so it can be threaded back into the tail
+    /// `Self { mem: self.mem.write(…) }`.
+    #[allow(clippy::too_many_arguments)]
+    fn check_mem_method(
+        &self,
+        elem: &FType,
+        depth: u64,
+        method: &str,
+        args: &[Expr],
+        env: &Env,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<FType, CompileError> {
+        let want_args = |n: usize| -> Result<(), CompileError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                Err(sem(
+                    ctx,
+                    pos,
+                    format!(
+                        "memory `{method}` expects {n} argument(s), found {}",
+                        args.len()
+                    ),
+                ))
+            }
+        };
+        // The address is any scalar integer; it is masked to the depth's address
+        // width during elaboration.
+        let check_addr = |this: &Self, e: &Expr| -> Result<(), CompileError> {
+            let at = this.check_expr(e, env, None, ctx, pos)?;
+            this.require_scalar(&at, ctx, pos)
+        };
+        match method {
+            "read" => {
+                want_args(1)?;
+                check_addr(self, &args[0])?;
+                Ok(elem.clone())
+            }
+            "write" => {
+                want_args(3)?;
+                self.check_expr(&args[0], env, Some(&FType::Uint(1)), ctx, pos)?;
+                check_addr(self, &args[1])?;
+                self.check_expr(&args[2], env, Some(elem), ctx, pos)?;
+                Ok(FType::Mem {
+                    elem: Box::new(elem.clone()),
+                    depth,
+                })
+            }
+            _ => Err(sem(
+                ctx,
+                pos,
+                format!("a memory has no method `{method}` (only `read`/`write` in MEM1)"),
+            )),
+        }
     }
 
     fn check_args(
@@ -968,6 +1140,26 @@ impl Checker<'_> {
             // Constructing with a private field is only allowed from a module
             // that can reach it (DESIGN §10).
             self.check_field_access(name, &fi.name, ctx, pos)?;
+            // A memory field accepts a zero-init literal (`= 0`, e.g. in a nested
+            // struct default `Inner { d: 0 }`) — a `mem` literal would not "fit" the
+            // type, so recognize it here. A *non-zero* literal is the deferred
+            // ROM-init. Any other value (e.g. a threaded `self.mem` / `.write(…)`
+            // result in the transition tail) falls through to the normal check,
+            // which confirms it is the same memory type.
+            if matches!(fty, FType::Mem { .. }) {
+                match &fi.value {
+                    Expr::Literal(0) => continue,
+                    Expr::Literal(_) => {
+                        return Err(sem(
+                            ctx,
+                            pos,
+                            "a memory must be zero-initialized (`= 0`); per-word / ROM init is \
+                             deferred (MEM1)",
+                        ))
+                    }
+                    _ => {}
+                }
+            }
             self.check_expr(&fi.value, env, Some(fty), ctx, pos)?;
         }
         if seen.len() != info.fields.len() {

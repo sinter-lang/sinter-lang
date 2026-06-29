@@ -189,6 +189,10 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
         lets: ordered_lets,
         out_drives,
         reg_updates,
+        // The legacy `module` surface has no memory primitive.
+        mems: Vec::new(),
+        mem_reads: Vec::new(),
+        mem_writes: Vec::new(),
     })
 }
 

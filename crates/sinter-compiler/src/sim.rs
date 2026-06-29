@@ -21,10 +21,12 @@ pub struct Simulator<'a> {
     module: &'a Module,
     /// Current register values, keyed by register name.
     state: HashMap<String, u64>,
+    /// Current memory contents, keyed by memory name (DESIGN §6.6/§9.6).
+    mem: HashMap<String, Vec<u64>>,
 }
 
 impl<'a> Simulator<'a> {
-    /// Create a simulator with registers at their reset values.
+    /// Create a simulator with registers and memories at their reset values.
     #[must_use]
     pub fn new(module: &'a Module) -> Self {
         let state = module
@@ -32,13 +34,21 @@ impl<'a> Simulator<'a> {
             .iter()
             .map(|r| (r.name.clone(), r.reset))
             .collect();
-        Simulator { module, state }
+        let mem = module
+            .mems
+            .iter()
+            .map(|m| (m.name.clone(), m.reset.clone()))
+            .collect();
+        Simulator { module, state, mem }
     }
 
-    /// Restore all registers to their reset values.
+    /// Restore all registers and memories to their reset values.
     pub fn reset(&mut self) {
         for r in &self.module.regs {
             self.state.insert(r.name.clone(), r.reset);
+        }
+        for m in &self.module.mems {
+            self.mem.insert(m.name.clone(), m.reset.clone());
         }
     }
 
@@ -74,7 +84,36 @@ impl<'a> Simulator<'a> {
         for (name, expr) in &self.module.reg_updates {
             next.insert(name.clone(), eval_expr(expr, &env));
         }
+
+        // Memory read ports: each read-data register latches the addressed word of
+        // the *pre-edge* array — so a same-cycle same-address read sees the OLD
+        // value (READ_FIRST), and the result appears one cycle later (`Static(1)`).
+        for r in &self.module.mem_reads {
+            let idx = eval_expr(&r.addr, &env) as usize;
+            let v = self
+                .mem
+                .get(&r.mem)
+                .and_then(|arr| arr.get(idx))
+                .copied()
+                .unwrap_or(0);
+            next.insert(r.rdata.clone(), v);
+        }
+
+        // Memory write ports: commit into a scratch clone of the pre-edge array
+        // (so reads above are unaffected), then swap it in atomically.
+        let mut mem_next = self.mem.clone();
+        for w in &self.module.mem_writes {
+            if eval_expr(&w.we, &env) != 0 {
+                let idx = eval_expr(&w.addr, &env) as usize;
+                let data = eval_expr(&w.data, &env);
+                if let Some(cell) = mem_next.get_mut(&w.mem).and_then(|arr| arr.get_mut(idx)) {
+                    *cell = data;
+                }
+            }
+        }
+
         self.state = next;
+        self.mem = mem_next;
 
         outputs
     }

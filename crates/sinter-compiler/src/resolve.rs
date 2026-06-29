@@ -530,6 +530,11 @@ impl Resolver {
                     self.rewrite_typeref(t, cur, src)?;
                 }
             }
+            TypeRef::Mem { elem, depth, .. } => {
+                self.rewrite_typeref(elem, cur, src)?;
+                // The depth is a const expression (like an array length).
+                self.rewrite_expr(depth, cur, &mut Locals::new(), src)?;
+            }
             TypeRef::Scalar(_) | TypeRef::Fixed { .. } => {}
         }
         Ok(())

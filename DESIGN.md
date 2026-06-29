@@ -499,9 +499,13 @@ explicit in the semantics.
 - **Arrays split into two distinct concepts** (do *not* unify):
   - **vector-of-registers** — `[T; N]`, all elements readable combinationally,
     lowers to flops/LUTs;
-  - **memory** — port-limited (N reads / M writes per cycle), lowers to BRAM.
-    **Port count is part of the memory type.** A read carries a latency
-    contract (see OPEN question below).
+  - **memory** — `mem<T, N>`, port-limited (N reads / M writes per cycle),
+    lowers to BRAM. **Port count is part of the memory type.** A read carries a
+    latency contract (§3.4). Accessed method-style on a struct-field instance
+    (`self.m.read(addr)` / `self.m.write(we, addr, data)`), never index-style —
+    `m[addr]` already means the combinational vector-of-registers read.
+    Realized for the **1R1W, `Static(1)` registered, `READ_FIRST`** slice in
+    §9.6 (MEM1).
 - **Fixed-capacity channels** — capacity is part of the type, enabling static
   reasoning about backpressure (cf. SpinalHDL `Stream`/`Flow`, Bluespec FIFOs).
   Decide explicitly whether channels *guarantee* anything about deadlock or
@@ -521,14 +525,18 @@ Width inference is ill-behaved for division and such ops are not single-cycle.
 **Forbid bare `/`**; force division through a multi-cycle primitive with a
 handshake (a `Bounded`-latency multiplex instance, §3.4).
 
-### 6.9 OPEN QUESTION (memory model)
+### 6.9 Memory model (RESOLVED — see §9.6)
 
-Treat a ported memory as one of the generator-style stateful instances **with a
-read-latency contract**, or as a **distinct primitive type**? (Recommendation:
-distinct primitive type whose interface *is* a latency-contracted stateful
-instance — so it composes under the §3.4 latency rules — but whose lowering is
-hard-wired to BRAM/`DP16KD`/`PDPW16KD`-style primitives rather than synthesized
-from generic state.)
+Resolved per the §6.9 recommendation: a memory is a **distinct primitive type**
+whose interface *is* a latency-contracted stateful instance (so it composes under
+the §3.4 latency rules), but whose lowering is hard-wired to
+BRAM/`DP16KD`/`PDPW16KD`-style primitives rather than synthesized from generic
+state. It is held in a struct field and is explicitly guarded **out** of the SROA
+flattening that turns a `[T; N]` vector-of-registers into N scalar leaf flops, so
+the two concepts stay distinct (§6.6). MEM1 (§9.6) realizes the 1R1W,
+single-clock, `Static(1)` registered-read, `READ_FIRST` slice via Yosys BRAM
+inference; explicit `DP16KD`/`PDPW16KD` instantiation, multi-port, dual-clock,
+and ROM-init are deferred.
 
 ### 6.10 Integer literals (SETTLED)
 
@@ -810,6 +818,78 @@ datum into a bubble; useful well beyond pipelines, so it is its own milestone);
 elastic `Stream<T>` (per-stage ready/valid + skid buffers); the `multiplex` color;
 and the §3.5 `Bounded`/`Dynamic` latency prover. Mid-pipeline `yield expr` taps
 are **cut** from the model (final-output-only).
+
+### 9.6 Memories — ACTIVE milestone (MEM1)
+
+The first **ported memory** primitive (DESIGN §6.6/§6.9): a `mem<T, N>` struct
+field that lowers to inferred block RAM, distinct from the `[T; N]`
+vector-of-registers. Settled MEM1 surface and semantics:
+
+- **`mem<T, N>`** is a struct field whose type is parsed/stored as a fully
+  general `MemType { elem, depth, read_ports, write_ports }` with the port counts
+  **fixed at 1R1W** in MEM1 (any other count rejected "not yet lowered"), so
+  `mem<T, N, R, W>` is purely additive later and no source breaks. `T` is a
+  scalar/erasable integer (width ≤ 64); `N` (depth) must be a power of two so the
+  address mask is exact in both backends.
+- **Method-style access** on the field, reusing `Expr::MethodCall`:
+  `self.m.read(addr)` and `self.m.write(we, addr, data)`. `.write` returns the
+  next-cycle memory value, threaded into the tail `Self { m: … }` exactly like a
+  sub-FSM step — so "a write-port is driven once per cycle" (§4.4) is the existing
+  single-driver / single-next-state rule, no new check. Index-style is rejected
+  (the surface has no statement-level assignment, and `m[addr]` is the `[T; N]`
+  read).
+- **Read latency = `Static(1)`, memory-owned register.** `.read(addr)` returns
+  the value addressed *last* cycle; the elaborator synthesizes a hidden read-data
+  register `<m>_rdata` whose next value reads the pre-edge array. This matches the
+  DP16KD output flop and is byte-identical to the pipeline's carry-across-a-cycle
+  move — it composes with the single-step transition rule with **no timing-model
+  change** (a consumer treats read-data like any registered value).
+- **`READ_FIRST` collision policy.** A read and a write to the same address in the
+  same cycle ⇒ the read returns the **old** value. This falls out of the
+  simulator's frozen-pre-edge-`env` model for free (the read register samples the
+  pre-edge array; the write commits to a scratch clone), needs no comparator, and
+  is the Yosys/DP16KD inference default — so sim and the inferred-BRAM Verilog
+  agree bit-for-bit (§7.4) by construction.
+- **Zero-init contents** (a sim/Verilator contract). Every word resets to `0`; the
+  Rust sim seeds the array and the emitted SV initializes it (so Verilator does
+  not `X` on a read-before-write). On real silicon the array has no async content
+  reset — hardware relies on the read register's reset + write-before-read; only
+  `<m>_rdata` resets. The array itself is opaque state (never exposed as a `_q`
+  observation port); the oracle diffs the auto-exposed `<m>_rdata_q` output.
+- **Verilog.** Emit `logic [W-1:0] <m> [0:N-1];`; the read-data register's next
+  value is the combinational array read (`<m>_rdata_next = <m>[raddr];` in
+  `always_comb`, flopped by the normal async-reset state block, giving the
+  registered `Static(1)` read), and the write is a **separate** `always_ff
+  @(posedge clk)` (`if (we) <m>[waddr] <= wdata;`) — kept out of the async-reset
+  block so BRAM inference survives. Only `<m>_rdata` resets. MEM1 relies on Yosys
+  inference (no explicit primitive).
+- **Reset / write contract.** Like real block RAM the **array has no content
+  reset** — a write commits whenever `we` is asserted, *including during reset*.
+  The simulator has no reset cycle (it begins post-reset) and the oracle holds
+  inputs at `0` during the reset pulse, so the two agree; the contract is that a
+  caller holds **`we = 0` while the design is in reset**. (A synchronous `rst_n`
+  gate on the write trips Verilator `SYNCASYNCNET`; a reset-release flag would drop
+  the first post-reset write and break the oracle — so the array is simply
+  unreset, matching the hardware.)
+- **Effect recording / single-driver.** The `1R1W` budget is enforced directly
+  (at most one `.read` and one `.write` per memory). The read/write effect is
+  recorded at the **call site** during elaboration (not at the tail), so a
+  `.read`/`.write` whose result is discarded still takes effect / consumes the
+  port — thread the result into `Self { <m>: … }` (the idiomatic form). Tying the
+  effect to the tail threading (so a dropped effect is a clean error) is a deferred
+  refinement; reads/writes inside an `if`/`match` arm are rejected (a write is
+  gated by its `we` argument, not control flow).
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **MEM1** | ✅ Single-clock **1R1W** synchronous `mem<T, N>` (scalar `T`, power-of-two `N`): `Static(1)` memory-owned registered read, `READ_FIRST` collision, zero-init contents. New `ir::Mem` (guarded out of SROA) + read-data register + write phase; sim/Verilog both commit from the single pre-edge `env`. Through the sim↔Verilog oracle (a delay-line / small-RAM example). | a write+read RAM example round-trips through the oracle bit-for-bit (accounting for the 1-cycle read latency) |
+
+Deferred beyond MEM1: multi-port / true-dual-port (`R`/`W` ≠ 1), read-during-write
+*modes* (`WRITE_FIRST`/`NO_CHANGE`), byte-enables, dual-clock memory (the §6.7
+phantom-domain interaction), `Bounded`/`Dynamic` read latencies, 0-cycle
+LUTRAM/distributed reads (behind an explicit annotation), explicit
+`DP16KD`/`PDPW16KD` instantiation (wide / asymmetric / true-dual-port),
+ROM/init-from-data, and non-scalar (struct/enum/fixed-point) element types.
 
 ---
 

@@ -35,8 +35,10 @@ pub fn emit_module(m: &Module) -> String {
 
     emit_ports(&mut out, m);
     emit_decls(&mut out, m);
+    emit_mem_init(&mut out, m);
     emit_comb(&mut out, m);
     emit_seq(&mut out, m);
+    emit_mem_writes(&mut out, m);
 
     let _ = writeln!(out, "endmodule");
     let _ = writeln!(out);
@@ -94,6 +96,44 @@ fn emit_decls(out: &mut String, m: &Module) {
             let _ = writeln!(out, "    logic {} {};", net_type(l.ty), l.name);
         }
     }
+    if !m.mems.is_empty() {
+        let _ = writeln!(out, "    // Block-RAM memories (DESIGN §6.6/§9.6)");
+        for mem in &m.mems {
+            // `logic [W-1:0] name [0:depth-1];` — an indexed array; Yosys infers
+            // block RAM, kept out of the async-reset block so inference survives.
+            let _ = writeln!(
+                out,
+                "    logic {} {} [0:{}];",
+                net_type(mem.elem_ty),
+                mem.name,
+                mem.depth - 1
+            );
+        }
+    }
+}
+
+/// Zero-initialize each memory array. The array has no async content reset (that
+/// would block BRAM inference), so this `initial` block is the sim/Verilator
+/// zero-init contract (DESIGN §9.6); on real silicon, rely on write-before-read.
+/// Required because the co-sim runs with `--x-initial unique`.
+fn emit_mem_init(out: &mut String, m: &Module) {
+    for mem in &m.mems {
+        let w = mem.elem_ty.width();
+        let _ = writeln!(
+            out,
+            "    // Zero-initialize {} (sim/Verilator contract)",
+            mem.name
+        );
+        let _ = writeln!(out, "    initial begin");
+        let _ = writeln!(
+            out,
+            "        for (int {0}_i = 0; {0}_i < {1}; {0}_i = {0}_i + 1) begin",
+            mem.name, mem.depth
+        );
+        let _ = writeln!(out, "            {}[{}_i] = {w}'b0;", mem.name, mem.name);
+        let _ = writeln!(out, "        end");
+        let _ = writeln!(out, "    end");
+    }
 }
 
 fn emit_comb(out: &mut String, m: &Module) {
@@ -105,10 +145,49 @@ fn emit_comb(out: &mut String, m: &Module) {
     for (name, e) in &m.reg_updates {
         let _ = writeln!(out, "        {name}_next = {};", expr(e));
     }
+    // Memory read ports: the read-data register's next value is the combinational
+    // array read; flopping it (in the sequential block) makes it the registered,
+    // `Static(1)`-latency read. Reads the pre-edge array (READ_FIRST).
+    for r in &m.mem_reads {
+        let _ = writeln!(
+            out,
+            "        {}_next = {}[{}];",
+            r.rdata,
+            r.mem,
+            expr(&r.addr)
+        );
+    }
     for (name, e) in &m.out_drives {
         let _ = writeln!(out, "        {name} = {};", expr(e));
     }
     let _ = writeln!(out, "    end");
+}
+
+/// Emit the memory write ports: one `always_ff` per write, kept separate from
+/// the async-reset state block so block-RAM inference survives. Non-blocking `<=`
+/// means the read in `always_comb` sees the pre-edge contents (READ_FIRST). Like
+/// real block RAM the array has **no content reset** (only the read-data register
+/// resets), so a write commits whenever `we` is asserted — including during reset.
+/// The simulator has no reset cycle (it begins post-reset), and the oracle holds
+/// inputs at `0` during the reset pulse, so they agree; the MEM1 contract is that
+/// a caller holds `we = 0` while the design is in reset (DESIGN §9.6). (Gating the
+/// write with `rst_n` would either trip Verilator `SYNCASYNCNET` or, via a
+/// reset-release flag, drop the first post-reset write and break the oracle.)
+fn emit_mem_writes(out: &mut String, m: &Module) {
+    for w in &m.mem_writes {
+        let _ = writeln!(out, "    // Memory write port: {}", w.mem);
+        let _ = writeln!(out, "    always_ff @(posedge clk) begin");
+        let _ = writeln!(out, "        if ({}) begin", expr(&w.we));
+        let _ = writeln!(
+            out,
+            "            {}[{}] <= {};",
+            w.mem,
+            expr(&w.addr),
+            expr(&w.data)
+        );
+        let _ = writeln!(out, "        end");
+        let _ = writeln!(out, "    end");
+    }
 }
 
 fn emit_seq(out: &mut String, m: &Module) {

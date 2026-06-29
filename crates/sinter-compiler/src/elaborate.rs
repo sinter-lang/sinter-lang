@@ -27,6 +27,7 @@
 //! *widening* casts (all F4 — `wrap` casts must narrow today); the pin map (F5);
 //! multiple clock domains.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use sinter_syntax::ast::{
@@ -60,6 +61,13 @@ enum Ty {
     Struct(String),
     Array(Box<Ty>, usize),
     Tuple(Vec<Ty>),
+    /// A ported memory `mem<T, N>` (DESIGN §6.6/§9.6): an opaque block-RAM array,
+    /// never SROA-flattened. `addr_bits = log2(depth)`.
+    Mem {
+        elem: Box<Ty>,
+        depth: usize,
+        addr_bits: u32,
+    },
 }
 
 impl Ty {
@@ -107,6 +115,14 @@ enum Val {
     Struct(String, Vec<(String, Val)>),
     Tuple(Vec<Val>),
     Array(Vec<Val>),
+    /// A memory handle: the flattened mem name plus its element type and address
+    /// width. Carried by `self.<field>`; `.read`/`.write` resolve against it. It
+    /// is opaque — it never flattens to a scalar register (DESIGN §9.6).
+    Mem {
+        name: String,
+        elem: Box<Ty>,
+        addr_bits: u32,
+    },
 }
 
 /// Symbol tables holding references into the parsed program.
@@ -135,6 +151,8 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         ctx: state_ty.to_string(),
         tables,
         consts: const_values(program)?,
+        mem: RefCell::new(MemAccum::default()),
+        branch_depth: std::cell::Cell::new(0),
     };
     el.build(state_ty, tick, &domain).map(Some)
 }
@@ -200,6 +218,20 @@ struct Elaborator<'p> {
     ctx: String,
     tables: Tables<'p>,
     consts: HashMap<String, (u64, Type)>,
+    /// Memory read/write ports + their read-data registers, discovered while
+    /// lowering `.read`/`.write` calls. `branch_depth` tracks lowering inside an
+    /// `if`/`match` arm so a (necessarily unconditional) memory access nested in a
+    /// branch is rejected rather than silently committed (DESIGN §9.6).
+    mem: RefCell<MemAccum>,
+    branch_depth: std::cell::Cell<usize>,
+}
+
+/// Memory side effects accumulated during body lowering.
+#[derive(Default)]
+struct MemAccum {
+    reads: Vec<ir::MemRead>,
+    writes: Vec<ir::MemWrite>,
+    rdata_regs: Vec<ir::Reg>,
 }
 
 impl Elaborator<'_> {
@@ -231,6 +263,11 @@ impl Elaborator<'_> {
             });
         }
 
+        // Memories: the state struct's `mem` fields, held as opaque arrays (never
+        // SROA-flattened). Their read-data registers are added after lowering.
+        let mut mems = Vec::new();
+        self.collect_mems(&state, "", &mut mems);
+
         // Environment: `self` (current registers) and inputs (flattened params).
         let mut env: Env = HashMap::new();
         env.insert("self".to_string(), self.idents_val(&state, ""));
@@ -250,6 +287,21 @@ impl Elaborator<'_> {
                             *pos,
                             format!(
                                 "input `{pname}` collides with the reserved clock/reset port; \
+                                 rename the parameter or field"
+                            ),
+                        ));
+                    }
+                    // Inputs share the flat name space with registers (a port and a
+                    // `logic` of the same name would double-declare in Verilog and
+                    // be silently shadowed in the sim). Reserve each input leaf so a
+                    // clash with a state field — or a synthesized `<mem>_rdata`
+                    // register added below — is rejected up front.
+                    if seen.insert(pname.clone(), ()).is_some() {
+                        return Err(err(
+                            &self.ctx,
+                            *pos,
+                            format!(
+                                "input `{pname}` collides with a state field or another input; \
                                  rename the parameter or field"
                             ),
                         ));
@@ -304,7 +356,14 @@ impl Elaborator<'_> {
             }
         };
 
-        // Register next-state from the returned state value.
+        // A `mem` state field must be passed through to the same field unchanged
+        // (or via its own `.write`); cross-assigning one memory to another field
+        // would silently mis-route writes (single mem in MEM1, but guard anyway).
+        self.check_mem_passthrough(&next_state, "", tick.body.pos)?;
+
+        // Register next-state from the returned state value. `regs` is still just
+        // the scalar leaves here (read-data registers are appended below and are
+        // driven by their `MemRead`, not by the tail struct).
         let mut next = Vec::new();
         flatten_val(&next_state, "", &mut next);
         let next_by_name: HashMap<_, _> = next.into_iter().collect();
@@ -318,6 +377,24 @@ impl Elaborator<'_> {
                 )
             })?;
             reg_updates.push((r.name.clone(), value));
+        }
+
+        // Memory ports discovered during lowering: their read-data registers join
+        // `regs` (state + observed, reset 0), with next-state driven by the read.
+        let accum = self.mem.take();
+        for rd in &accum.rdata_regs {
+            if seen.insert(rd.name.clone(), ()).is_some() {
+                return Err(err(
+                    &self.ctx,
+                    tick.body.pos,
+                    format!(
+                        "memory read-data register `{}` collides with a state field or input port; \
+                         rename the field, memory, or parameter",
+                        rd.name
+                    ),
+                ));
+            }
+            regs.push(rd.clone());
         }
 
         // Observation outputs: every register, plus any explicit outputs.
@@ -352,7 +429,41 @@ impl Elaborator<'_> {
             lets: Vec::new(),
             out_drives,
             reg_updates,
+            mems,
+            mem_reads: accum.reads,
+            mem_writes: accum.writes,
         })
+    }
+
+    /// Verify every `mem` leaf of the next-state struct is the *same* memory as
+    /// the field it is assigned to (its handle name equals its flattened path), so
+    /// a write can never be silently re-routed to a different field.
+    fn check_mem_passthrough(&self, v: &Val, path: &str, pos: Pos) -> Result<(), CompileError> {
+        match v {
+            Val::Mem { name, .. } => {
+                if name != path {
+                    return Err(err(
+                        &self.ctx,
+                        pos,
+                        format!(
+                            "memory field `{path}` is assigned a different memory (`{name}`); a \
+                             memory must be passed through unchanged or via its own `.write`"
+                        ),
+                    ));
+                }
+                Ok(())
+            }
+            Val::Struct(_, fields) => fields
+                .iter()
+                .try_for_each(|(f, val)| self.check_mem_passthrough(val, &join(path, f), pos)),
+            Val::Array(items) => items.iter().enumerate().try_for_each(|(i, val)| {
+                self.check_mem_passthrough(val, &join(path, &i.to_string()), pos)
+            }),
+            Val::Tuple(items) => items.iter().enumerate().try_for_each(|(i, val)| {
+                self.check_mem_passthrough(val, &join(path, &i.to_string()), pos)
+            }),
+            Val::Scalar(..) | Val::Enum(..) => Ok(()),
+        }
     }
 
     // --- expression lowering ----------------------------------------------
@@ -454,9 +565,14 @@ impl Elaborator<'_> {
             }
             Expr::If { cond, then, els } => {
                 let c = self.lower_scalar(env, cond, Some(Type::Uint(1)), depth, pos)?;
-                let t = self.lower(env, then, expected, depth, pos)?;
-                let e = self.lower(env, els, expected, depth, pos)?;
-                self.mux(&c, &t, &e, pos)
+                // The arms are muxed, so a memory access inside one would be
+                // committed unconditionally — `branch_depth` lets `lower_mem_method`
+                // reject it (the `cond` itself is unconditional, so it is not gated).
+                self.branch_depth.set(self.branch_depth.get() + 1);
+                let t = self.lower(env, then, expected, depth, pos);
+                let e = self.lower(env, els, expected, depth, pos);
+                self.branch_depth.set(self.branch_depth.get() - 1);
+                self.mux(&c, &t?, &e?, pos)
             }
             Expr::Match { scrutinee, arms } => {
                 self.lower_match(env, scrutinee, arms, expected, depth, pos)
@@ -745,6 +861,14 @@ impl Elaborator<'_> {
         pos: Pos,
     ) -> Result<Val, CompileError> {
         let recv = self.lower(env, receiver, None, depth, pos)?;
+        if let Val::Mem {
+            name,
+            elem,
+            addr_bits,
+        } = recv
+        {
+            return self.lower_mem_method(env, &name, &elem, addr_bits, method, args, depth, pos);
+        }
         let type_name = match &recv {
             Val::Struct(s, _) => s.clone(),
             Val::Enum(s, _) => s.clone(),
@@ -763,6 +887,122 @@ impl Elaborator<'_> {
             })?;
         let inner = self.bind_params(env, Some(recv), &m.params, args, depth, pos)?;
         self.lower_body(&inner, m, depth + 1)
+    }
+
+    /// Lower a built-in memory method (DESIGN §6.6/§9.6). `read(addr)` returns the
+    /// memory-owned read-data register (last cycle's addressed value — `Static(1)`
+    /// latency) and records a `MemRead`; `write(we, addr, data)` records a
+    /// `MemWrite` and returns the same memory handle to thread into the tail. Both
+    /// must be unconditional (rejected inside an `if`/`match` arm).
+    #[allow(clippy::too_many_arguments)]
+    fn lower_mem_method(
+        &self,
+        env: &Env,
+        mem_name: &str,
+        elem: &Ty,
+        addr_bits: u32,
+        method: &str,
+        args: &[Expr],
+        depth: usize,
+        pos: Pos,
+    ) -> Result<Val, CompileError> {
+        if self.branch_depth.get() > 0 {
+            return Err(err(
+                &self.ctx,
+                pos,
+                "a memory `read`/`write` must be unconditional (at the top level of the \
+                 transition); gate a write with its `we` argument rather than an `if`/`match` \
+                 (MEM1)",
+            ));
+        }
+        let elem_ty = elem
+            .scalar()
+            .ok_or_else(|| err(&self.ctx, pos, "memory element is not a scalar"))?;
+        match method {
+            "read" => {
+                let addr = self.mem_addr(env, &args[0], addr_bits, depth, pos)?;
+                let rdata = format!("{mem_name}_rdata");
+                let mut m = self.mem.borrow_mut();
+                if m.reads.iter().any(|r| r.mem == mem_name) {
+                    return Err(err(
+                        &self.ctx,
+                        pos,
+                        format!("memory `{mem_name}` is read more than once (MEM1 is 1R1W)"),
+                    ));
+                }
+                m.reads.push(ir::MemRead {
+                    rdata: rdata.clone(),
+                    mem: mem_name.to_string(),
+                    addr,
+                });
+                m.rdata_regs.push(ir::Reg {
+                    name: rdata.clone(),
+                    ty: elem_ty,
+                    reset: 0,
+                });
+                Ok(Val::Scalar(
+                    typed(ir::ExprKind::Ident(rdata), elem_ty),
+                    elem.fbits(),
+                ))
+            }
+            "write" => {
+                let we = self.lower_scalar(env, &args[0], Some(Type::Uint(1)), depth, pos)?;
+                let addr = self.mem_addr(env, &args[1], addr_bits, depth, pos)?;
+                let data_val = self.lower(env, &args[2], Some(elem), depth, pos)?;
+                let (data, _) = scalar_parts(&data_val, &self.ctx, pos)?;
+                let mut m = self.mem.borrow_mut();
+                if m.writes.iter().any(|w| w.mem == mem_name) {
+                    return Err(err(
+                        &self.ctx,
+                        pos,
+                        format!("memory `{mem_name}` is written more than once (MEM1 is 1R1W)"),
+                    ));
+                }
+                m.writes.push(ir::MemWrite {
+                    mem: mem_name.to_string(),
+                    we,
+                    addr,
+                    data,
+                });
+                drop(m);
+                // Return the same handle so the tail `Self { mem: … }` rebinds it.
+                Ok(Val::Mem {
+                    name: mem_name.to_string(),
+                    elem: Box::new(elem.clone()),
+                    addr_bits,
+                })
+            }
+            _ => Err(err(
+                &self.ctx,
+                pos,
+                format!("a memory has no method `{method}` (only `read`/`write` in MEM1)"),
+            )),
+        }
+    }
+
+    /// Lower a memory address: a scalar expression masked (a `Wrap` cast) to the
+    /// memory's `addr_bits`, so both backends index in range identically.
+    fn mem_addr(
+        &self,
+        env: &Env,
+        e: &Expr,
+        addr_bits: u32,
+        depth: usize,
+        pos: Pos,
+    ) -> Result<ir::Expr, CompileError> {
+        let a = self.lower_scalar(env, e, None, depth, pos)?;
+        let to = Type::Uint(addr_bits);
+        if a.ty == to {
+            Ok(a)
+        } else {
+            Ok(typed(
+                ir::ExprKind::Cast {
+                    expr: Box::new(a),
+                    mode: CastMode::Wrap,
+                },
+                to,
+            ))
+        }
     }
 
     /// Build the fresh environment for an inlined function/method body: `self`
@@ -846,8 +1086,12 @@ impl Elaborator<'_> {
         for arm in arms {
             let mut local = env.clone();
             let cond = self.arm_cond(&scrut, &arm.pattern, &mut local, pos)?;
-            let body = self.lower(&local, &arm.body, expected, depth, pos)?;
-            cases.push((cond, body));
+            // Arm bodies are muxed: a memory access inside one is conditional and
+            // therefore rejected (see the `if` arm).
+            self.branch_depth.set(self.branch_depth.get() + 1);
+            let body = self.lower(&local, &arm.body, expected, depth, pos);
+            self.branch_depth.set(self.branch_depth.get() - 1);
+            cases.push((cond, body?));
         }
         let mut acc: Option<Val> = None;
         for (cond, body) in cases.into_iter().rev() {
@@ -924,6 +1168,24 @@ impl Elaborator<'_> {
                     .map(|(x, y)| self.mux(cond, x, y, pos))
                     .collect::<Result<_, _>>()?,
             )),
+            // A memory is opaque state — it cannot be selected by a mux. Both
+            // branches threading the *same* memory is a no-op (return the handle);
+            // two different memories cannot be muxed (there is one physical array).
+            (Val::Mem { name: a, .. }, Val::Mem { name: b, .. }) => {
+                if a == b {
+                    Ok(t.clone())
+                } else {
+                    Err(err(
+                        &self.ctx,
+                        pos,
+                        format!(
+                            "cannot select between two different memories (`{a}` vs `{b}`) with an \
+                             `if`/`match`; thread a memory through unchanged and gate its `.write` \
+                             with the `we` argument (MEM1)"
+                        ),
+                    ))
+                }
+            }
             _ => Err(err(&self.ctx, pos, "branches have different shapes")),
         }
     }
@@ -991,6 +1253,21 @@ impl Elaborator<'_> {
                     .map(|t| self.resolve(t, pos))
                     .collect::<Result<_, _>>()?,
             )),
+            TypeRef::Mem { elem, depth, .. } => {
+                let et = self.resolve(elem, pos)?;
+                if et.scalar().is_none() {
+                    return Err(err(&self.ctx, pos, "a memory element must be a scalar"));
+                }
+                let n = self.const_index(depth, pos)?;
+                // The checker (`functional`) already enforces a power-of-two depth
+                // ≥ 2; `trailing_zeros` is then exactly `log2(depth)`.
+                let addr_bits = (n as u64).trailing_zeros();
+                Ok(Ty::Mem {
+                    elem: Box::new(et),
+                    depth: n,
+                    addr_bits,
+                })
+            }
         }
     }
 
@@ -1129,6 +1406,19 @@ impl Elaborator<'_> {
                 Ok(Val::Struct(name.clone(), out))
             }
             (Expr::Path(segs), Ty::Enum(..)) => self.lower_path(segs, pos),
+            // A memory's reset is its zero-initialized array (handled by
+            // `collect_mems`); the field default `= 0` yields an opaque handle
+            // that contributes no scalar reset leaf (the checker enforces `= 0`).
+            (
+                _,
+                Ty::Mem {
+                    elem, addr_bits, ..
+                },
+            ) => Ok(Val::Mem {
+                name: String::new(),
+                elem: elem.clone(),
+                addr_bits: *addr_bits,
+            }),
             (_, _) => {
                 let t = ty
                     .scalar()
@@ -1188,6 +1478,50 @@ impl Elaborator<'_> {
                     self.flatten_ty(t, &join(path, &i.to_string()), out);
                 }
             }
+            // A memory is not a scalar register: its array is collected by
+            // `collect_mems`, and its read-data register is added when a `.read`
+            // is lowered. So it contributes no leaf here.
+            Ty::Mem { .. } => {}
+        }
+    }
+
+    /// Collect the block-RAM arrays of a (possibly nested) state type, with each
+    /// `mem` field named by its flattened path (mirrors `flatten_ty`).
+    fn collect_mems(&self, ty: &Ty, path: &str, out: &mut Vec<ir::Mem>) {
+        match ty {
+            Ty::Struct(name) => {
+                if let Ok(fields) = self.struct_fields(name, Pos::default()) {
+                    for (f, fty) in fields {
+                        self.collect_mems(&fty, &join(path, &f), out);
+                    }
+                }
+            }
+            Ty::Array(et, n) => {
+                for i in 0..*n {
+                    self.collect_mems(et, &join(path, &i.to_string()), out);
+                }
+            }
+            Ty::Tuple(ts) => {
+                for (i, t) in ts.iter().enumerate() {
+                    self.collect_mems(t, &join(path, &i.to_string()), out);
+                }
+            }
+            Ty::Mem {
+                elem,
+                depth,
+                addr_bits,
+            } => {
+                if let Some(elem_ty) = elem.scalar() {
+                    out.push(ir::Mem {
+                        name: path.to_string(),
+                        elem_ty,
+                        depth: *depth,
+                        addr_bits: *addr_bits,
+                        reset: vec![0; *depth],
+                    });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1234,6 +1568,13 @@ impl Elaborator<'_> {
                     .map(|(i, t)| self.idents_val(t, &join(path, &i.to_string())))
                     .collect(),
             ),
+            Ty::Mem {
+                elem, addr_bits, ..
+            } => Val::Mem {
+                name: path.to_string(),
+                elem: elem.clone(),
+                addr_bits: *addr_bits,
+            },
         }
     }
 
@@ -1285,6 +1626,9 @@ fn flatten_val(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr)>) {
                 flatten_val(val, &join(path, &i.to_string()), out);
             }
         }
+        // A memory is opaque: its next-state is its `MemWrite`, not a scalar
+        // register update, so it contributes no leaf.
+        Val::Mem { .. } => {}
     }
 }
 
@@ -1323,8 +1667,9 @@ fn val_ty(v: &Val) -> Ty {
         },
         Val::Enum(n, e) => Ty::Enum(n.clone(), e.ty.width()),
         Val::Struct(n, _) => Ty::Struct(n.clone()),
-        // Aggregates are never arithmetic operands (the checker rejects them).
-        Val::Tuple(_) | Val::Array(_) => Ty::Scalar(Type::Uint(1)),
+        // Aggregates and memories are never arithmetic operands (rejected by the
+        // checker); the placeholder is unreachable in a well-typed program.
+        Val::Tuple(_) | Val::Array(_) | Val::Mem { .. } => Ty::Scalar(Type::Uint(1)),
     }
 }
 
