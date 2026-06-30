@@ -1,7 +1,8 @@
 //! MEM1 memory tests (DESIGN §6.6/§6.9/§9.6): the lowered shape (one opaque
-//! array + a read-data register, never SROA-flattened), the `Static(1)`
-//! READ_FIRST timing, address masking, and the M1 rejections. The sim↔Verilog
-//! oracle is in `conformance.rs` (the `fn_ram` example).
+//! array + a read-data register, never SROA-flattened), the `value()`/`next()`
+//! surface, the `Static(1)` READ_FIRST timing, address masking, and the M1
+//! rejections. The sim↔Verilog oracle is in `conformance.rs` (the `fn_ram`
+//! example).
 
 use std::collections::HashMap;
 
@@ -21,6 +22,20 @@ fn compile_err(src: &str, needle: &str) {
     }
 }
 
+/// Step `fn_ram` (inputs `we`, `waddr`, `wdata`, `raddr`), returning `out`.
+fn ram_step(sim: &mut Simulator, we: u64, waddr: u64, wdata: u64, raddr: u64) -> u64 {
+    sim.step(
+        &[
+            ("we".to_string(), we),
+            ("waddr".to_string(), waddr),
+            ("wdata".to_string(), wdata),
+            ("raddr".to_string(), raddr),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>(),
+    )["out"]
+}
+
 #[test]
 fn ram_lowers_to_one_opaque_array_plus_read_register() {
     let design = compile_str(include_str!("../../../examples/fn_ram.snt")).expect("compile");
@@ -37,42 +52,40 @@ fn ram_lowers_to_one_opaque_array_plus_read_register() {
     assert_eq!(m.regs.len(), 1, "only the read-data register: {:?}", m.regs);
     assert_eq!(m.regs[0].name, "data_rdata");
     assert_eq!(m.regs[0].reset, 0);
-    // One read port (driving the read-data reg) and one write port.
+    // One read port (drives the read-data reg) and one write port, both derived
+    // from the threaded `next()`.
     assert_eq!(m.mem_reads.len(), 1);
     assert_eq!(m.mem_reads[0].rdata, "data_rdata");
     assert_eq!(m.mem_writes.len(), 1);
-    // The read-data register is NOT a normal reg_update (its next is the read).
-    assert!(
-        !m.reg_updates.iter().any(|(n, _)| n == "data_rdata"),
-        "read-data register is driven by the read, not reg_updates"
-    );
+    // The read-data register is driven by the read, not a normal reg_update.
+    assert!(!m.reg_updates.iter().any(|(n, _)| n == "data_rdata"));
 }
 
 #[test]
 fn read_has_static1_latency_and_read_first() {
     let design = compile_str(include_str!("../../../examples/fn_ram.snt")).expect("compile");
     let mut sim = Simulator::new(&design.modules[0]);
-    let step = |sim: &mut Simulator, we: u64, waddr: u64, wdata: u64, raddr: u64| {
-        sim.step(
-            &[
-                ("we".to_string(), we),
-                ("waddr".to_string(), waddr),
-                ("wdata".to_string(), wdata),
-                ("raddr".to_string(), raddr),
-            ]
-            .into_iter()
-            .collect::<HashMap<_, _>>(),
-        )["out"]
-    };
     // Write 99 to addr 5.
-    assert_eq!(step(&mut sim, 1, 5, 99, 0), 0, "fill: read-data still 0");
+    assert_eq!(
+        ram_step(&mut sim, 1, 5, 99, 0),
+        0,
+        "fill: read-data still 0"
+    );
     // Same cycle: write 77 to addr 5 AND read addr 5 -> the read sees the OLD 99
     // (READ_FIRST), surfacing one cycle later.
-    assert_eq!(step(&mut sim, 1, 5, 77, 5), 0, "read-data is last read (0)");
-    assert_eq!(step(&mut sim, 0, 0, 0, 5), 99, "READ_FIRST: old value 99");
+    assert_eq!(
+        ram_step(&mut sim, 1, 5, 77, 5),
+        0,
+        "read-data is last read (0)"
+    );
+    assert_eq!(
+        ram_step(&mut sim, 0, 0, 0, 5),
+        99,
+        "READ_FIRST: old value 99"
+    );
     // The 77 written that same cycle is now visible on a fresh read.
     assert_eq!(
-        step(&mut sim, 0, 0, 0, 5),
+        ram_step(&mut sim, 0, 0, 0, 5),
         77,
         "new value 77 after the write"
     );
@@ -86,14 +99,14 @@ fn wider_address_is_masked_to_the_depth() {
         impl M {
             #[clock(domain = sys)]
             fn tick(self, we: u1, waddr: u8, wdata: u8, raddr: u8) -> (M, u8) {
-                let rd = self.d.read(raddr);
-                (M { d: self.d.write(we, waddr, wdata) }, rd)
+                let rd = self.d.value();
+                (M { d: self.d.next(raddr, we, waddr, wdata) }, rd)
             }
         }
     ";
     let design = compile_str(src).expect("compile");
     let mut sim = Simulator::new(&design.modules[0]);
-    let step = |sim: &mut Simulator, we: u64, waddr: u64, wdata: u64, raddr: u64| {
+    let step = |sim: &mut Simulator, we, waddr, wdata, raddr| {
         sim.step(
             &[
                 ("we".to_string(), we),
@@ -105,15 +118,53 @@ fn wider_address_is_masked_to_the_depth() {
             .collect::<HashMap<_, _>>(),
         )["out"]
     };
-    // Write 50 to addr 6 (== index 2).
-    step(&mut sim, 1, 6, 50, 0);
-    // Read addr 10 (== index 2) -> after the 1-cycle latency, returns 50.
-    step(&mut sim, 0, 0, 0, 10);
+    step(&mut sim, 1, 6, 50, 0); // write 50 to addr 6 (== index 2)
+    step(&mut sim, 0, 0, 0, 10); // read addr 10 (== index 2)
     assert_eq!(
         step(&mut sim, 0, 0, 0, 0),
         50,
         "addr 6 and 10 alias to index 2"
     );
+}
+
+#[test]
+fn discarded_next_commits_no_effect() {
+    // The transition is committed only by threading `next()`'s result into `Self`.
+    // A `next()` whose result is dropped (here `self.d` is threaded unchanged)
+    // commits no write and schedules no read — the threading is load-bearing.
+    let design = compile_str(
+        "struct M { d: mem<u8, 4> = 0 } \
+         impl M { #[clock(domain = sys)] fn tick(self, a: u2, v: u8) -> M { \
+            let _drop = self.d.next(a, 1, a, v); M { d: self.d } } }",
+    )
+    .expect("compile");
+    let m = &design.modules[0];
+    assert!(
+        m.mem_writes.is_empty(),
+        "a discarded next() must commit no write"
+    );
+    assert!(
+        m.mem_reads.is_empty(),
+        "a discarded next() schedules no read"
+    );
+}
+
+#[test]
+fn value_is_a_pure_read_usable_more_than_once() {
+    // `value()` is a pure accessor (it does not consume the single read port), so
+    // it may be read any number of times.
+    let src = "
+        struct M { d: mem<u8, 4> = 0 }
+        impl M {
+            #[clock(domain = sys)]
+            fn tick(self, a: u2) -> (M, u9) {
+                let x = self.d.value();
+                let y = self.d.value();
+                (M { d: self.d.next(a, 0, 0, 0) }, (x + y) as u9 wrap)
+            }
+        }
+    ";
+    compile_str(src).expect("value() may be read multiple times");
 }
 
 // --- MEM1 rejections -------------------------------------------------------
@@ -148,45 +199,34 @@ fn non_zero_memory_init_is_rejected() {
 }
 
 #[test]
-fn more_than_one_read_port_is_rejected() {
+fn memory_as_a_return_type_parses_then_is_rejected_semantically() {
+    // The `>` of `mem<…>` must not be swallowed by the expression grammar: a
+    // memory return type PARSES (then the checker rejects it cleanly).
     compile_err(
-        "struct R { d: mem<u8, 4> = 0 } \
-         impl R { #[clock(domain = sys)] fn tick(self, a: u2, b: u2) -> (R, u8) { \
-            let x = self.d.read(a); let y = self.d.read(b); (R { d: self.d }, (x + y) as u8 wrap) } }",
-        "read more than once",
+        "fn f(a: u8) -> mem<u8, 4> { 0 }",
+        "can only be a struct field",
     );
 }
 
 #[test]
-fn more_than_one_write_port_is_rejected() {
-    compile_err(
-        "struct R { d: mem<u8, 4> = 0 } \
-         impl R { #[clock(domain = sys)] fn tick(self, a: u2, v: u8) -> R { \
-            let d1 = self.d.write(1, a, v); let d2 = d1.write(1, a, v); R { d: d2 } } }",
-        "written more than once",
-    );
-}
-
-#[test]
-fn conditional_memory_access_is_rejected() {
+fn conditional_next_is_rejected() {
+    // `next()` returns a handle that is threaded into the next-state, so it cannot
+    // be selected by an `if`/`match` — gate the write with `we` instead.
     compile_err(
         "struct R { d: mem<u8, 4> = 0 } \
          impl R { #[clock(domain = sys)] fn tick(self, c: u1, a: u2, v: u8) -> R { \
-            let d = if c == 1 { self.d.write(1, a, v) } else { self.d }; R { d: d } } }",
+            let d = if c == 1 { self.d.next(a, 1, a, v) } else { self.d }; R { d: d } } }",
         "must be unconditional",
     );
 }
 
-// --- review fixes ----------------------------------------------------------
-
 #[test]
 fn read_data_register_colliding_with_an_input_is_rejected() {
-    // The synthesized `<mem>_rdata` register must not clash with an input port
-    // (it would double-declare in Verilog and be shadowed in the sim).
+    // The synthesized `<mem>_rdata` register must not clash with an input port.
     compile_err(
         "struct R { data: mem<u8, 4> = 0 } \
          impl R { #[clock(domain = sys)] fn tick(self, data_rdata: u8, a: u2) -> (R, u8) { \
-            let rd = self.data.read(a); (R { data: self.data }, rd) } }",
+            let rd = self.data.value(); (R { data: self.data.next(a, 0, 0, 0) }, rd) } }",
         "collides",
     );
 }
@@ -200,7 +240,7 @@ fn the_same_memory_through_both_if_branches_compiles() {
         impl R {
             #[clock(domain = sys)]
             fn tick(self, c: u1, a: u2) -> (R, u8) {
-                let rd = self.d.read(a);
+                let rd = self.d.value();
                 (R { d: if c == 1 { self.d } else { self.d } }, rd)
             }
         }
@@ -212,15 +252,16 @@ fn the_same_memory_through_both_if_branches_compiles() {
 #[test]
 fn nested_struct_memory_with_explicit_zero_default_compiles() {
     // A nested struct whose `mem` field is zero-initialized through an explicit
-    // outer struct-literal default (`= Inner { data: 0 }`) is accepted.
+    // outer struct-literal default (`= Inner { data: 0 }`) is accepted, and the
+    // memory flattens with the nested path.
     let src = "
         struct Inner { data: mem<u8, 4> = 0 }
         struct Outer { inner: Inner = Inner { data: 0 } }
         impl Outer {
             #[clock(domain = sys)]
             fn tick(self, a: u2) -> (Outer, u8) {
-                let rd = self.inner.data.read(a);
-                (Outer { inner: Inner { data: self.inner.data } }, rd)
+                let rd = self.inner.data.value();
+                (Outer { inner: Inner { data: self.inner.data.next(a, 0, 0, 0) } }, rd)
             }
         }
     ";
@@ -228,17 +269,6 @@ fn nested_struct_memory_with_explicit_zero_default_compiles() {
     let m = &design.modules[0];
     assert_eq!(m.mems.len(), 1);
     assert_eq!(m.mems[0].name, "inner_data", "flattened nested mem path");
-}
-
-#[test]
-fn memory_as_a_return_type_parses_then_is_rejected_semantically() {
-    // The `>` of `mem<…>` must not be swallowed by the expression grammar: a
-    // memory return type PARSES (then the checker rejects it cleanly, rather than
-    // surfacing a confusing parse error).
-    compile_err(
-        "fn f(a: u8) -> mem<u8, 4> { 0 }",
-        "can only be a struct field",
-    );
 }
 
 #[test]

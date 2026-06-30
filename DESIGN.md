@@ -502,8 +502,9 @@ explicit in the semantics.
   - **memory** — `mem<T, N>`, port-limited (N reads / M writes per cycle),
     lowers to BRAM. **Port count is part of the memory type.** A read carries a
     latency contract (§3.4). Accessed method-style on a struct-field instance
-    (`self.m.read(addr)` / `self.m.write(we, addr, data)`), never index-style —
-    `m[addr]` already means the combinational vector-of-registers read.
+    (`self.m.value()` for the read-data, `self.m.next(raddr, we, waddr, wdata)`
+    for the transition), never index-style — `m[addr]` already means the
+    combinational vector-of-registers read.
     Realized for the **1R1W, `Static(1)` registered, `READ_FIRST`** slice in
     §9.6 (MEM1).
 - **Fixed-capacity channels** — capacity is part of the type, enabling static
@@ -831,19 +832,26 @@ vector-of-registers. Settled MEM1 surface and semantics:
   `mem<T, N, R, W>` is purely additive later and no source breaks. `T` is a
   scalar/erasable integer (width ≤ 64); `N` (depth) must be a power of two so the
   address mask is exact in both backends.
-- **Method-style access** on the field, reusing `Expr::MethodCall`:
-  `self.m.read(addr)` and `self.m.write(we, addr, data)`. `.write` returns the
-  next-cycle memory value, threaded into the tail `Self { m: … }` exactly like a
-  sub-FSM step — so "a write-port is driven once per cycle" (§4.4) is the existing
-  single-driver / single-next-state rule, no new check. Index-style is rejected
-  (the surface has no statement-level assignment, and `m[addr]` is the `[T; N]`
-  read).
-- **Read latency = `Static(1)`, memory-owned register.** `.read(addr)` returns
-  the value addressed *last* cycle; the elaborator synthesizes a hidden read-data
-  register `<m>_rdata` whose next value reads the pre-edge array. This matches the
-  DP16KD output flop and is byte-identical to the pipeline's carry-across-a-cycle
-  move — it composes with the single-step transition rule with **no timing-model
-  change** (a consumer treats read-data like any registered value).
+- **`value()` / `next()` access** — a memory is a sub-state-machine, accessed
+  method-style (reusing `Expr::MethodCall`):
+  - **`value() -> T`** reads the memory-owned read-data register (a pure
+    accessor); and
+  - **`next(raddr, we, waddr, wdata) -> mem<T, N>`** is the transition: schedule a
+    read of `raddr` and, when `we`, write `wdata` to `waddr`. It returns the
+    memory, threaded into the tail `Self { m: self.m.next(…) }` exactly like a
+    sub-FSM step.
+
+  Index-style is rejected (the surface has no statement-level assignment, and
+  `m[addr]` is the `[T; N]` read). (The `we`-flag write argument will become an
+  `Option<(addr, value)>` once `Option<T>`, §6.5, is available on this line.)
+- **Read latency = `Static(1)`, memory-owned register.** `value()` returns the
+  value addressed by the `raddr` given to `next()` *last* cycle; the read-data
+  register `<m>_rdata` is an ordinary register whose next value reads the pre-edge
+  array. This matches the DP16KD output flop and is byte-identical to the
+  pipeline's carry-across-a-cycle move — it composes with the single-step
+  transition rule with **no timing-model change** (a consumer treats read-data
+  like any registered value). `value()` being a pure read means it never consumes
+  the single read port — the read is scheduled by `next()`.
 - **`READ_FIRST` collision policy.** A read and a write to the same address in the
   same cycle ⇒ the read returns the **old** value. This falls out of the
   simulator's frozen-pre-edge-`env` model for free (the read register samples the
@@ -871,14 +879,16 @@ vector-of-registers. Settled MEM1 surface and semantics:
   gate on the write trips Verilator `SYNCASYNCNET`; a reset-release flag would drop
   the first post-reset write and break the oracle — so the array is simply
   unreset, matching the hardware.)
-- **Effect recording / single-driver.** The `1R1W` budget is enforced directly
-  (at most one `.read` and one `.write` per memory). The read/write effect is
-  recorded at the **call site** during elaboration (not at the tail), so a
-  `.read`/`.write` whose result is discarded still takes effect / consumes the
-  port — thread the result into `Self { <m>: … }` (the idiomatic form). Tying the
-  effect to the tail threading (so a dropped effect is a clean error) is a deferred
-  refinement; reads/writes inside an `if`/`match` arm are rejected (a write is
-  gated by its `we` argument, not control flow).
+- **Threading is the single-driver.** A memory's transition (the read schedule +
+  the `we`-gated write) is carried as a *pending* effect on the handle `next()`
+  returns and committed **only when that handle is threaded into the next-state**
+  (`Self { <m>: self.<m>.next(…) }`). A discarded `next()` is inert (no write, no
+  read), so "a write-port is driven once per cycle" (§4.4) really is the existing
+  single-driver / single-next-state rule — `1R1W` falls out structurally (one
+  threaded handle = one read port + one `we`-gated write), with no separate budget
+  check. `next()` may not appear inside an `if`/`match` arm (its handle can't be
+  muxed — gate the write with `we` and mux the address explicitly); `value()`, a
+  pure read, is unrestricted.
 
 | Phase | Scope | Done when |
 |---|---|---|

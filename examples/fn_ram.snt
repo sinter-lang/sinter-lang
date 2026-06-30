@@ -1,11 +1,15 @@
 // MEM1: a 1R1W synchronous block RAM (DESIGN §6.6 / §6.9 / §9.6).
 //
 // `mem<u8, 16>` is a 16-deep, 8-bit-wide block RAM held in a struct field —
-// distinct from a `[u8; 16]` vector-of-registers. Each cycle it writes `wdata`
-// to `waddr` when `we`, and reads `raddr`. The read has a 1-cycle latency: the
-// result is the word addressed *last* cycle (the memory owns the read-data
-// register). A same-address read+write in one cycle returns the OLD value
-// (READ_FIRST). Addresses are `u4` to match the 4-bit depth exactly.
+// distinct from a `[u8; 16]` vector-of-registers. It is a sub-state-machine:
+//   - `value()` reads the memory-owned read-data register — the word addressed
+//     by the read address presented LAST cycle (a 1-cycle, `Static(1)` read).
+//   - `next(raddr, we, waddr, wdata)` is the transition: schedule a read of
+//     `raddr` (its result is `value()` next cycle) and, when `we`, write `wdata`
+//     to `waddr`. It returns the memory, threaded into the tail `Self { data }`,
+//     and that threading is what commits the cycle (single-driver).
+// A same-address read+write in one cycle returns the OLD value (READ_FIRST).
+// Addresses are `u4` to match the 4-bit depth exactly.
 struct Ram {
     data: mem<u8, 16> = 0,
 }
@@ -13,8 +17,7 @@ struct Ram {
 impl Ram {
     #[clock(domain = sys)]
     fn tick(self, we: u1, waddr: u4, wdata: u8, raddr: u4) -> (Ram, u8) {
-        let rd = self.data.read(raddr);
-        let next = self.data.write(we, waddr, wdata);
-        (Ram { data: next }, rd)
+        let rd = self.data.value();
+        (Ram { data: self.data.next(raddr, we, waddr, wdata) }, rd)
     }
 }

@@ -1052,23 +1052,34 @@ impl Checker<'_> {
                 ))
             }
         };
-        // The address is any scalar integer; it is masked to the depth's address
-        // width during elaboration.
+        // The address is any scalar integer (masked to the depth's address width
+        // during elaboration). A bare literal has nothing to infer its width from,
+        // so it adopts the natural address width `u<addr_bits>`; a non-literal
+        // self-infers any scalar width.
+        let addr_bits = depth.trailing_zeros();
         let check_addr = |this: &Self, e: &Expr| -> Result<(), CompileError> {
-            let at = this.check_expr(e, env, None, ctx, pos)?;
+            let hint = matches!(e, Expr::Literal(_)).then_some(FType::Uint(addr_bits));
+            let at = this.check_expr(e, env, hint.as_ref(), ctx, pos)?;
             this.require_scalar(&at, ctx, pos)
         };
         match method {
-            "read" => {
-                want_args(1)?;
-                check_addr(self, &args[0])?;
+            // `value() -> T`: the current read-data register (last cycle's read).
+            // A pure accessor — reading it does not consume the read port.
+            "value" => {
+                want_args(0)?;
                 Ok(elem.clone())
             }
-            "write" => {
-                want_args(3)?;
-                self.check_expr(&args[0], env, Some(&FType::Uint(1)), ctx, pos)?;
-                check_addr(self, &args[1])?;
-                self.check_expr(&args[2], env, Some(elem), ctx, pos)?;
+            // `next(raddr, we, waddr, wdata) -> mem<T, N>`: the state transition —
+            // schedule a read of `raddr` (its result is `value()` next cycle) and,
+            // when `we`, write `wdata` to `waddr`. Returns the memory so it is
+            // threaded into the tail `Self { mem: self.mem.next(…) }`; that
+            // threading is what commits the transition (single-driver).
+            "next" => {
+                want_args(4)?;
+                check_addr(self, &args[0])?;
+                self.check_expr(&args[1], env, Some(&FType::Uint(1)), ctx, pos)?;
+                check_addr(self, &args[2])?;
+                self.check_expr(&args[3], env, Some(elem), ctx, pos)?;
                 Ok(FType::Mem {
                     elem: Box::new(elem.clone()),
                     depth,
@@ -1077,7 +1088,7 @@ impl Checker<'_> {
             _ => Err(sem(
                 ctx,
                 pos,
-                format!("a memory has no method `{method}` (only `read`/`write` in MEM1)"),
+                format!("a memory has no method `{method}` (only `value`/`next` in MEM1)"),
             )),
         }
     }
