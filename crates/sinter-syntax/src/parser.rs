@@ -835,9 +835,11 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 .map(parse_typeref)
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        Rule::f_mem_ty => {
-            // `mem<T, N>` — element type + depth. Port counts are fixed at 1R1W
-            // in MEM1 (the type carries them so `mem<T, N, R, W>` is additive).
+        Rule::f_mem_ty | Rule::f_rom_ty => {
+            // `mem<T, N>` (1R1W) / `rom<T, N>` (read-only: 1R, 0W). Both reuse the
+            // memory type; the port counts distinguish them (and leave room for
+            // `mem<T, N, R, W>` later).
+            let write_ports = u32::from(inner.as_rule() == Rule::f_mem_ty);
             let mut it = inner.into_inner();
             let elem = parse_typeref(next_pair(&mut it, "memory element type")?)?;
             let depth = parse_mem_depth(next_pair(&mut it, "memory depth")?)?;
@@ -845,7 +847,7 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 elem: Box::new(elem),
                 depth: Box::new(depth),
                 read_ports: 1,
-                write_ports: 1,
+                write_ports,
             })
         }
         Rule::f_scalar_ty => parse_scalar_typeref(&inner),

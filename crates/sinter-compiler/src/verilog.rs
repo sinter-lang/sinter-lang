@@ -119,20 +119,38 @@ fn emit_decls(out: &mut String, m: &Module) {
 fn emit_mem_init(out: &mut String, m: &Module) {
     for mem in &m.mems {
         let w = mem.elem_ty.width();
-        let _ = writeln!(
-            out,
-            "    // Zero-initialize {} (sim/Verilator contract)",
-            mem.name
-        );
-        let _ = writeln!(out, "    initial begin");
-        let _ = writeln!(
-            out,
-            "        for (int {0}_i = 0; {0}_i < {1}; {0}_i = {0}_i + 1) begin",
-            mem.name, mem.depth
-        );
-        let _ = writeln!(out, "            {}[{}_i] = {w}'b0;", mem.name, mem.name);
-        let _ = writeln!(out, "        end");
-        let _ = writeln!(out, "    end");
+        if mem.reset.iter().all(|&v| v == 0) {
+            // All-zero (`mem`): a compact `for`-loop. Yosys unrolls it and sets the
+            // array INIT; required because the co-sim runs with `--x-initial unique`.
+            let _ = writeln!(
+                out,
+                "    // Zero-initialize {} (sim/Verilator contract)",
+                mem.name
+            );
+            let _ = writeln!(out, "    initial begin");
+            let _ = writeln!(
+                out,
+                "        for (int {0}_i = 0; {0}_i < {1}; {0}_i = {0}_i + 1) begin",
+                mem.name, mem.depth
+            );
+            let _ = writeln!(out, "            {}[{}_i] = {w}'b0;", mem.name, mem.name);
+            let _ = writeln!(out, "        end");
+            let _ = writeln!(out, "    end");
+        } else {
+            // `rom` contents: an explicit per-word init. Yosys turns this into the
+            // array INIT (→ bitstream ROM); inline, so the SV is self-contained
+            // (no runtime `$readmemh`, no external data file).
+            let _ = writeln!(
+                out,
+                "    // Contents of {} (compile-time ROM data)",
+                mem.name
+            );
+            let _ = writeln!(out, "    initial begin");
+            for (i, &v) in mem.reset.iter().enumerate() {
+                let _ = writeln!(out, "        {}[{i}] = {w}'h{v:x};", mem.name);
+            }
+            let _ = writeln!(out, "    end");
+        }
     }
 }
 

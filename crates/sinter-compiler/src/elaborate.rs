@@ -61,12 +61,14 @@ enum Ty {
     Struct(String),
     Array(Box<Ty>, usize),
     Tuple(Vec<Ty>),
-    /// A ported memory `mem<T, N>` (DESIGN §6.6/§9.6): an opaque block-RAM array,
-    /// never SROA-flattened. `addr_bits = log2(depth)`.
+    /// A ported memory (DESIGN §6.6/§9.6/§9.7): an opaque block-RAM array, never
+    /// SROA-flattened. `addr_bits = log2(depth)` (depth = `1 << addr_bits`).
+    /// `writable` distinguishes `mem<T, N>` (1R1W) from `rom<T, N>` (read-only,
+    /// contents from `reset`).
     Mem {
         elem: Box<Ty>,
-        depth: usize,
         addr_bits: u32,
+        writable: bool,
     },
 }
 
@@ -125,19 +127,22 @@ enum Val {
         name: String,
         elem: Box<Ty>,
         addr_bits: u32,
+        writable: bool,
         pending: Option<Box<MemPending>>,
+        /// Compile-time contents for a `rom` (per-word init); `None` for a `mem`
+        /// (zero-init) and on runtime handles. Set only on the reset/default path.
+        data: Option<Vec<u64>>,
     },
 }
 
-/// The transition `next(raddr, we, waddr, wdata)` attaches to a memory handle: a
-/// scheduled read (its result is the read-data register next cycle) plus a
-/// `we`-gated write. All addresses are already masked to the memory's `addr_bits`.
+/// The transition `next(…)` attaches to a memory handle: a scheduled read (its
+/// result is the read-data register next cycle) plus — for a writable `mem` — a
+/// `we`-gated write `(we, addr, data)` (`None` for a read-only `rom`). All
+/// addresses are already masked to the memory's `addr_bits`.
 #[derive(Debug, Clone)]
 struct MemPending {
     read_addr: ir::Expr,
-    we: ir::Expr,
-    write_addr: ir::Expr,
-    write_data: ir::Expr,
+    write: Option<(ir::Expr, ir::Expr, ir::Expr)>,
 }
 
 /// Symbol tables holding references into the parsed program.
@@ -269,13 +274,13 @@ impl Elaborator<'_> {
             });
         }
 
-        // Memories: the state struct's `mem` fields, held as opaque arrays (never
-        // SROA-flattened). Each has a memory-owned read-data register `<m>_rdata`
-        // (an ordinary register, reset 0, observed as `<m>_rdata_q`) whose
+        // Memories: the state struct's `mem`/`rom` fields, held as opaque arrays
+        // (never SROA-flattened), each with its contents in `reset` (zeros for a
+        // `mem`, the compile-time data for a `rom`). Each has a memory-owned
+        // read-data register `<m>_rdata` (reset 0, observed as `<m>_rdata_q`) whose
         // next-state is the scheduled read (or a hold) derived from the threaded
         // handle below.
-        let mut mems = Vec::new();
-        self.collect_mems(&state, "", &mut mems);
+        let mems = self.mems_with_data(state_ty, tick.pos)?;
         let mut rdata_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for mem in &mems {
             let name = format!("{}_rdata", mem.name);
@@ -428,12 +433,15 @@ impl Elaborator<'_> {
                         mem: path.clone(),
                         addr: p.read_addr,
                     });
-                    mem_writes.push(ir::MemWrite {
-                        mem: path,
-                        we: p.we,
-                        addr: p.write_addr,
-                        data: p.write_data,
-                    });
+                    // A `rom`'s `next()` has no write.
+                    if let Some((we, addr, data)) = p.write {
+                        mem_writes.push(ir::MemWrite {
+                            mem: path,
+                            we,
+                            addr,
+                            data,
+                        });
+                    }
                 }
                 None => {
                     // Idle this cycle: the read-data register holds its value.
@@ -919,6 +927,7 @@ impl Elaborator<'_> {
             name,
             elem,
             addr_bits,
+            writable,
             ..
         } = &recv
         {
@@ -927,6 +936,7 @@ impl Elaborator<'_> {
                 &name.clone(),
                 &elem.clone(),
                 *addr_bits,
+                *writable,
                 method,
                 args,
                 depth,
@@ -968,6 +978,7 @@ impl Elaborator<'_> {
         mem_name: &str,
         elem: &Ty,
         addr_bits: u32,
+        writable: bool,
         method: &str,
         args: &[Expr],
         depth: usize,
@@ -992,26 +1003,29 @@ impl Elaborator<'_> {
                     ));
                 }
                 let read_addr = self.mem_addr(env, &args[0], addr_bits, depth, pos)?;
-                let we = self.lower_scalar(env, &args[1], Some(Type::Uint(1)), depth, pos)?;
-                let write_addr = self.mem_addr(env, &args[2], addr_bits, depth, pos)?;
-                let data_val = self.lower(env, &args[3], Some(elem), depth, pos)?;
-                let (write_data, _) = scalar_parts(&data_val, &self.ctx, pos)?;
+                // A writable `mem` also carries a `we`-gated write; a `rom` does not.
+                let write = if writable {
+                    let we = self.lower_scalar(env, &args[1], Some(Type::Uint(1)), depth, pos)?;
+                    let write_addr = self.mem_addr(env, &args[2], addr_bits, depth, pos)?;
+                    let data_val = self.lower(env, &args[3], Some(elem), depth, pos)?;
+                    let (write_data, _) = scalar_parts(&data_val, &self.ctx, pos)?;
+                    Some((we, write_addr, write_data))
+                } else {
+                    None
+                };
                 Ok(Val::Mem {
                     name: mem_name.to_string(),
                     elem: Box::new(elem.clone()),
                     addr_bits,
-                    pending: Some(Box::new(MemPending {
-                        read_addr,
-                        we,
-                        write_addr,
-                        write_data,
-                    })),
+                    writable,
+                    pending: Some(Box::new(MemPending { read_addr, write })),
+                    data: None,
                 })
             }
             _ => Err(err(
                 &self.ctx,
                 pos,
-                format!("a memory has no method `{method}` (only `value`/`next` in MEM1)"),
+                format!("a memory has no method `{method}` (only `value`/`next`)"),
             )),
         }
     }
@@ -1292,7 +1306,12 @@ impl Elaborator<'_> {
                     .map(|t| self.resolve(t, pos))
                     .collect::<Result<_, _>>()?,
             )),
-            TypeRef::Mem { elem, depth, .. } => {
+            TypeRef::Mem {
+                elem,
+                depth,
+                write_ports,
+                ..
+            } => {
                 let et = self.resolve(elem, pos)?;
                 if et.scalar().is_none() {
                     return Err(err(&self.ctx, pos, "a memory element must be a scalar"));
@@ -1303,8 +1322,8 @@ impl Elaborator<'_> {
                 let addr_bits = (n as u64).trailing_zeros();
                 Ok(Ty::Mem {
                     elem: Box::new(et),
-                    depth: n,
                     addr_bits,
+                    writable: *write_ports == 1,
                 })
             }
         }
@@ -1445,19 +1464,52 @@ impl Elaborator<'_> {
                 Ok(Val::Struct(name.clone(), out))
             }
             (Expr::Path(segs), Ty::Enum(..)) => self.lower_path(segs, pos),
-            // A memory's reset is its zero-initialized array (handled by
-            // `collect_mems`); the field default `= 0` yields an opaque handle
-            // that contributes no scalar reset leaf (the checker enforces `= 0`).
+            // A `rom`'s contents: fold each array element to a literal word, carried
+            // on the handle's `data` (→ `ir::Mem.reset`). The checker has already
+            // confirmed the count and element fit.
+            (
+                Expr::Array(items),
+                Ty::Mem {
+                    elem,
+                    addr_bits,
+                    writable,
+                    ..
+                },
+            ) => {
+                let et = elem
+                    .scalar()
+                    .ok_or_else(|| err(&self.ctx, pos, "rom element is not a scalar"))?;
+                let data = items
+                    .iter()
+                    .map(|it| self.fold_scalar(it, et, pos))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Val::Mem {
+                    name: String::new(),
+                    elem: elem.clone(),
+                    addr_bits: *addr_bits,
+                    writable: *writable,
+                    pending: None,
+                    data: Some(data),
+                })
+            }
+            // A `mem`'s reset is its zero-initialized array; the field default `= 0`
+            // yields an opaque handle that contributes no scalar reset leaf (the
+            // checker enforces `= 0`).
             (
                 _,
                 Ty::Mem {
-                    elem, addr_bits, ..
+                    elem,
+                    addr_bits,
+                    writable,
+                    ..
                 },
             ) => Ok(Val::Mem {
                 name: String::new(),
                 elem: elem.clone(),
                 addr_bits: *addr_bits,
+                writable: *writable,
                 pending: None,
+                data: None,
             }),
             (_, _) => {
                 let t = ty
@@ -1525,43 +1577,57 @@ impl Elaborator<'_> {
         }
     }
 
-    /// Collect the block-RAM arrays of a (possibly nested) state type, with each
-    /// `mem` field named by its flattened path (mirrors `flatten_ty`).
-    fn collect_mems(&self, ty: &Ty, path: &str, out: &mut Vec<ir::Mem>) {
-        match ty {
-            Ty::Struct(name) => {
-                if let Ok(fields) = self.struct_fields(name, Pos::default()) {
-                    for (f, fty) in fields {
-                        self.collect_mems(&fty, &join(path, &f), out);
-                    }
-                }
-            }
-            Ty::Array(et, n) => {
-                for i in 0..*n {
-                    self.collect_mems(et, &join(path, &i.to_string()), out);
-                }
-            }
-            Ty::Tuple(ts) => {
-                for (i, t) in ts.iter().enumerate() {
-                    self.collect_mems(t, &join(path, &i.to_string()), out);
-                }
-            }
-            Ty::Mem {
+    /// Build the block-RAM arrays of the (possibly nested) state struct, with each
+    /// `mem`/`rom` field named by its flattened path and its `reset` set to its
+    /// contents — zeros for a `mem`, the compile-time data for a `rom`. Derived
+    /// from the default value so the `rom` data (the field initializer) is in hand.
+    fn mems_with_data(&self, state_ty: &str, pos: Pos) -> Result<Vec<ir::Mem>, CompileError> {
+        let default = self.default_val(&Ty::Struct(state_ty.to_string()), None, pos)?;
+        let mut out = Vec::new();
+        self.collect_mem_decls(&default, "", &mut out, pos)?;
+        Ok(out)
+    }
+
+    /// Walk a default value, emitting an `ir::Mem` (with contents) for each memory
+    /// leaf (mirrors `flatten_val`).
+    fn collect_mem_decls(
+        &self,
+        v: &Val,
+        path: &str,
+        out: &mut Vec<ir::Mem>,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        match v {
+            Val::Mem {
                 elem,
-                depth,
                 addr_bits,
+                data,
+                ..
             } => {
-                if let Some(elem_ty) = elem.scalar() {
-                    out.push(ir::Mem {
-                        name: path.to_string(),
-                        elem_ty,
-                        depth: *depth,
-                        addr_bits: *addr_bits,
-                        reset: vec![0; *depth],
-                    });
-                }
+                let elem_ty = elem
+                    .scalar()
+                    .ok_or_else(|| err(&self.ctx, pos, "memory element is not a scalar"))?;
+                let depth = 1usize << addr_bits;
+                let reset = data.clone().unwrap_or_else(|| vec![0; depth]);
+                out.push(ir::Mem {
+                    name: path.to_string(),
+                    elem_ty,
+                    depth,
+                    addr_bits: *addr_bits,
+                    reset,
+                });
+                Ok(())
             }
-            _ => {}
+            Val::Struct(_, fields) => fields
+                .iter()
+                .try_for_each(|(f, val)| self.collect_mem_decls(val, &join(path, f), out, pos)),
+            Val::Array(items) => items.iter().enumerate().try_for_each(|(i, val)| {
+                self.collect_mem_decls(val, &join(path, &i.to_string()), out, pos)
+            }),
+            Val::Tuple(items) => items.iter().enumerate().try_for_each(|(i, val)| {
+                self.collect_mem_decls(val, &join(path, &i.to_string()), out, pos)
+            }),
+            Val::Scalar(..) | Val::Enum(..) => Ok(()),
         }
     }
 
@@ -1609,12 +1675,17 @@ impl Elaborator<'_> {
                     .collect(),
             ),
             Ty::Mem {
-                elem, addr_bits, ..
+                elem,
+                addr_bits,
+                writable,
+                ..
             } => Val::Mem {
                 name: path.to_string(),
                 elem: elem.clone(),
                 addr_bits: *addr_bits,
+                writable: *writable,
                 pending: None,
+                data: None,
             },
         }
     }

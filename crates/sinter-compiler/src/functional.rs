@@ -50,13 +50,17 @@ enum FType {
     Array(Box<FType>, u64),
     /// A tuple `(T, U, …)`.
     Tuple(Vec<FType>),
-    /// A ported memory `mem<T, N>` (DESIGN §6.6/§6.9). MEM1 is 1R1W, so the port
-    /// counts are not carried here (they are validated `= 1` at resolution).
+    /// A ported memory (DESIGN §6.6/§6.9): `mem<T, N>` (1R1W, `writable`) or
+    /// `rom<T, N>` (read-only, 1R0W). A read-only memory differs in type — its
+    /// `next()` takes no write arguments and its contents are a compile-time
+    /// initializer — so the writability is part of the type.
     Mem {
         /// Element (word) type.
         elem: Box<FType>,
         /// Depth in words.
         depth: u64,
+        /// Whether the memory has a write port (`mem`) or is read-only (`rom`).
+        writable: bool,
     },
 }
 
@@ -98,7 +102,15 @@ impl fmt::Display for FType {
                 if *signed { 'i' } else { 'u' }
             ),
             FType::Struct(n) | FType::Enum(n) => write!(f, "{n}"),
-            FType::Mem { elem, depth } => write!(f, "mem<{elem}, {depth}>"),
+            FType::Mem {
+                elem,
+                depth,
+                writable,
+            } => write!(
+                f,
+                "{}<{elem}, {depth}>",
+                if *writable { "mem" } else { "rom" }
+            ),
             FType::Array(t, n) => write!(f, "[{t}; {n}]"),
             FType::Tuple(ts) => {
                 write!(f, "(")?;
@@ -386,28 +398,25 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                 checker.enter_module(&s.name);
                 for f in &s.fields {
                     let want = resolve_type(&checker.known(), &f.ty, &s.name, f.pos)?;
-                    // A memory is zero-initialized (`= 0`); ROM/per-word init is
-                    // deferred. (A `mem` literal `0` does not "fit" the type, so it
-                    // must not go through the normal literal check.)
-                    if matches!(want, FType::Mem { .. }) {
-                        match &f.default {
-                            Some(Expr::Literal(0)) => {}
-                            Some(_) => {
-                                return Err(sem(
-                                    &s.name,
-                                    f.pos,
-                                    "a memory must be zero-initialized (`= 0`); per-word / ROM \
-                                     init is deferred (MEM1)",
-                                ))
-                            }
-                            None => {
-                                return Err(sem(
-                                    &s.name,
-                                    f.pos,
-                                    "a memory field needs an explicit `= 0` (zero-init) in MEM1",
-                                ))
-                            }
-                        }
+                    // A `mem` is zero-initialized (`= 0`); a `rom` carries its
+                    // compile-time contents (an array literal or `include_hex!`). A
+                    // `mem`/`rom` value does not "fit" via the normal literal check,
+                    // so it is validated here, not by `check_expr`.
+                    if let FType::Mem {
+                        elem,
+                        depth,
+                        writable,
+                    } = &want
+                    {
+                        checker.check_mem_field_default(
+                            f.default.as_ref(),
+                            elem,
+                            *depth,
+                            *writable,
+                            &env,
+                            &s.name,
+                            f.pos,
+                        )?;
                         continue;
                     }
                     if let Some(default) = &f.default {
@@ -533,12 +542,13 @@ fn resolve_type(
             read_ports,
             write_ports,
         } => {
-            if *read_ports != 1 || *write_ports != 1 {
+            // `mem` is 1R1W; `rom` is 1R0W. Anything else (multi-port) is deferred.
+            if *read_ports != 1 || *write_ports > 1 {
                 return Err(sem(
                     ctx,
                     pos,
-                    "only a 1-read / 1-write (1R1W) memory is supported (MEM1); \
-                     multi-port memories are deferred (DESIGN §9.6)",
+                    "only a 1-read / 1-write (1R1W) `mem` or 1-read / 0-write (1R0W) `rom` is \
+                     supported; multi-port memories are deferred (DESIGN §9.6/§9.7)",
                 ));
             }
             let et = resolve_type(known, elem, ctx, pos)?;
@@ -556,12 +566,13 @@ fn resolve_type(
                 return Err(sem(
                     ctx,
                     pos,
-                    format!("memory depth `{n}` must be a power of two ≥ 2 in MEM1"),
+                    format!("memory depth `{n}` must be a power of two ≥ 2"),
                 ));
             }
             FType::Mem {
                 elem: Box::new(et),
                 depth: n,
+                writable: *write_ports == 1,
             }
         }
     };
@@ -982,8 +993,13 @@ impl Checker<'_> {
         pos: Pos,
     ) -> Result<FType, CompileError> {
         let recv = self.check_expr(receiver, env, None, ctx, pos)?;
-        if let FType::Mem { elem, depth } = &recv {
-            return self.check_mem_method(elem, *depth, method, args, env, ctx, pos);
+        if let FType::Mem {
+            elem,
+            depth,
+            writable,
+        } = &recv
+        {
+            return self.check_mem_method(elem, *depth, *writable, method, args, env, ctx, pos);
         }
         let type_name = match &recv {
             FType::Struct(s) | FType::Enum(s) => s.clone(),
@@ -1023,15 +1039,17 @@ impl Checker<'_> {
         Ok(sig.ret.clone())
     }
 
-    /// Type-check the built-in memory methods (DESIGN §6.6/§9.6):
-    /// `read(addr) -> T` and `write(we: u1, addr, data: T) -> mem<T, N>`. The
-    /// write returns the (same) memory so it can be threaded back into the tail
-    /// `Self { mem: self.mem.write(…) }`.
+    /// Type-check the built-in memory methods (DESIGN §6.6/§9.6/§9.7).
+    /// `value() -> T` (both `mem` and `rom`); `next(…) -> Self` is the transition —
+    /// `next(raddr, we, waddr, wdata)` for a writable `mem`, `next(raddr)` for a
+    /// read-only `rom`. The transition returns the memory so it threads into the
+    /// tail `Self { m: self.m.next(…) }` (that threading commits it).
     #[allow(clippy::too_many_arguments)]
     fn check_mem_method(
         &self,
         elem: &FType,
         depth: u64,
+        writable: bool,
         method: &str,
         args: &[Expr],
         env: &Env,
@@ -1069,28 +1087,134 @@ impl Checker<'_> {
                 want_args(0)?;
                 Ok(elem.clone())
             }
-            // `next(raddr, we, waddr, wdata) -> mem<T, N>`: the state transition —
-            // schedule a read of `raddr` (its result is `value()` next cycle) and,
-            // when `we`, write `wdata` to `waddr`. Returns the memory so it is
-            // threaded into the tail `Self { mem: self.mem.next(…) }`; that
-            // threading is what commits the transition (single-driver).
+            // `next(…) -> Self`: the transition, threaded into the tail. A writable
+            // `mem` takes `(raddr, we, waddr, wdata)`; a read-only `rom` takes just
+            // `(raddr)` — its only mutable state is the read cursor.
             "next" => {
-                want_args(4)?;
-                check_addr(self, &args[0])?;
-                self.check_expr(&args[1], env, Some(&FType::Uint(1)), ctx, pos)?;
-                check_addr(self, &args[2])?;
-                self.check_expr(&args[3], env, Some(elem), ctx, pos)?;
+                if writable {
+                    want_args(4)?;
+                    check_addr(self, &args[0])?;
+                    self.check_expr(&args[1], env, Some(&FType::Uint(1)), ctx, pos)?;
+                    check_addr(self, &args[2])?;
+                    self.check_expr(&args[3], env, Some(elem), ctx, pos)?;
+                } else {
+                    want_args(1)?;
+                    check_addr(self, &args[0])?;
+                }
                 Ok(FType::Mem {
                     elem: Box::new(elem.clone()),
                     depth,
+                    writable,
                 })
             }
             _ => Err(sem(
                 ctx,
                 pos,
-                format!("a memory has no method `{method}` (only `value`/`next` in MEM1)"),
+                format!("a memory has no method `{method}` (only `value`/`next`)"),
             )),
         }
+    }
+
+    /// Check a `mem`/`rom` field's value. Returns `true` if it was consumed as an
+    /// *initializer* (a `mem` `= 0`, or a `rom`'s `[..]` contents); `false` if it
+    /// is a *threaded* memory value to be type-checked normally. A non-zero `mem`
+    /// literal is an error.
+    #[allow(clippy::too_many_arguments)]
+    fn check_mem_field_value(
+        &self,
+        value: &Expr,
+        elem: &FType,
+        depth: u64,
+        writable: bool,
+        env: &Env,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<bool, CompileError> {
+        if writable {
+            match value {
+                Expr::Literal(0) => Ok(true),
+                Expr::Literal(_) => Err(sem(
+                    ctx,
+                    pos,
+                    "a `mem` must be zero-initialized (`= 0`); use a `rom` for fixed contents",
+                )),
+                _ => Ok(false),
+            }
+        } else {
+            match value {
+                Expr::Array(items) => {
+                    self.check_rom_init(items, elem, depth, env, ctx, pos)?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
+    }
+
+    /// Validate a `mem`/`rom` field default: a `mem` needs `= 0`, a `rom` needs its
+    /// compile-time contents. A missing or malformed initializer is an error (a
+    /// const default cannot be a threaded value).
+    #[allow(clippy::too_many_arguments)]
+    fn check_mem_field_default(
+        &self,
+        default: Option<&Expr>,
+        elem: &FType,
+        depth: u64,
+        writable: bool,
+        env: &Env,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        let Some(value) = default else {
+            return Err(sem(
+                ctx,
+                pos,
+                if writable {
+                    "a `mem` field needs an explicit `= 0` (zero-init)"
+                } else {
+                    "a `rom` field needs initial contents (`= [..]` or `= include_hex!(..)`)"
+                },
+            ));
+        };
+        if !self.check_mem_field_value(value, elem, depth, writable, env, ctx, pos)? {
+            return Err(sem(
+                ctx,
+                pos,
+                if writable {
+                    "a `mem` must be zero-initialized (`= 0`)"
+                } else {
+                    "a `rom`'s contents must be an array literal `[..]` or `include_hex!(..)`"
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate `rom` contents: exactly `depth` words, each fitting the element
+    /// type.
+    fn check_rom_init(
+        &self,
+        items: &[Expr],
+        elem: &FType,
+        depth: u64,
+        env: &Env,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        if items.len() as u64 != depth {
+            return Err(sem(
+                ctx,
+                pos,
+                format!(
+                    "a `rom` of depth {depth} needs {depth} words, but its initializer has {}",
+                    items.len()
+                ),
+            ));
+        }
+        for it in items {
+            self.check_expr(it, env, Some(elem), ctx, pos)?;
+        }
+        Ok(())
     }
 
     fn check_args(
@@ -1151,24 +1275,19 @@ impl Checker<'_> {
             // Constructing with a private field is only allowed from a module
             // that can reach it (DESIGN §10).
             self.check_field_access(name, &fi.name, ctx, pos)?;
-            // A memory field accepts a zero-init literal (`= 0`, e.g. in a nested
-            // struct default `Inner { d: 0 }`) — a `mem` literal would not "fit" the
-            // type, so recognize it here. A *non-zero* literal is the deferred
-            // ROM-init. Any other value (e.g. a threaded `self.mem` / `.write(…)`
-            // result in the transition tail) falls through to the normal check,
-            // which confirms it is the same memory type.
-            if matches!(fty, FType::Mem { .. }) {
-                match &fi.value {
-                    Expr::Literal(0) => continue,
-                    Expr::Literal(_) => {
-                        return Err(sem(
-                            ctx,
-                            pos,
-                            "a memory must be zero-initialized (`= 0`); per-word / ROM init is \
-                             deferred (MEM1)",
-                        ))
-                    }
-                    _ => {}
+            // A `mem`/`rom` field value may be an *initializer* (a `mem` `= 0`, or a
+            // `rom`'s array contents — neither "fits" the type via the literal
+            // check) or a *threaded* memory value (e.g. `self.m.next(…)` in the
+            // transition tail). The former is validated here; the latter falls
+            // through to the normal check, which confirms the same memory type.
+            if let FType::Mem {
+                elem,
+                depth,
+                writable,
+            } = fty
+            {
+                if self.check_mem_field_value(&fi.value, elem, *depth, *writable, env, ctx, pos)? {
+                    continue;
                 }
             }
             self.check_expr(&fi.value, env, Some(fty), ctx, pos)?;

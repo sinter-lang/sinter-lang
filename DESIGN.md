@@ -899,7 +899,64 @@ Deferred beyond MEM1: multi-port / true-dual-port (`R`/`W` ≠ 1), read-during-w
 phantom-domain interaction), `Bounded`/`Dynamic` read latencies, 0-cycle
 LUTRAM/distributed reads (behind an explicit annotation), explicit
 `DP16KD`/`PDPW16KD` instantiation (wide / asymmetric / true-dual-port),
-ROM/init-from-data, and non-scalar (struct/enum/fixed-point) element types.
+and non-scalar (struct/enum/fixed-point) element types. (ROM / init-from-data is
+promoted to its own milestone — §9.7.)
+
+### 9.7 ROM — ACTIVE milestone (ROM1)
+
+A **read-only memory** `rom<T, N>` with compile-time contents (DESIGN §6.6/§6.9):
+the const dual of `mem<T, N>`. A ROM is just a memory whose array is initialized
+from data and never written — so it reuses the entire MEM1 substrate (`ir::Mem`
+with its per-word `reset` data, the `Static(1)` read-data register, the inline
+array init, the sim↔Verilog oracle). The new mechanism is *getting data in at
+compile time*; everything else is MEM1.
+
+A ROM is the **cursor-over-a-const-container** the data/state split suggests: the
+container (`ir::Mem.reset`) is fixed at compile time, the cursor (`<m>_rdata`) is
+the only mutable state.
+
+Settled ROM1 surface and semantics:
+
+- **`rom<T, N>`** is a struct field — the same `mem` type machinery with the write
+  port removed (parsed as `mem` with `write_ports = 0`). `T` is a scalar (≤ 64
+  bits), `N` a power of two ≥ 2 (the address masks exactly), exactly as `mem`.
+- **`value()` / `next(raddr)`** — the `mem` interface minus the write arguments.
+  `value() -> T` reads the read-data register (the word addressed last cycle,
+  `Static(1)` latency); `next(raddr) -> rom<T, N>` schedules a read and is threaded
+  into the tail `Self { m: self.m.next(raddr) }` (the same threading-is-the-driver
+  rule — but a ROM has no write to drive, only the read cursor advances).
+- **Contents** are the field's initializer (compile-time const, exactly `N`
+  words):
+  - an **inline array literal** `rom<u8, 4> = [1, 2, 3, 4]` (reuses array const-
+    folding); or
+  - **`include_hex!("file.hex")`** — a file of **line-delimited hex words** (one
+    per line, optional `0x`/`0X` prefix, blank lines and `//` comments skipped),
+    read at compile time **relative to the source `.snt` file** (like Rust's
+    `include_str!`). This is a strict subset of the `$readmemh` format, so the
+    files are interchangeable with that ecosystem.
+- **Compile-time parse, inline emit.** The initializer is parsed *once* into the
+  `ir::Mem.reset` data vector, and emitted **inline** in both backends (the Rust
+  sim seeds the array; the Verilog `initial` block assigns the data per word, which
+  Yosys turns into the BRAM/ROM contents — §9.6). The emitted SystemVerilog is
+  **self-contained** — there is no runtime `$readmemh`, so synthesis needs no
+  external data file or build-system path plumbing, and the §7.4 oracle holds by
+  construction (both backends derive from the one parsed vector).
+- **Size / width checks.** The initializer must yield exactly `N` words (a count
+  mismatch is a compile error), and each word must fit `T` (an out-of-range value
+  is a compile error). Addresses, reads, and reset (`<m>_rdata` resets to 0) work
+  exactly as `mem`.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **ROM1** | ✅ `rom<T, N>` read-only memory (`value()` / `next(raddr)`) with compile-time contents from an **inline array literal** or **`include_hex!`** (line-delimited hex, source-relative), parsed into `ir::Mem.reset` and emitted inline. Reuses the MEM1 read path; size/width-checked. Through the sim↔Verilog oracle (a lookup-table ROM). | a ROM example reads its initialized contents through the oracle bit-for-bit |
+
+Deferred beyond ROM1: **`include_bin!`** (a raw binary blob — needs a chosen
+endianness and an 8-bit-multiple element width to slice into words, so it is a
+distinct feature), **inferred depth** (`rom<T, _>` sized by the data), other
+container formats (Intel HEX, SREC, `.coe`, `.mif`), an optional runtime
+`$readmemh` / generated-data-file emit mode for very large ROMs, and multi-read
+ROMs (the shared-data / multiple-cursor split — folds into the §9.6 multi-port
+axis).
 
 ---
 

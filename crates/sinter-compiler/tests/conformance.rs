@@ -93,6 +93,14 @@ const EXAMPLES: &[Example] = &[
         name: "fn_ram",
         source: include_str!("../../../examples/fn_ram.snt"),
     },
+    // ROM1: a read-only `rom<u8, 8>` lookup table (squares) initialized from an
+    // inline array literal. The pseudo-random `addr` reads its compile-time
+    // contents at the `Static(1)` latency — co-simulated sim vs Verilog bit-for-bit
+    // (DESIGN §6.6/§6.9/§9.7/§7.4).
+    Example {
+        name: "fn_rom",
+        source: include_str!("../../../examples/fn_rom.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {
