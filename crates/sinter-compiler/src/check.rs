@@ -270,6 +270,13 @@ impl Checker<'_> {
     ) -> Result<Expr, CompileError> {
         match expr {
             AstExpr::Literal(v) => self.check_literal(*v, expected, pos),
+            // `include_hex!` is a functional-surface `rom` initializer, expanded to
+            // an array before checking; it is not part of the legacy `module` path.
+            AstExpr::IncludeHex(_) => Err(CompileError::semantic(
+                "module",
+                pos,
+                "`include_hex!` is only valid as a functional-surface `rom` initializer",
+            )),
             AstExpr::Ident(name) => self.check_ident(name, expected, pos),
             AstExpr::Unary { op, expr: inner } => self.check_unary(*op, inner, expected, pos),
             AstExpr::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, expected, pos),
@@ -484,7 +491,7 @@ impl Checker<'_> {
     /// expression is entirely literal.
     fn synth_concrete(&self, expr: &AstExpr) -> Option<Type> {
         match expr {
-            AstExpr::Literal(_) => None,
+            AstExpr::Literal(_) | AstExpr::IncludeHex(_) => None,
             AstExpr::Ident(name) => self.readable.get(name).copied(),
             AstExpr::Unary { op, expr } => match op {
                 UnaryOp::Not => Some(BOOL),

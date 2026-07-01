@@ -126,6 +126,17 @@ const PROJECTS: &[Project] = &[
             "/../../examples/sat_counter/main.snt"
         ),
     },
+    // ROM1b: a `rom<u8, 8>` whose contents are loaded from `table.hex` via
+    // `include_hex!` (compile-time, relative to the source, embedded inline). The
+    // random `addr` reads the file's contents at the `Static(1)` latency —
+    // co-simulated sim vs Verilog bit-for-bit (DESIGN §9.7 / §7.4).
+    Project {
+        name: "rom_hex",
+        root: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/rom_hex/main.snt"
+        ),
+    },
 ];
 
 fn tool_available(tool: &str) -> bool {

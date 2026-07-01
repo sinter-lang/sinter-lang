@@ -582,7 +582,9 @@ impl Resolver {
         src: &str,
     ) -> Result<(), CompileError> {
         match e {
-            Expr::Literal(_) => {}
+            // `include_hex!` carries only a path string (no module names) and is
+            // expanded after resolution, so there is nothing to rewrite here.
+            Expr::Literal(_) | Expr::IncludeHex(_) => {}
             Expr::Ident(name) => {
                 if !locals.contains(name) {
                     if let Some(canon) = self.scope_lookup(cur, name) {

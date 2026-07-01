@@ -1,0 +1,11 @@
+// ROM1b: an 8-entry table, line-delimited hex (DESIGN §9.7).
+// Bare and 0x-prefixed words + comments and blank lines are all fine.
+0x00
+0x11
+0x22
+0x33
+
+44   // a bare hex word with a trailing comment
+55
+66
+0x77

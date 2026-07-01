@@ -1,0 +1,16 @@
+// ROM1b: a `rom` whose contents are loaded from a hex file at compile time via
+// `include_hex!` (DESIGN §9.7). The file is line-delimited hex (optional `0x`,
+// `//` comments and blank lines skipped), read relative to this source file and
+// embedded inline — the generated SystemVerilog is self-contained (no runtime
+// `$readmemh`).
+struct Rom {
+    data: rom<u8, 8> = include_hex!("table.hex"),
+}
+
+impl Rom {
+    #[clock(domain = sys)]
+    fn tick(self, addr: u3) -> (Rom, u8) {
+        let v = self.data.value();
+        (Rom { data: self.data.next(addr) }, v)
+    }
+}

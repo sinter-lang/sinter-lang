@@ -15,6 +15,7 @@ pub mod elaborate;
 pub mod error;
 pub mod eval;
 pub mod functional;
+pub mod include_expand;
 pub mod ir;
 pub mod pinmap;
 pub mod pipeline_desugar;
@@ -38,7 +39,8 @@ pub use ir::{Design, Module};
 /// Returns a [`CompileError`] on a parse or semantic error.
 pub fn compile_str(source: &str) -> Result<Design, CompileError> {
     let program = sinter_syntax::parse_program(source)?;
-    compile_program(program)
+    // No source directory, so `include_hex!` has nowhere to resolve against.
+    compile_program(program, None)
 }
 
 /// Parse, resolve, and check a multi-file project rooted at `root` (DESIGN §10).
@@ -53,18 +55,26 @@ pub fn compile_str(source: &str) -> Result<Design, CompileError> {
 pub fn compile_project(root: &std::path::Path) -> Result<Design, CompileError> {
     let tree = sinter_syntax::load_project(root)?;
     let program = resolve::resolve_project(&tree)?;
-    compile_program(program)
+    // `include_hex!` paths resolve against the root source file's directory.
+    compile_program(program, root.parent())
 }
 
-/// Check and lower an already-resolved [`Design`] from a flat program.
+/// Check and lower an already-resolved [`Design`] from a flat program. `base` is
+/// the source directory `include_hex!` paths resolve against (`None` for a bare
+/// string).
 ///
-/// `pipeline fn`s (DESIGN §3.1) are first desugared to a synthesized instance
-/// `struct` + `advance` method ([`pipeline_desugar`]) so the rest of the pipeline
-/// — type checking and elaboration — handles them as ordinary functional items. A
-/// program with no `pipeline fn` is passed through untouched (byte-identical
-/// legacy path).
-fn compile_program(program: sinter_syntax::ast::Program) -> Result<Design, CompileError> {
+/// `include_hex!` is expanded first (DESIGN §9.7), then `pipeline fn`s (DESIGN
+/// §3.1) are desugared to a synthesized instance `struct` + `advance` method
+/// ([`pipeline_desugar`]) so the rest of the pipeline — type checking and
+/// elaboration — handles them as ordinary functional items. A program with no
+/// `pipeline fn` is passed through untouched (byte-identical legacy path).
+fn compile_program(
+    program: sinter_syntax::ast::Program,
+    base: Option<&std::path::Path>,
+) -> Result<Design, CompileError> {
     use sinter_syntax::ast::{FnColor, Item};
+    let mut program = program;
+    include_expand::expand_includes(&mut program, base)?;
     let has_pipeline = program
         .items
         .iter()

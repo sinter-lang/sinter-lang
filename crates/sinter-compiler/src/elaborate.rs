@@ -542,6 +542,13 @@ impl Elaborator<'_> {
             return Err(err(&self.ctx, pos, "inlining too deep (recursive call?)"));
         }
         match e {
+            // Expanded to an array before elaboration (via `compile_program`); if it
+            // survives, it was used outside a `rom` initializer.
+            Expr::IncludeHex(_) => Err(err(
+                &self.ctx,
+                pos,
+                "`include_hex!` is only valid as a `rom` field initializer",
+            )),
             Expr::Literal(v) => {
                 let ty = expected
                     .ok_or_else(|| err(&self.ctx, pos, format!("cannot infer type of `{v}`")))?;

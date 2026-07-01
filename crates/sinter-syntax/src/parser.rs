@@ -240,6 +240,17 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::f_path => parse_fpath(pair),
         Rule::f_group_or_tuple => parse_group_or_tuple(pair),
         Rule::f_array => parse_array(pair),
+        Rule::f_include_hex => {
+            let s = first_inner(pair, "include_hex path")?;
+            // Strip the surrounding double quotes.
+            let text = s.as_str();
+            let path = text
+                .strip_prefix('"')
+                .and_then(|t| t.strip_suffix('"'))
+                .unwrap_or(text)
+                .to_string();
+            Ok(Expr::IncludeHex(path))
+        }
         other => Err(unexpected(other, "expression")),
     }
 }

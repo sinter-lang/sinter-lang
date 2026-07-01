@@ -539,7 +539,7 @@ impl Plan {
                 Some(_) => self_field(&reg_name(x, seg - 1)),
                 None => Expr::Ident(x.clone()),
             },
-            Expr::Literal(_) | Expr::Path(_) => e.clone(),
+            Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) => e.clone(),
             Expr::Unary { op, expr } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite(expr, seg)),
@@ -671,7 +671,7 @@ fn idents(e: &Expr) -> Vec<String> {
 fn collect_idents(e: &Expr, out: &mut Vec<String>) {
     match e {
         Expr::Ident(x) => out.push(x.clone()),
-        Expr::Literal(_) | Expr::Path(_) => {}
+        Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) => {}
         Expr::Unary { expr, .. } => collect_idents(expr, out),
         Expr::Binary { lhs, rhs, .. } => {
             collect_idents(lhs, out);
@@ -790,7 +790,7 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
             arms.iter()
                 .try_for_each(|arm| reject_yields_in_expr(&arm.body, ctx))
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) => Ok(()),
     }
 }
 
@@ -859,7 +859,7 @@ fn reject_shadowing(
         Expr::Tuple(items) | Expr::Array(items) => items
             .iter()
             .try_for_each(|i| reject_shadowing(i, defs, ctx)),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) => Ok(()),
     }
 }
 

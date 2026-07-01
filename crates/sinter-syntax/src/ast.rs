@@ -249,6 +249,11 @@ pub enum Expr {
     // --- Functional-surface expressions (DESIGN §2.1) ----------------------
     /// A `::`-segmented path, e.g. `Cmd::Up` (≥ 2 segments).
     Path(Vec<String>),
+    /// `include_hex!("path")` — the contents of a line-delimited hex file, used to
+    /// initialize a `rom` (DESIGN §9.7). Expanded to an [`Expr::Array`] at compile
+    /// time (relative to the source directory) before checking/elaboration, so no
+    /// later pass sees it. Holds the raw path string.
+    IncludeHex(String),
     /// Field access `base.field`.
     Field {
         /// The receiver expression.

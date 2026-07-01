@@ -230,7 +230,13 @@ f_args  = { "(" ~ (f_expr ~ ("," ~ f_expr)* ~ ","?)? ~ ")" }
 // is a first-class expression: a `let` initializer, a match-arm body, a struct
 // field value, a call argument, etc. It starts with `{`, disjoint from every
 // other alternative, so there is no ambiguity.
-f_primary = { f_match | f_if | f_block | f_struct_lit | f_path | f_group_or_tuple | f_array | literal | ident }
+f_primary = { f_match | f_if | f_block | f_include_hex | f_struct_lit | f_path | f_group_or_tuple | f_array | literal | ident }
+
+// `include_hex!("path")` — embed a file of line-delimited hex words as an array
+// literal at compile time (DESIGN §9.7); used to initialize a `rom`.
+f_include_hex = { "include_hex!" ~ "(" ~ string ~ ")" }
+// A double-quoted string (no escapes in the MVP — a file path rarely needs them).
+string        = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
 f_if         = { "if" ~ f_expr ~ f_block ~ "else" ~ (f_if | f_block) }
 f_match      = { "match" ~ f_expr ~ "{" ~ (f_match_arm ~ ("," ~ f_match_arm)* ~ ","?)? ~ "}" }

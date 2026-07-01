@@ -827,6 +827,15 @@ impl Checker<'_> {
         pos: Pos,
     ) -> Result<FType, CompileError> {
         let ty = match expr {
+            // Expanded to an array before checking (via `compile_program`); reaching
+            // here means it appeared outside a `rom` initializer.
+            Expr::IncludeHex(_) => {
+                return Err(sem(
+                    ctx,
+                    pos,
+                    "`include_hex!` is only valid as a `rom` field initializer",
+                ))
+            }
             Expr::Literal(v) => {
                 let want = expected.ok_or_else(|| {
                     sem(ctx, pos, format!("cannot infer a type for literal `{v}`"))

@@ -98,3 +98,74 @@ fn mem_with_array_contents_is_rejected() {
         "must be zero-initialized",
     );
 }
+
+// --- include_hex! (ROM1b) --------------------------------------------------
+
+/// Compile a `main.snt` + a `table.hex` written to a fresh temp directory,
+/// returning the error string on failure (exercises `include_hex!`, which needs a
+/// file-based project).
+fn compile_with_hex(snt: &str, hex: &str) -> Result<sinter_compiler::Design, String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "sinter-rom-hex-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("table.hex"), hex).expect("write hex");
+    let root = dir.join("main.snt");
+    std::fs::write(&root, snt).expect("write snt");
+    sinter_compiler::compile_project(&root).map_err(|e| e.to_string())
+}
+
+const HEX_SNT: &str = "
+    struct Rom { data: rom<u8, 8> = include_hex!(\"table.hex\") }
+    impl Rom {
+        #[clock(domain = sys)]
+        fn tick(self, addr: u3) -> (Rom, u8) {
+            let v = self.data.value();
+            (Rom { data: self.data.next(addr) }, v)
+        }
+    }
+";
+
+#[test]
+fn include_hex_loads_the_rom_contents() {
+    // The committed example: bare + `0x`-prefixed words, comments, blank lines.
+    let root = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/rom_hex/main.snt"
+    );
+    let design =
+        sinter_compiler::compile_project(std::path::Path::new(root)).expect("compile project");
+    let m = &design.modules[0];
+    assert_eq!(
+        m.mems[0].reset,
+        vec![0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+        "contents parsed from table.hex"
+    );
+    assert!(m.mem_writes.is_empty(), "a rom has no write port");
+}
+
+#[test]
+fn include_hex_without_a_file_project_is_rejected() {
+    // `compile_str` has no source directory to resolve against.
+    compile_err(
+        "struct S { r: rom<u8, 2> = include_hex!(\"x.hex\") }",
+        "file-based project",
+    );
+}
+
+#[test]
+fn include_hex_with_a_bad_word_is_rejected() {
+    let err = compile_with_hex(HEX_SNT, "0\n1\nzz\n3\n4\n5\n6\n7\n").unwrap_err();
+    assert!(err.contains("not a hex word"), "got: {err}");
+}
+
+#[test]
+fn include_hex_with_the_wrong_word_count_is_rejected() {
+    // Three words for a depth-8 rom -> the shared rom size check fires.
+    let err = compile_with_hex(HEX_SNT, "1\n2\n3\n").unwrap_err();
+    assert!(err.contains("needs 8 words"), "got: {err}");
+}
