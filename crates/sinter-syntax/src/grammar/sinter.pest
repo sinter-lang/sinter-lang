@@ -190,13 +190,16 @@ f_binding   = { ident }
 // Type references. Fixed-point `uI.F` / `iI.F` (DESIGN §6.1) is admitted in the
 // scalar form; the dotted frac requires a digit so it never clashes with `..`
 // or member access. Order matters: scalar before named so `u4` is not a name.
-f_typeref   = { f_option_ty | f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_scalar_ty | ident }
+f_typeref   = { f_option_ty | f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_fifo_ty | f_scalar_ty | ident }
 f_option_ty = { "Option" ~ "<" ~ f_typeref ~ ">" }
 f_array_ty  = { "[" ~ f_typeref ~ ";" ~ f_expr ~ "]" }
 f_tuple_ty  = { "(" ~ f_typeref ~ ("," ~ f_typeref)+ ~ ","? ~ ")" }
 f_mem_ty    = { "mem" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
 // A `rom<T, N>` is a read-only memory (the `mem` machinery with no write port).
 f_rom_ty    = { "rom" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
+// A `fifo<T, N>` is a fixed-capacity queue (DESIGN §6.11 / §9.8, CHAN1). Same
+// `<elem, depth>` shape as `mem`; lowered by a source-to-source desugar.
+f_fifo_ty   = { "fifo" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
 // Depth is a compile-time constant (a literal or a `const` name); using the full
 // `f_expr` would let a relational `>` swallow the closing angle bracket (and any
 // following block) outside field position.

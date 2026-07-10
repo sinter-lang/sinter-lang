@@ -871,6 +871,17 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 write_ports,
             })
         }
+        Rule::f_fifo_ty => {
+            // `fifo<T, N>` (DESIGN §6.11 / §9.8) — the same `<elem, depth>` shape
+            // as `mem`; a source-to-source desugar lowers it later.
+            let mut it = inner.into_inner();
+            let elem = parse_typeref(next_pair(&mut it, "fifo element type")?)?;
+            let depth = parse_mem_depth(next_pair(&mut it, "fifo capacity")?)?;
+            Ok(TypeRef::Fifo {
+                elem: Box::new(elem),
+                depth: Box::new(depth),
+            })
+        }
         Rule::f_scalar_ty => parse_scalar_typeref(&inner),
         Rule::f_option_ty => Ok(TypeRef::Option(Box::new(parse_typeref(first_inner(
             inner,

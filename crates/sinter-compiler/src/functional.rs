@@ -573,6 +573,16 @@ fn resolve_type(
                 writable: *write_ports == 1,
             }
         }
+        TypeRef::Fifo { .. } => {
+            // `fifo<T, N>` is lowered by the `fifo` desugar (DESIGN §9.8, CHAN1)
+            // into a plain struct + impl before type-checking, so a surviving
+            // `Fifo` type here is a compiler bug (a missed desugar).
+            return Err(sem(
+                ctx,
+                pos,
+                "internal error: `fifo<T, N>` should have been desugared before type-checking",
+            ));
+        }
     };
     if let Some(w) = ty.scalar_width() {
         if w == 0 {
@@ -945,11 +955,16 @@ impl Checker<'_> {
             }
             Expr::Index { base, index } => {
                 let bt = self.check_expr(base, env, None, ctx, pos)?;
-                let FType::Array(elem, _) = &bt else {
+                let FType::Array(elem, n) = &bt else {
                     return Err(sem(ctx, pos, format!("`{bt}` cannot be indexed")));
                 };
-                // Index must be an integer; its exact width is unconstrained.
-                self.check_expr(index, env, None, ctx, pos)?;
+                // The index is any scalar integer. A bare literal has nothing to
+                // infer its width from, so (like a memory address, and since the
+                // index is const-folded during elaboration) it adopts the natural
+                // index width `u<bits(N)>`; a non-literal index self-infers.
+                let hint = matches!(**index, Expr::Literal(_))
+                    .then(|| FType::Uint((u64::BITS - n.leading_zeros()).max(1)));
+                self.check_expr(index, env, hint.as_ref(), ctx, pos)?;
                 (**elem).clone()
             }
             Expr::Call { func, args } => self.check_call(func, args, env, ctx, pos)?,

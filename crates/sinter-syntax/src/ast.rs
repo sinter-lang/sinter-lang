@@ -606,6 +606,17 @@ pub enum TypeRef {
         /// Number of write ports (MEM1: always 1).
         write_ports: u32,
     },
+    /// A fixed-capacity FIFO queue `fifo<T, N>` (DESIGN §6.11 / §9.8, CHAN1). A
+    /// lossless single-clock queue held in a struct field, accessed method-style
+    /// (`front()` / `next(push, pop)` / `is_full()` / …). Lowered by a
+    /// source-to-source desugar (`fifo_desugar`) into a plain `struct` +
+    /// `impl` before type-checking, so no later stage sees this variant.
+    Fifo {
+        /// The element type (a scalar).
+        elem: Box<TypeRef>,
+        /// The capacity (a power-of-two constant expression).
+        depth: Box<Expr>,
+    },
 }
 
 /// A block: zero or more statements followed by a tail expression (its value).

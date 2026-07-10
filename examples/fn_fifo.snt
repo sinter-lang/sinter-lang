@@ -1,0 +1,32 @@
+// CHAN1: a fixed-capacity lossless FIFO (DESIGN §6.11 / §9.8).
+//
+// `fifo<u8, 4>` is a 4-deep, 8-bit queue held in a struct field — a stateful
+// instance in the `mem`/`rom` style:
+//   - `front()` reads the head word as `Option<u8>` (`None` when empty).
+//   - `is_full()` / `is_empty()` / `len()` are the pure backpressure reads.
+//   - `next(push, pop)` is the transition: enqueue `push` (an `Option<u8>`, so
+//     `None` is "no push this cycle") and, when `pop`, dequeue the head. It
+//     returns the queue, threaded into the tail `Self { q }` — and that
+//     threading is the single-driver commit, exactly like `mem.next()`.
+//
+// Losslessness: a push into a full queue with no simultaneous pop is a guarded
+// hold (the word is refused, never overwriting live data); a pop when empty is
+// inert; a same-cycle push+pop streams through (READ_FIRST). Everything resets
+// empty, so sim and Verilog agree bit-for-bit with no `X`.
+//
+// This lowers by a source-to-source desugar (`fifo_desugar`) into a plain
+// `struct` + `impl` shift register, so no new IR or backend code is involved.
+struct Queue {
+    q: fifo<u8, 4>,
+}
+
+impl Queue {
+    #[clock(domain = sys)]
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Queue, Option<u8>) {
+        // The producer honors backpressure: hold the word when the queue is full
+        // (so nothing is ever silently dropped).
+        let push: Option<u8> = if self.q.is_full() == 1 { None } else { incoming };
+        let head = self.q.front();
+        (Queue { q: self.q.next(push, take) }, head)
+    }
+}

@@ -113,6 +113,16 @@ const EXAMPLES: &[Example] = &[
         name: "fn_rom",
         source: include_str!("../../../examples/fn_rom.snt"),
     },
+    // CHAN1: a fixed-capacity lossless `fifo<u8, 4>`. The pseudo-random stimulus
+    // drives `incoming` (an `Option<u8>` push) and `take` (a pop flag), exercising
+    // enqueue, guarded-hold on full, pop-from-front, and same-cycle push+pop
+    // (READ_FIRST) stream-through. Lowered by the source-to-source `fifo` desugar
+    // to a shift-register struct — co-simulated sim vs Verilog bit-for-bit
+    // (DESIGN §6.11 / §9.8 / §7.4).
+    Example {
+        name: "fn_fifo",
+        source: include_str!("../../../examples/fn_fifo.snt"),
+    },
     // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
     // register per carried value + a phase counter, sharing ONE multiplier across
     // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,

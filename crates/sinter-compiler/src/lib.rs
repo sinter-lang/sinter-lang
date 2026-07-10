@@ -14,6 +14,7 @@ pub mod check;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
+pub mod fifo_desugar;
 pub mod functional;
 pub mod include_expand;
 pub mod ir;
@@ -80,6 +81,13 @@ fn compile_program(
     use sinter_syntax::ast::{FnColor, Item};
     let mut program = program;
     include_expand::expand_includes(&mut program, base)?;
+    // Lower `fifo<T, N>` fields to synthesized struct + impl (DESIGN §9.8, CHAN1)
+    // before the staged-color desugars, so they see only ordinary state.
+    let program = if fifo_desugar::has_fifo(&program) {
+        fifo_desugar::desugar_fifos(&program)?
+    } else {
+        program
+    };
     let has_pipeline = program
         .items
         .iter()

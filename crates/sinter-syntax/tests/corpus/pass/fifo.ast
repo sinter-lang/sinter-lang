@@ -1,0 +1,184 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "Queue",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "q",
+                        ty: Fifo {
+                            elem: Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                            depth: Literal(
+                                16,
+                            ),
+                        },
+                        default: None,
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Queue",
+                methods: [
+                    Func {
+                        attrs: [
+                            Attr {
+                                name: "clock",
+                                args: [
+                                    AttrArg {
+                                        key: "domain",
+                                        value: Some(
+                                            Ident(
+                                                "sys",
+                                            ),
+                                        ),
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 10,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Private,
+                        color: Comb,
+                        name: "tick",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 11,
+                                    col: 13,
+                                },
+                            },
+                            Typed {
+                                name: "incoming",
+                                ty: Option(
+                                    Scalar(
+                                        Uint(
+                                            8,
+                                        ),
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 11,
+                                    col: 19,
+                                },
+                            },
+                            Typed {
+                                name: "take",
+                                ty: Scalar(
+                                    Uint(
+                                        1,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 11,
+                                    col: 41,
+                                },
+                            },
+                        ],
+                        ret: Tuple(
+                            [
+                                Named(
+                                    "Queue",
+                                ),
+                                Option(
+                                    Scalar(
+                                        Uint(
+                                            8,
+                                        ),
+                                    ),
+                                ),
+                            ],
+                        ),
+                        body: Block {
+                            stmts: [
+                                Let {
+                                    pattern: Binding(
+                                        "head",
+                                    ),
+                                    ty: None,
+                                    value: MethodCall {
+                                        receiver: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "q",
+                                        },
+                                        method: "front",
+                                        args: [],
+                                    },
+                                    pos: Pos {
+                                        line: 12,
+                                        col: 9,
+                                    },
+                                },
+                            ],
+                            tail: Tuple(
+                                [
+                                    StructLit {
+                                        name: "Queue",
+                                        fields: [
+                                            FieldInit {
+                                                name: "q",
+                                                value: MethodCall {
+                                                    receiver: Field {
+                                                        base: Ident(
+                                                            "self",
+                                                        ),
+                                                        field: "q",
+                                                    },
+                                                    method: "next",
+                                                    args: [
+                                                        Ident(
+                                                            "incoming",
+                                                        ),
+                                                        Ident(
+                                                            "take",
+                                                        ),
+                                                    ],
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    Ident(
+                                        "head",
+                                    ),
+                                ],
+                            ),
+                            pos: Pos {
+                                line: 11,
+                                col: 74,
+                            },
+                        },
+                        pos: Pos {
+                            line: 10,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 9,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

@@ -535,6 +535,12 @@ impl Resolver {
                 // The depth is a const expression (like an array length).
                 self.rewrite_expr(depth, cur, &mut Locals::new(), src)?;
             }
+            TypeRef::Fifo { elem, depth } => {
+                // Resolution runs before the `fifo` desugar; resolve the element
+                // type and the (const) capacity like a memory depth.
+                self.rewrite_typeref(elem, cur, src)?;
+                self.rewrite_expr(depth, cur, &mut Locals::new(), src)?;
+            }
             TypeRef::Option(t) => self.rewrite_typeref(t, cur, src)?,
             TypeRef::Scalar(_) | TypeRef::Fixed { .. } => {}
         }

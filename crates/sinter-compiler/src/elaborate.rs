@@ -1491,6 +1491,11 @@ impl Elaborator<'_> {
                     writable: *write_ports == 1,
                 })
             }
+            TypeRef::Fifo { .. } => Err(err(
+                &self.ctx,
+                pos,
+                "internal error: `fifo<T, N>` should have been desugared before elaboration",
+            )),
         }
     }
 
