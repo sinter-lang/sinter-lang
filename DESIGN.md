@@ -509,8 +509,11 @@ explicit in the semantics.
     §9.6 (MEM1).
 - **Fixed-capacity channels** — capacity is part of the type, enabling static
   reasoning about backpressure (cf. SpinalHDL `Stream`/`Flow`, Bluespec FIFOs).
-  Decide explicitly whether channels *guarantee* anything about deadlock or
-  merely expose ready/valid (the former is genuinely hard; v1 likely the latter).
+  **RESOLVED (§6.11 / §9.8):** v1 channels expose ready/valid and guarantee
+  *no-corruption* (a lossless `fifo<T, N>` has no method that overwrites a live
+  slot) but **not** deadlock-freedom — the "genuinely hard" liveness tier is
+  deferred. The `fifo` / `ring` / `flow` family and the milestone slice are §6.11
+  / §9.8.
 - **Arbitrary integer bit widths** (`iN`/`uN` for arbitrary N).
 
 ### 6.7 Clock domain as a phantom type parameter (flagship safety win)
@@ -547,6 +550,194 @@ width suffix** — `0b0111111_u7`, `42_i16` — which asserts its type and makes
 width mismatch with context a compile error (useful for bit-pattern constants,
 where an off-by-one-bit typo is otherwise easy to miss). Supported forms:
 decimal, `0x` hex, and `0b` binary, with `_` permitted as a digit separator.
+
+### 6.11 Fixed-capacity channels and FIFOs (RESOLVED shape)
+
+A **channel** is a fixed-capacity, single-clock queue held in a struct field and
+accessed method-style — the `mem<T, N>` interface convention (§6.9 / §9.6) applied
+to a ring buffer rather than a random-access array. `T` is a scalar (≤ 64 b), `N`
+(capacity) a power of two.
+
+**The interface is the user's mental model made literal:** a pure read of the
+head, and a single threaded transition carrying an optional push and a pop flag.
+
+```
+fn front(self)    -> Option<T>          // head word; None iff empty  (pure)
+fn is_empty(self) -> u1                 //                            (pure)
+fn is_full(self)  -> u1                 // the ready / backpressure read (pure)
+fn len(self)      -> uK                 // 0..=N, K = clog2(N)+1       (pure)
+fn next(self, push: Option<T>, pop: u1) -> fifo<T, N>   // threaded transition
+```
+
+`next()` **is** the single-driver, exactly as for `mem`: its handle commits only
+when threaded into the tail `Self { q: self.q.next(push, pop) }`, a discarded
+`next()` is inert, and it **may not appear in an `if`/`match` arm** (gate
+`push`/`pop` with flags, never mux the handle). `front()`/`is_full()`/`len()` are
+pure reads, unrestricted. For the shallow register-backed lowering `front()` is
+combinational (`Static(0)`); the deep BRAM-backed tier makes it a registered
+`Static(1)` read (a deliberate, separately-milestoned latency change — §9.8).
+
+**Loss policy is chosen by the type, never a call-site flag** (so a lossy queue
+*reads as lossy at a glance*):
+
+- **`fifo<T, N>` — lossless.** A push into a full queue (with no simultaneous pop)
+  is a **guarded hold** (§6.4): contents and `count` unchanged, the word refused,
+  no `X`. It has *no method that overwrites a live slot* — overwriting the newest
+  *or* oldest datum is structurally unrepresentable. Pop-when-empty is inert. A
+  same-cycle push+pop is **READ_FIRST** (the pop sees the old head), matching
+  `mem`'s same-address policy so sim ↔ Verilog agree bit-for-bit.
+- **`ring<T, N>` — overwrite-oldest.** Identical surface; a push into a full ring
+  advances the head (drops the oldest) and always accepts. For trace/telemetry
+  buffers where the newest data matters most.
+- **`flow<T>` — depth-1 newest-wins** (optional, low priority). A single valid
+  slot, `value() -> Option<T>`, no pop — erased exactly like `Option`. A "latest
+  sample" register.
+
+**Overflow safety — the honest ceiling.** "Push into a full FIFO" cannot be made a
+*compile error* in general (it needs a static occupancy proof — undecidable
+without dependent types). The layered guarantee that **is** true:
+
+| Guarantee | Tier |
+|---|---|
+| No corruption; never overwrites live data; no `X`; deterministic | **compile-time / structural** — a `fifo` has no clobbering method; lossy needs a different type |
+| A consumer can't push / a producer can't pop | **compile-time / type** — directional views (CHAN3) |
+| Whether a push *fires* this cycle | **runtime** — the ready/valid the type surfaces (`is_full()`) |
+| A producer that *ignores* `is_full()` and thus drops | **compile-time / type** once the §3.1 connection rule lands (CHAN3) |
+| Deadlock / liveness freedom | **out of scope** — §6.6's "genuinely hard" tier |
+
+The two hard requirements — never silently drop, never overwrite the newest — map
+cleanly: overwrite-newest is *unrepresentable* (compile-time), and silent-drop is
+*prevented by honoring the `is_full()` backpressure the type forces into view*
+(runtime, promotable to compile-time via CHAN3).
+
+**Sender/Receiver = capability views, not two owners (SETTLED).** Sinter threads
+state by value through one owner, so two independently-threaded owners of one queue
+is either a double-drive (illegal, §4.1) or forces a bespoke `merge` that hard-codes
+the queue's internal count arithmetic and generalizes to nothing. Instead,
+`Sender<T, N>` / `Receiver<T, N>` are **pure directional views** over the one owned
+field (`Sender` exposes `is_full`/push-request forming; `Receiver` exposes
+`front`/`is_empty`/pop-request forming). The commit stays a single `next()` on the
+owner; cross-module producers/consumers exchange **values** (a `push` request
+`Option<T>`, a `pop` request `u1`, the observations `is_full()` / `front()`), which
+the owner reconciles in one `next()`. This gives the Rust Sender/Receiver
+ergonomics with the single-driver invariant untouched. A `fifo` is also the
+skid-buffer building block for the elastic `Stream<T>` (§3.1). Milestone: §9.8.
+
+### 6.12 Fault flags and assertions (RESOLVED shape)
+
+"Should never happen" conditions sort into three buckets, matching the language's
+"prefer a type error; a sim-only assertion (or SMT obligation) otherwise" stance
+(§5):
+
+1. **Statically excludable** → `unreachable!()`, which the compiler must **prove
+   dead** (a compile error otherwise). Zero emitted bits — the true "panic that
+   compiles out."
+2. **Runtime but diagnostic-only** → `assert!(cond, "msg")` / `debug_assert!` —
+   **sim-only** predicates over already-traced signals; a failure aborts the sim
+   run (a test failure) but emits **no** bit in either backend. This is the §5
+   "sim-only assertion" escape hatch made first-class.
+3. **Runtime, data-dependent, latched in silicon** → a `FaultSet<Fault>` — ordinary
+   threaded state (below).
+
+**`FaultSet<Fault>` — a sticky, one-way fault register.** `Fault` is a user `enum`
+with **explicit discriminants** (so the aggregated code is stable across edits; `0`
+is reserved for "no fault"). The set is a sticky one-hot over the variants, raised
+and read method-style:
+
+```
+enum Fault { DivZero = 1, BadOpcode = 2, Overflow = 3 }
+struct Alu { acc: i32 = 0, faults: FaultSet<Fault> = {} }   // resets empty
+
+// raise(cond, F) is the guarded set (the we-gated write); it threads like
+// mem.next() and chains, folding to `faults_q | (OR of one-hots)`:
+let f = self.faults.raise(div0, Fault::DivZero)
+                    .raise(bad,  Fault::BadOpcode);
+// ... Alu { faults: f, .. }        // threading = the single-driver commit
+
+fn first(self)           -> Option<Fault>   // priority-encode: WHICH site faulted
+fn any(self)             -> u1
+fn contains(self, Fault) -> u1
+```
+
+`first()` is the "spit out a number telling which thing faulted" the design wants;
+its `Option<Fault>` threads through `match`/`?`. `.raise` is sticky
+(`q <= q | mask`) — a guarded set that never vanishes (§6.4 boundary intact) and,
+like `mem.next()`, may not sit in an `if`/`match` arm. It erases to one `uN`
+register and SROA-flattens (no opaque IR).
+
+**No implicit global fault bus.** An ambient bus every `assert!` silently ORs into
+is exactly the emergent wired-OR §5 exists to outlaw, and it teleports leaf state to
+the root against §4.3 ownership. Faults are named, owner-threaded fields;
+cross-hierarchy aggregation is explicit (an owner merges a sub-FSM's set into its
+own and threads it up — the §5 named OR-combinator). A future `#[fault]` roll-up
+attribute may synthesize the *edit-invariant* `any()` reduction only.
+
+**Observation-only rule (the compile-out keystone).** A value from
+`first()`/`any()`/`contains()` is *diagnostic*: it may sink only into the trace
+(`<field>_q`), another `FaultSet` read, or a dedicated **fault-sideband output** of
+the `#[clock]` root — **never** a register next-state or a functional output. Faults
+therefore cannot influence the datapath (to squash a datapath, use an explicit
+`Option`/guarded hold on the datapath itself, not the fault channel).
+
+**Compile-out is oracle-clean.** A `--faults on|off` build knob is read **once** at
+`ir::Design` construction, so both backends fold from one IR (a Verilog-only strip
+is unrepresentable). With `off`, `FaultSet` fields collapse to 0-width, `.raise`
+folds to identity, the reads fold to `None`/`0` and DCE away, and the sideband port
+is **tied off** (port shape mode-invariant). Because diagnostic values can't reach
+the datapath, every functional bit is provably identical across modes. The oracle
+runs **per mode** (on ≡ on, off ≡ off), never cross-comparing. Milestone: §9.9.
+
+### 6.13 Bit manipulation: slicing, variable shift, concatenation
+
+The current operator set (`| ^ &`, `+ - *`, `== != < > <= >=`, unary `! ~ -`,
+mode-named casts) has **no bit-slice, no surface shift, and no concatenation** —
+the IR's `Shl`/`Shr` exist only as compile-time-constant-amount nodes for
+fixed-point alignment (§6.1, F4). This is the largest ergonomic gap for any
+bit-oriented datapath (protocol decoders, packers, CRCs, and — acutely —
+instruction decode; §9.12 / the RV32 forcing function). Proposed, all
+width-explicit and predictably lowered (§1 goal 4):
+
+- **Bit-slice** — `x[hi:lo]` extracts a contiguous field, type `u{hi-lo+1}`; `hi`
+  and `lo` are **compile-time constants** in v1 (a dynamic slice is a barrel shift
+  + mask, deferred). Distinct from `[T; N]` indexing, which selects a whole element
+  and is only legal on a vector-of-registers.
+- **Shift** — `<<` / `>>` surface operators. A **constant** amount folds to the
+  existing IR `Shl`/`Shr`; a **variable** amount (a barrel shift, e.g. `x >> sh`)
+  needs a new IR node lowering to a mux tree (or a native Verilog shift), with `>>`
+  **arithmetic** for a signed operand and **logical** for unsigned. Result width
+  follows width inference (§6.2).
+- **Concatenation** — `a @ b` (or `{a, b}`): a width-additive, MSB-first join, type
+  `u{wa+wb}`. The dual of slicing; how scattered immediate fields are assembled.
+- **Sign-extension from bit k** — a widening `as iN`/`as uN` cast already
+  sign/zero-extends from the operand's MSB (§6.3); assembling an immediate whose
+  sign lives at an interior bit is `(field @ …) as iN` after the sign bit is slid
+  to the MSB (or a `sext(x, k)` helper). Sign-*changing* casts remain deferred
+  (§6.3).
+
+Milestone: §9.10.
+
+### 6.14 Runtime-indexed reads and register files (proposed)
+
+A `[T; N]` vector-of-registers is readable/writable only at a **compile-time**
+index today (the elaborator rejects a runtime index). A **register file** — the
+canonical multi-read, single-write indexed state (an RV32 core needs two runtime
+read ports `rs1`/`rs2` and one write port `rd`) — is therefore not expressible. Two
+complementary routes, both with locally-legible cost:
+
+- **Runtime index on a vector-of-registers.** A runtime read `regs[i]` lowers to a
+  combinational **N:1 mux tree**; a runtime write `regs[i] = v` (as one field of the
+  returned state) to per-element **guarded holds** under a 1:N decode of the write
+  index (`x_k <= (i == k & we) ? v : x_k`) — the single-driver rule per element,
+  unchanged. Multiple read ports are just multiple mux trees over the same array; a
+  hardwired-zero register (RV32 `x0`) is a guarded write that never commits. Cost
+  (LUT mux/demux) is explicit, not inferred.
+- **Multi-port memory** (`mem<T, N, R, W>`, the §9.6 deferred axis). A 2R1W BRAM
+  register file trades the mux-tree LUTs for block RAM and a registered
+  (`Static(1)`) read — the right choice for wide/deep files, a stage-latency change
+  for narrow ones.
+
+The mux-tree route (v1) reuses the existing SROA leaf-register machinery with no new
+IR primitive. Milestone: §9.11.
 
 ---
 
@@ -1023,6 +1214,106 @@ container formats (Intel HEX, SREC, `.coe`, `.mif`), an optional runtime
 ROMs (the shared-data / multiple-cursor split — folds into the §9.6 multi-port
 axis).
 
+### 9.8 Channels / FIFO — proposed milestone (CHAN1–CHAN4)
+
+The first **fixed-capacity channel** (§6.6 / §6.11): a queue struct field with the
+`mem`-style `value()`/`next()` interface, resolving §11-#5 (v1 = ready/valid +
+no-corruption, not deadlock-freedom). Shallow queues are a **source-to-source
+desugar** (the `pipeline`/`multiplex fn` mechanism) into `struct { data:[T; N],
+head, count }` + a synthesized `next` — SROA-flattened, no new IR, no new backend
+emitter — so CHAN1 is a near-mechanical clone of the landed MEM1 path.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **CHAN1** | Single-owner **lossless** `fifo<T, N>` (scalar `T` ≤ 64 b, power-of-two `N`): `next(push: Option<T>, pop: u1)` + pure `front()`/`is_empty()`/`is_full()`/`len()`. Register-backed desugar, SROA-flattened, `Static(0)` combinational `front()`, READ_FIRST same-cycle push+pop, empty/zero reset. `next()` barred from `if`/`match` arms (single-driver); reads unrestricted. | a producer→queue→consumer example (`fn_fifo.snt`) round-trips the §7.4 oracle bit-for-bit |
+| **CHAN2** | **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar; loss policy fixed by the type. `flow<T>` (depth-1 newest-wins) only if an example needs it. | a `ring` overwrite-oldest example oracle-passes; `fifo` goldens unchanged |
+| **CHAN3** | Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: wiring a non-backpressure-aware producer to a `Sender` is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | a cross-module producer/consumer example oracle-passes; an ungated producer is rejected at type-check |
+| **CHAN4** | Deep **BRAM-backed opaque** `fifo` IR primitive (guarded out of SROA, new side-vector + Verilog emitter + sim path); `front()` becomes a registered `Static(1)` first-word-fall-through read. Gated on depth. | a deep FIFO oracle-passes accounting for the 1-cycle read latency |
+
+Deferred beyond CHAN4: multi-producer/-consumer arbitration (the §5
+`merge_exclusive`/`merge_priority` combinators), almost-full/almost-empty
+watermarks, dual-clock (async) FIFOs (the §6.7 phantom-domain interaction — a CDC
+primitive), non-scalar element types, and any **deadlock/liveness** guarantee
+(§6.6's hard tier). The elastic `Stream<T>` (§3.1) is built *on* CHAN1/CHAN3.
+
+### 9.9 Fault flags — proposed milestone (FLT0–FLT2)
+
+A one-way **sticky fault** mechanism (§6.12): latch a "should never happen"
+condition, aggregate to a code naming *which* site, and optionally compile the whole
+system out — while keeping the sim ↔ Verilog oracle bit-identical *within* a build
+mode.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **FLT0** | Sim-only `assert!(pred, "msg")` / `debug_assert!` over `#[clock]`-reachable bodies: a pure `u1` predicate, a sim-node abort gated on `~pred`, **zero** emitted bits in either backend (§6.4 precedent). | an example whose `assert!` fires makes the conformance sim fail, and the emitted SV is byte-identical with and without it |
+| **FLT1** | `FaultSet<Fault>` carried into silicon: a built-in parameterized type over a user `enum` (≤ 64 variants, explicit discriminants), `= {}` empty reset; `.raise(cond, F) -> FaultSet<Fault>` threaded advance (single-driver, no-`if`/`match`-arm, chainable `q\|mask`); pure `first() -> Option<Fault>` / `any()` / `contains(F)`; the **observation-only** taint rule in `functional.rs`; erased to a sticky-OR `uN` register (SROA-flattened, `<field>_q` exposed); `--faults on\|off` read once at `ir::Design` build (`off` folds to identity + DCE, sideband tied off). | an example that raises on data-dependent conditions round-trips the oracle bit-for-bit with `--faults=on`, and its functional outputs are identical (and `_q` absent) with `--faults=off` |
+| **FLT2** | Static buckets behind a prover: `assert_static!(p)` (SMT discharge, compiled out) and `unreachable!()` (must-prove-dead else compile error), with a **loud** `#[assume]` escape that demotes to a sim-only `debug_assert!`. | an unprovable `assert_static!` is a compile error (or a loud demotion); a provable one emits no bits |
+
+Deferred beyond FLT2: clear/re-arm (a distinct `FaultReg<Fault>` — clearing reopens
+the skip-vs-hold question); a `#[fault]` design-level roll-up attribute (the
+*edit-invariant* `any()` aggregate only, never an elaboration-ordered code);
+non-`u1` (payload-bearing) faults.
+
+### 9.10 Bit manipulation — proposed milestone (BIT1–BIT2)
+
+Surface bit-slice, shift, and concatenation (§6.13) — the highest-leverage datapath
+primitives and a prerequisite for instruction decode (§9.12 / the RV32 example).
+All width-explicit; the constant-amount cases reuse the IR `Shl`/`Shr` already
+exercised by fixed-point (F4).
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **BIT1** | Constant-bound bit-slice `x[hi:lo]` (type `u{hi-lo+1}`), constant-amount `<<`/`>>` (folding to IR `Shl`/`Shr`, arithmetic `>>` for signed), and concatenation `a @ b` (type `u{wa+wb}`). Grammar + AST + typecheck + elaborate; no new IR node. | slice/shift/concat examples pass the oracle; a field-extract + reassemble example round-trips |
+| **BIT2** | **Variable** shift (barrel), `x >> sh` / `x << sh` with runtime `sh`: a new IR `VarShift` node lowering to a mux tree (Rust sim) and a native shift (Verilog), arithmetic vs logical by signedness. | a variable-shift example (e.g. a funnel/rotate) passes the oracle bit-for-bit |
+
+Deferred: dynamic-bound bit-slice (a barrel shift + mask), bit-reverse / `popcount`
+/ `clz` intrinsics, and `sext(x, k)` sugar (expressible via `@` + cast).
+
+### 9.11 Runtime-indexed register file — proposed milestone (REG1)
+
+Runtime indexing of a `[T; N]` vector-of-registers (§6.14) — the register-file
+enabler. A runtime read lowers to a combinational N:1 mux tree; a runtime write (one
+field of the returned state) to per-element guarded holds under a 1:N write-index
+decode. Reuses the SROA leaf-register machinery; no new IR primitive.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **REG1** | Runtime read `a[i]` (mux tree) and runtime write `a[i] = v` in a returned-state field (guarded-hold decode) on a vector-of-registers, `i` a runtime `uN`; multiple runtime reads = multiple mux trees; index masked to `N`. | a 2R1W register-file example (with a hardwired-zero slot) round-trips the oracle bit-for-bit |
+
+Deferred: the BRAM-backed 2R1W path (`mem<T, N, R, W>`, the §9.6 multi-port axis),
+and byte-enable / sub-word masked writes (§9.6) needed for sub-word stores.
+
+### 9.12 RV32 soft core — proposed flagship example (sequencing)
+
+A 5-stage RV32I core with block-RAM work RAM is the intended flagship — the largest
+program the language will have expressed (today's corpus tops out ~200 lines) and
+the forcing function that motivated §9.10 / §9.11. It is **not** expressible until
+those land; it is sequenced deliberately, each step a passing oracle example before
+the next:
+
+1. **§9.10 BIT1/BIT2** — bit-slice/shift/concat for instruction-field extraction,
+   immediate assembly, and the `SLL`/`SRL`/`SRA` barrel shifter.
+2. **§9.11 REG1** — the `x0`-hardwired 2-read/1-write register file.
+3. **§9.8 CHAN1** — a skid buffer between stages (also generally useful).
+4. **§9.9 FLT1** — illegal-instruction / misaligned-access faults.
+5. **Stepping-stone core:** a single-cycle (or 3-stage) **RV32I subset** — Harvard
+   (`rom` + `include_hex!` instruction memory, `mem<u32, N>` data memory), word-only
+   `LW`/`SW`, no CSRs/traps — proving the datapath end-to-end.
+6. **Capstone:** the full 5-stage core with hazard detection + forwarding (explicit
+   stage-register `struct` fields).
+
+**Note — the pipeline color is the wrong tool.** A CPU pipeline touches shared
+mutable state (register file, forwarding) and reintroduces RAW/WAW/WAR hazards,
+which §3.1 keeps a `pipeline fn` pure of by construction (it takes no `self`). The
+core is a hand-rolled Mealy machine of explicit pipeline-register fields in the
+`#[clock]` root.
+
+**Note — stimulus.** The §7.4 oracle drives uniform-random inputs per port each
+cycle, which would scramble instruction fetch. The core takes its program from a
+`rom`/`include_hex!` and minimal `tick` inputs; a directed / program-driven stimulus
+harness (beyond the random default) is a companion tooling item worth adding for any
+large example.
+
 ---
 
 ## 10. Source Organization — Modules & Visibility (SETTLED shape)
@@ -1149,6 +1440,20 @@ version / build-manifest format (cf. the M5 build-system line in §9).
 - Merge is always a named combinator; resource sharing is always an explicit
   instance; exclusivity discharged structurally.
 - Arrays split into vector-of-registers vs ported memory.
+- Fixed-capacity channels = the `fifo` (lossless) / `ring` (overwrite-oldest) /
+  `flow` (depth-1) family, `next(push: Option<T>, pop)` + `front()`, threaded like
+  `mem` (single-driver); loss policy is in the type; v1 exposes ready/valid and
+  guarantees no-corruption, not deadlock-freedom; `Sender`/`Receiver` are
+  directional capability views over one owner, not two drivers (§6.11 / §9.8).
+- Faults are threaded `FaultSet<Fault>` state (sticky one-hot, `.raise` / `first()`),
+  never an implicit global bus; `assert!` / `debug_assert!` are sim-only,
+  `unreachable!()` must prove dead; a diagnostic (fault-read) value may reach only
+  the trace or a fault sideband, making `--faults=off` provably functional-neutral
+  (§6.12 / §9.9).
+- Bit-slice `x[hi:lo]`, `<<` / `>>` (constant folds to IR `Shl`/`Shr`; variable = a
+  barrel-shift IR node), and concat `a @ b` are the datapath bit primitives (§6.13).
+  Runtime `[T; N]` indexing lowers to a mux tree / guarded-hold decode (register
+  files), distinct from BRAM multi-port `mem` (§6.14 / §9.10 / §9.11).
 - Clock domain as phantom type; CDC crossing without a primitive is a type error.
 - Bare `/` forbidden; division via handshaked multi-cycle primitive.
 - `pipeline`/`multiplex` as two function colors; selector binding time sets
@@ -1174,4 +1479,5 @@ version / build-manifest format (cf. the M5 build-system line in §9).
 3. §6.9 — memory as latency-contracted stateful instance vs distinct primitive.
 4. §7.1 — tree-sitter shared layer vs rowan + hand-written error-recovering
    parser.
-5. §6.6 — do channels guarantee deadlock-freedom or just expose ready/valid (v1).
+5. §6.6 — **RESOLVED (§6.11 / §9.8):** v1 channels expose ready/valid and guarantee
+   no-corruption, not deadlock-freedom (the liveness tier is deferred).

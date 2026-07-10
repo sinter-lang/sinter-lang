@@ -166,6 +166,10 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   the functional surface. Both surfaces share the AST's `Expr`.
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
+fixed-capacity channels — the `fifo` / `ring` / `flow` family (§6.11 / §9.8);
+fault flags — sticky `FaultSet<Fault>` + sim-only `assert!` (§6.12 / §9.9);
+bit manipulation — slice / shift / concat (§6.13 / §9.10); runtime-indexed register
+files (§6.14 / §9.11); the RV32 flagship soft core that composes them (§9.12);
 elastic `Stream<T>` (per-stage ready/valid + skid buffers), clock-domain phantom
 types (§6.7), multi-port / dual-clock / non-scalar-element memories, `include_bin!`
 and inferred-depth ROMs, and data-dependent (`Bounded` / `Dynamic`) latencies with
