@@ -221,7 +221,8 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::ident => Ok(Expr::Ident(pair.as_str().to_string())),
         // Functional surface (the legacy chain is left exactly as above).
         Rule::f_expr => parse_expr(first_inner(pair, "f_expr")?),
-        Rule::f_or
+        Rule::f_concat
+        | Rule::f_or
         | Rule::f_xor
         | Rule::f_and
         | Rule::f_eq
@@ -367,6 +368,7 @@ fn bin_op(text: &str) -> Result<BinOp, ParseError> {
         "*" => BinOp::Mul,
         "<<" => BinOp::Shl,
         ">>" => BinOp::Shr,
+        "@" => BinOp::Concat,
         "&" => BinOp::And,
         "|" => BinOp::Or,
         "^" => BinOp::Xor,

@@ -1,0 +1,16 @@
+// Bit concatenation `a @ b` (DESIGN §6.13 / §9.10, BIT1). Pins `BinOp::Concat`
+// and that it is the loosest binary operator: `a @ b + c` parses as
+// `a @ (b + c)`, and it chains left-associatively (`a @ b @ c`).
+struct S {
+    v: u8 = 0,
+}
+
+impl S {
+    fn join(self, a: u4, b: u4, c: u4) -> u12 {
+        a @ b @ c
+    }
+
+    fn precedence(self, a: u4, b: u8) -> u12 {
+        a @ b + b
+    }
+}

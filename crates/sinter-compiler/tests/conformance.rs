@@ -139,6 +139,14 @@ const EXAMPLES: &[Example] = &[
         name: "fn_slice",
         source: include_str!("../../../examples/fn_slice.snt"),
     },
+    // BIT1c: bit concatenation `a @ b`. The random `x`/`b` stimulus drives a
+    // slice+concat nibble swap (`x[3:0] @ x[7:4]`) and a widening join
+    // (`x @ b`, u8@u4->u12) — co-simulated sim vs Verilog bit-for-bit, lowering
+    // to a shift + zero-extend + or (DESIGN §6.13 / §9.10 / §7.4).
+    Example {
+        name: "fn_concat",
+        source: include_str!("../../../examples/fn_concat.snt"),
+    },
     // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
     // register per carried value + a phase counter, sharing ONE multiplier across
     // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,

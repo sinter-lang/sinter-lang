@@ -73,6 +73,9 @@ rel_op   = { "<=" | ">=" | "<" | ">" }
 // must precede `<`/`>` at their level, but they live below `rel_op` (§f_shift)
 // so there is no clash with the comparison operators.
 shift_op = { "<<" | ">>" }
+// Bit concatenation `a @ b` (functional surface only, DESIGN §6.13 / §9.10,
+// BIT1) — the width-additive join, MSB-first. The loosest binary operator.
+concat_op = { "@" }
 add_op   = { "+" | "-" }
 mul_op   = { "*" }
 unary_op = { "!" | "~" | "-" }
@@ -213,7 +216,10 @@ f_scalar_ty = @{ ("u" | "i") ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 // Functional expression grammar, lowest precedence first. Mirrors the legacy
 // precedence but adds `as` casts, postfix (field/call/index), and the richer
 // primaries (struct literals, paths, match, tuples, arrays).
-f_expr = { f_or }
+f_expr = { f_concat }
+// Concatenation is the loosest binary operator: `a @ b` joins `a` (high bits)
+// and `b` (low bits) into a `u{wa+wb}` (DESIGN §6.13, BIT1).
+f_concat = { f_or ~ (concat_op ~ f_or)* }
 f_or   = { f_xor ~ (or_op ~ f_xor)* }
 f_xor  = { f_and ~ (xor_op ~ f_and)* }
 f_and  = { f_eq ~ (and_op ~ f_eq)* }

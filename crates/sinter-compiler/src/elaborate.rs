@@ -894,6 +894,31 @@ impl Elaborator<'_> {
                 };
                 Ok(Val::Scalar(typed(kind, ty), lf))
             }
+            BinOp::Concat => {
+                // `a @ b` -> `(a << wb) | zext(b)` in the `wa+wb`-bit result. Both
+                // operands are unsigned (F1). Reuses the IR shift / cast / or.
+                let a = self.lower(env, lhs, None, depth, pos)?;
+                let b = self.lower(env, rhs, None, depth, pos)?;
+                let (ae, _) = scalar_parts(&a, &self.ctx, pos)?;
+                let (be, _) = scalar_parts(&b, &self.ctx, pos)?;
+                let wb = be.ty.width();
+                let out_ty = Type::Uint(ae.ty.width() + wb);
+                let hi = typed(
+                    ir::ExprKind::Shl {
+                        expr: Box::new(ae),
+                        amount: wb,
+                    },
+                    out_ty,
+                );
+                let lo = typed(
+                    ir::ExprKind::Cast {
+                        expr: Box::new(be),
+                        mode: CastMode::Wrap,
+                    },
+                    out_ty,
+                );
+                Ok(Val::Scalar(typed(binary(BinOp::Or, hi, lo), out_ty), 0))
+            }
             _ => Err(err(&self.ctx, pos, "unsupported operator")),
         }
     }

@@ -185,6 +185,9 @@ pub enum BinOp {
     /// `>>` — right shift by a constant amount (DESIGN §6.13, BIT1); the result
     /// narrows by the shift amount (arithmetic for a signed operand).
     Shr,
+    /// `@` — bit concatenation (DESIGN §6.13, BIT1); `a @ b` joins `a` (high) and
+    /// `b` (low) into a `u{wa+wb}`.
+    Concat,
     /// `&`
     And,
     /// `|`

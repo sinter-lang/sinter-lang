@@ -374,8 +374,10 @@ fn bin_sym(op: BinOp) -> &'static str {
         BinOp::Gt => ">",
         BinOp::Le => "<=",
         BinOp::Ge => ">=",
-        // Constant-amount shifts emit `ir::ExprKind::Shl`/`Shr` (handled above),
-        // never a `Binary` op — see `eval::apply_binary` (DESIGN §9.10, BIT2).
-        BinOp::Shl | BinOp::Shr => unreachable!("shift emits ExprKind::Shl/Shr, not Binary"),
+        // Shifts emit `ir::ExprKind::Shl`/`Shr` and concat emits `Shl` + `Or`,
+        // never a `Binary` op — see `eval::apply_binary` (DESIGN §6.13 / §9.10).
+        BinOp::Shl | BinOp::Shr | BinOp::Concat => {
+            unreachable!("shift/concat emit ExprKind nodes, not a Binary op")
+        }
     }
 }

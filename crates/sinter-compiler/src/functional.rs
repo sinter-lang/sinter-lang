@@ -1672,6 +1672,34 @@ impl Checker<'_> {
                 };
                 Ok(make_fx(ls, out_bits, 0))
             }
+            BinOp::Concat => {
+                // `a @ b` (DESIGN §6.13, BIT1): join two unsigned integers into a
+                // `u{wa+wb}` — `a` the high bits, `b` the low bits.
+                let (l, r) = self.check_operands(lhs, rhs, env, None, ctx, pos)?;
+                let (ls, li, lf) = fx_parts(&l)
+                    .ok_or_else(|| sem(ctx, pos, format!("cannot concatenate `{l}`")))?;
+                let (rs, ri, rf) = fx_parts(&r)
+                    .ok_or_else(|| sem(ctx, pos, format!("cannot concatenate `{r}`")))?;
+                if ls || rs || lf != 0 || rf != 0 {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!(
+                            "concatenation operands must be unsigned integers (`uN`), not `{l}` \
+                             and `{r}`"
+                        ),
+                    ));
+                }
+                let w = li + ri;
+                if w > MAX_WIDTH {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("concatenation result `u{w}` exceeds the {MAX_WIDTH}-bit limit"),
+                    ));
+                }
+                Ok(FType::Uint(w))
+            }
             _ => Err(sem(ctx, pos, "unsupported binary operator".to_string())),
         }
     }

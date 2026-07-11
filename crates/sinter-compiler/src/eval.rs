@@ -46,10 +46,11 @@ pub fn apply_binary(op: BinOp, l: u64, lty: Type, r: u64, rty: Type, result_ty: 
         BinOp::And => mask(l & r, w),
         BinOp::Or => mask(l | r, w),
         BinOp::Xor => mask(l ^ r, w),
-        // Constant-amount shifts lower to `ir::ExprKind::Shl`/`Shr`, never to a
-        // `Binary` op, so a binary shift is never emitted (variable shift is a
-        // future milestone — DESIGN §9.10, BIT2).
-        BinOp::Shl | BinOp::Shr => unreachable!("shift lowers to ExprKind::Shl/Shr, not Binary"),
+        // Shifts lower to `ir::ExprKind::Shl`/`Shr` and concat to `Shl` + `Or`,
+        // so none is ever emitted as a `Binary` op (DESIGN §6.13 / §9.10).
+        BinOp::Shl | BinOp::Shr | BinOp::Concat => {
+            unreachable!("shift/concat lower to ExprKind nodes, not a Binary op")
+        }
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
             let a = signed_value(l, lty);
             let b = signed_value(r, rty);

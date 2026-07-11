@@ -1,7 +1,8 @@
 //! BIT1 bit-manipulation tests (DESIGN §6.13 / §9.10): constant `<<` / `>>`
-//! width inference and semantics (logical for unsigned, arithmetic for signed),
-//! plus the BIT1 rejections. The sim↔Verilog oracle is in `conformance.rs` (the
-//! `fn_shift` example).
+//! (logical for unsigned, arithmetic for signed), bit-slice `x[hi:lo]`, and
+//! concatenation `a @ b` — width inference, semantics, and the BIT1 rejections.
+//! The sim↔Verilog oracle is in `conformance.rs` (`fn_shift` / `fn_slice` /
+//! `fn_concat`).
 
 use std::collections::HashMap;
 
@@ -89,6 +90,40 @@ fn bit_slice_requires_unsigned_and_in_range() {
         "struct S { y: u2 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { y: x[9:8] } } }",
         "out of range",
+    );
+}
+
+#[test]
+fn concat_joins_fields() {
+    let design = compile_str(include_str!("../../../examples/fn_concat.snt")).expect("compile");
+    let m = &design.modules[0];
+    let width = |name: &str| m.regs.iter().find(|r| r.name == name).map(|r| r.ty.width());
+    assert_eq!(width("swap"), Some(8), "u4 @ u4 = u8");
+    assert_eq!(width("wide"), Some(12), "u8 @ u4 = u12");
+
+    let mut sim = Simulator::new(m);
+    sim.step(
+        &[("x".to_string(), 0xCA), ("b".to_string(), 0x3)]
+            .into_iter()
+            .collect(),
+    );
+    let out = sim.step(
+        &[("x".to_string(), 0), ("b".to_string(), 0)]
+            .into_iter()
+            .collect(),
+    );
+    // swap = x[3:0] @ x[7:4] = 0xA @ 0xC = 0xAC.
+    assert_eq!(out["swap_q"], 0xAC, "nibble swap of 0xCA");
+    // wide = x @ b = (0xCA << 4) | 0x3 = 0xCA3.
+    assert_eq!(out["wide_q"], 0xCA3, "0xCA @ 0x3");
+}
+
+#[test]
+fn concat_operands_must_be_unsigned() {
+    compile_err(
+        "struct S { y: u12 = 0 }\n\
+         impl S { #[clock(domain = sys)] fn tick(self, a: i8, b: u4) -> S { S { y: a @ b } } }",
+        "unsigned",
     );
 }
 

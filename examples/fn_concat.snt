@@ -1,0 +1,21 @@
+// BIT1c: bit concatenation `a @ b` (DESIGN §6.13 / §9.10).
+//
+// `a @ b` joins two unsigned integers into a `u{wa+wb}` — `a` the high bits,
+// `b` the low bits (MSB-first). It lowers to `(a << wb) | b` in the widened
+// result (reusing the IR shift / cast / or), so the Rust sim and the emitted
+// Verilog agree bit-for-bit. Together with bit-slice it is the immediate-
+// assembly primitive: scatter/gather instruction fields into a value.
+struct Top {
+    swap: u8  = 0, // nibble swap: x[3:0] @ x[7:4]  (slice + concat)
+    wide: u12 = 0, // widening join: x @ b  (u8 @ u4 -> u12)
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8, b: u4) -> Top {
+        Top {
+            swap: x[3:0] @ x[7:4],
+            wide: x @ b,
+        }
+    }
+}
