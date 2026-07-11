@@ -630,6 +630,11 @@ impl Resolver {
                 self.rewrite_expr(base, cur, locals, src)?;
                 self.rewrite_expr(index, cur, locals, src)?;
             }
+            Expr::Slice { base, hi, lo } => {
+                self.rewrite_expr(base, cur, locals, src)?;
+                self.rewrite_expr(hi, cur, locals, src)?;
+                self.rewrite_expr(lo, cur, locals, src)?;
+            }
             Expr::StructLit { name, fields } => {
                 if let Some(canon) = self.scope_lookup(cur, name) {
                     *name = canon;

@@ -224,6 +224,11 @@ fn reject_reserved_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
             reject_reserved_in_expr(base, ctx)?;
             reject_reserved_in_expr(index, ctx)
         }
+        Expr::Slice { base, hi, lo } => {
+            reject_reserved_in_expr(base, ctx)?;
+            reject_reserved_in_expr(hi, ctx)?;
+            reject_reserved_in_expr(lo, ctx)
+        }
         Expr::StructLit { fields, .. } => fields
             .iter()
             .try_for_each(|fi| reject_reserved_in_expr(&fi.value, ctx)),
@@ -478,6 +483,11 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
             base: Box::new(mux_rewrite(plan, base, seg, muls)),
             index: Box::new(mux_rewrite(plan, index, seg, muls)),
         },
+        Expr::Slice { base, hi, lo } => Expr::Slice {
+            base: Box::new(mux_rewrite(plan, base, seg, muls)),
+            hi: Box::new(mux_rewrite(plan, hi, seg, muls)),
+            lo: Box::new(mux_rewrite(plan, lo, seg, muls)),
+        },
         Expr::StructLit { name, fields } => Expr::StructLit {
             name: name.clone(),
             fields: fields
@@ -622,6 +632,7 @@ fn count_muls(e: &Expr) -> usize {
             count_muls(receiver) + args.iter().map(count_muls).sum::<usize>()
         }
         Expr::Index { base, index } => count_muls(base) + count_muls(index),
+        Expr::Slice { base, hi, lo } => count_muls(base) + count_muls(hi) + count_muls(lo),
         Expr::StructLit { fields, .. } => fields.iter().map(|fi| count_muls(&fi.value)).sum(),
         Expr::Tuple(items) | Expr::Array(items) => items.iter().map(count_muls).sum(),
         Expr::Match { scrutinee, arms } => {

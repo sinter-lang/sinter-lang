@@ -1,0 +1,26 @@
+// BIT1b: bit-slice `x[hi:lo]` (DESIGN §6.13 / §9.10).
+//
+// `x[hi:lo]` extracts the contiguous bit field from `hi` down to `lo`
+// (inclusive) of an unsigned scalar, of type `u{hi-lo+1}`. `hi`/`lo` are
+// compile-time constants. It lowers to a logical right shift by `lo` followed
+// by a truncation to `hi-lo+1` bits (reusing the IR shift + cast), so the Rust
+// sim and the emitted Verilog agree bit-for-bit. This is the instruction-decode
+// primitive: pulling `opcode` / `rd` / `funct3` fields out of a word.
+struct Top {
+    hi:  u4 = 0, // x[7:4]  (top nibble)
+    lo:  u4 = 0, // x[3:0]  (low nibble)
+    mid: u3 = 0, // x[5:3]  (a middle field, not anchored at bit 0)
+    top: u1 = 0, // x[7:7]  (a single bit)
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> Top {
+        Top {
+            hi: x[7:4],
+            lo: x[3:0],
+            mid: x[5:3],
+            top: x[7:7],
+        }
+    }
+}

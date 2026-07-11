@@ -290,6 +290,17 @@ pub enum Expr {
         /// The index expression.
         index: Box<Expr>,
     },
+    /// A bit-slice `base[hi:lo]` (DESIGN §6.13, BIT1): the contiguous bit field
+    /// from `hi` down to `lo` (inclusive) of a scalar, of type `u{hi-lo+1}`.
+    /// `hi` and `lo` are compile-time constants.
+    Slice {
+        /// The value being sliced.
+        base: Box<Expr>,
+        /// The high (most-significant) bit index, inclusive.
+        hi: Box<Expr>,
+        /// The low (least-significant) bit index, inclusive.
+        lo: Box<Expr>,
+    },
     /// A struct literal `Name { field: value, ... }`.
     StructLit {
         /// The struct type name.

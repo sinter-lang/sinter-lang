@@ -598,6 +598,11 @@ impl Plan {
                 base: Box::new(self.rewrite(base, seg)),
                 index: Box::new(self.rewrite(index, seg)),
             },
+            Expr::Slice { base, hi, lo } => Expr::Slice {
+                base: Box::new(self.rewrite(base, seg)),
+                hi: Box::new(self.rewrite(hi, seg)),
+                lo: Box::new(self.rewrite(lo, seg)),
+            },
             Expr::StructLit { name, fields } => Expr::StructLit {
                 name: name.clone(),
                 fields: fields
@@ -724,6 +729,11 @@ fn collect_idents(e: &Expr, out: &mut Vec<String>) {
             collect_idents(base, out);
             collect_idents(index, out);
         }
+        Expr::Slice { base, hi, lo } => {
+            collect_idents(base, out);
+            collect_idents(hi, out);
+            collect_idents(lo, out);
+        }
         Expr::StructLit { fields, .. } => {
             for fi in fields {
                 collect_idents(&fi.value, out);
@@ -802,6 +812,11 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
             reject_yields_in_expr(base, ctx)?;
             reject_yields_in_expr(index, ctx)
         }
+        Expr::Slice { base, hi, lo } => {
+            reject_yields_in_expr(base, ctx)?;
+            reject_yields_in_expr(hi, ctx)?;
+            reject_yields_in_expr(lo, ctx)
+        }
         Expr::StructLit { fields, .. } => fields
             .iter()
             .try_for_each(|fi| reject_yields_in_expr(&fi.value, ctx)),
@@ -879,6 +894,11 @@ pub(crate) fn reject_shadowing(
         Expr::Index { base, index } => {
             reject_shadowing(base, defs, ctx)?;
             reject_shadowing(index, defs, ctx)
+        }
+        Expr::Slice { base, hi, lo } => {
+            reject_shadowing(base, defs, ctx)?;
+            reject_shadowing(hi, defs, ctx)?;
+            reject_shadowing(lo, defs, ctx)
         }
         Expr::StructLit { fields, .. } => fields
             .iter()

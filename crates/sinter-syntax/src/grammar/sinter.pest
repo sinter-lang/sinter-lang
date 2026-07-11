@@ -237,7 +237,9 @@ f_postfix = { f_primary ~ (f_dot | f_call | f_index | f_try)* }
 // `.field` or `.method(args)` — distinguished by the presence of `f_args`.
 f_dot   = { "." ~ ident ~ f_args? }
 f_call  = { f_args }
-f_index = { "[" ~ f_expr ~ "]" }
+// `base[i]` (array element) or `base[hi:lo]` (bit-slice, DESIGN §6.13 / §9.10,
+// BIT1). The optional `:` second bound distinguishes a slice from an index.
+f_index = { "[" ~ f_expr ~ (":" ~ f_expr)? ~ "]" }
 // Postfix `?` — Option/valid propagation (DESIGN §6.4). Only valid inside an
 // `Option`-returning function; rejected elsewhere by a later semantic pass.
 f_try   = { "?" }

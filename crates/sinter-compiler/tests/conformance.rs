@@ -131,6 +131,14 @@ const EXAMPLES: &[Example] = &[
         name: "fn_shift",
         source: include_str!("../../../examples/fn_shift.snt"),
     },
+    // BIT1b: bit-slice `x[hi:lo]`. The random `x` stimulus drives field
+    // extraction — `x[7:4]`, `x[3:0]`, a middle field `x[5:3]`, and a single bit
+    // `x[7:7]` — co-simulated sim vs Verilog bit-for-bit, lowering to a logical
+    // shift + truncate (DESIGN §6.13 / §9.10 / §7.4).
+    Example {
+        name: "fn_slice",
+        source: include_str!("../../../examples/fn_slice.snt"),
+    },
     // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
     // register per carried value + a phase counter, sharing ONE multiplier across
     // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,

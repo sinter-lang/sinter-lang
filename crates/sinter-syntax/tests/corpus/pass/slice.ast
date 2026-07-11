@@ -1,0 +1,171 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "S",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "v",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "S",
+                methods: [
+                    Func {
+                        attrs: [],
+                        vis: Private,
+                        color: Comb,
+                        name: "field",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 9,
+                                    col: 14,
+                                },
+                            },
+                            Typed {
+                                name: "x",
+                                ty: Scalar(
+                                    Uint(
+                                        16,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 9,
+                                    col: 20,
+                                },
+                            },
+                        ],
+                        ret: Scalar(
+                            Uint(
+                                4,
+                            ),
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: Slice {
+                                base: Ident(
+                                    "x",
+                                ),
+                                hi: Literal(
+                                    11,
+                                ),
+                                lo: Literal(
+                                    8,
+                                ),
+                            },
+                            pos: Pos {
+                                line: 9,
+                                col: 34,
+                            },
+                        },
+                        pos: Pos {
+                            line: 9,
+                            col: 5,
+                        },
+                    },
+                    Func {
+                        attrs: [],
+                        vis: Private,
+                        color: Comb,
+                        name: "element",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 13,
+                                    col: 16,
+                                },
+                            },
+                            Typed {
+                                name: "a",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 13,
+                                    col: 22,
+                                },
+                            },
+                        ],
+                        ret: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        body: Block {
+                            stmts: [
+                                Let {
+                                    pattern: Binding(
+                                        "arr",
+                                    ),
+                                    ty: None,
+                                    value: Array(
+                                        [
+                                            Ident(
+                                                "a",
+                                            ),
+                                            Ident(
+                                                "a",
+                                            ),
+                                        ],
+                                    ),
+                                    pos: Pos {
+                                        line: 15,
+                                        col: 9,
+                                    },
+                                },
+                            ],
+                            tail: Index {
+                                base: Ident(
+                                    "arr",
+                                ),
+                                index: Literal(
+                                    0,
+                                ),
+                            },
+                            pos: Pos {
+                                line: 13,
+                                col: 35,
+                            },
+                        },
+                        pos: Pos {
+                            line: 13,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

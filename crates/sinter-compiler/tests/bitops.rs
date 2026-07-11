@@ -58,6 +58,41 @@ fn const_shift_widths_and_semantics() {
 }
 
 #[test]
+fn bit_slice_extracts_fields() {
+    let design = compile_str(include_str!("../../../examples/fn_slice.snt")).expect("compile");
+    let m = &design.modules[0];
+    let width = |name: &str| m.regs.iter().find(|r| r.name == name).map(|r| r.ty.width());
+    assert_eq!(width("hi"), Some(4), "x[7:4] = u4");
+    assert_eq!(width("mid"), Some(3), "x[5:3] = u3");
+    assert_eq!(width("top"), Some(1), "x[7:7] = u1");
+
+    let mut sim = Simulator::new(m);
+    // Registered outputs appear the cycle after their inputs.
+    sim.step(&[("x".to_string(), 0xB6)].into_iter().collect()); // 0xB6 = 1011_0110
+    let out = sim.step(&[("x".to_string(), 0)].into_iter().collect());
+    assert_eq!(out["hi_q"], 0xB, "x[7:4] of 0xB6");
+    assert_eq!(out["lo_q"], 0x6, "x[3:0] of 0xB6");
+    assert_eq!(out["mid_q"], 0b110, "x[5:3] of 0xB6");
+    assert_eq!(out["top_q"], 1, "x[7:7] of 0xB6");
+}
+
+#[test]
+fn bit_slice_requires_unsigned_and_in_range() {
+    // A signed operand is rejected (would need a sign-changing cast).
+    compile_err(
+        "struct S { y: u4 = 0 }\n\
+         impl S { #[clock(domain = sys)] fn tick(self, x: i8) -> S { S { y: x[3:0] } } }",
+        "unsigned",
+    );
+    // hi out of range for the operand width.
+    compile_err(
+        "struct S { y: u2 = 0 }\n\
+         impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { y: x[9:8] } } }",
+        "out of range",
+    );
+}
+
+#[test]
 fn shift_amount_must_be_a_literal() {
     compile_err(
         "struct S { y: u8 = 0 }\n\

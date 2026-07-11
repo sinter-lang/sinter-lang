@@ -1,0 +1,18 @@
+// Bit-slice `base[hi:lo]` (DESIGN §6.13 / §9.10, BIT1). Pins `Expr::Slice` and
+// its disambiguation from an array index `base[i]` (the `:` second bound is what
+// distinguishes them).
+struct S {
+    v: u8 = 0,
+}
+
+impl S {
+    fn field(self, x: u16) -> u4 {
+        x[11:8]
+    }
+
+    fn element(self, a: u8) -> u8 {
+        // Still an ordinary array index (no `:`), for contrast.
+        let arr = [a, a];
+        arr[0]
+    }
+}

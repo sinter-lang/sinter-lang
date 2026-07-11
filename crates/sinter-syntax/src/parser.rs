@@ -993,10 +993,22 @@ fn parse_fpostfix(pair: Pair<Rule>) -> Result<Expr, ParseError> {
                 func: Box::new(expr),
                 args: parse_args(first_inner(op, "call arguments")?)?,
             },
-            Rule::f_index => Expr::Index {
-                base: Box::new(expr),
-                index: Box::new(parse_expr(first_inner(op, "index")?)?),
-            },
+            Rule::f_index => {
+                // `[i]` is an array index; `[hi:lo]` (a second bound) is a slice.
+                let mut it = op.into_inner();
+                let first = parse_expr(next_pair(&mut it, "index")?)?;
+                match it.next() {
+                    Some(second) => Expr::Slice {
+                        base: Box::new(expr),
+                        hi: Box::new(first),
+                        lo: Box::new(parse_expr(second)?),
+                    },
+                    None => Expr::Index {
+                        base: Box::new(expr),
+                        index: Box::new(first),
+                    },
+                }
+            }
             Rule::f_try => Expr::Try(Box::new(expr)),
             other => return Err(unexpected(other, "postfix")),
         };

@@ -290,6 +290,7 @@ impl Checker<'_> {
             | AstExpr::Call { .. }
             | AstExpr::MethodCall { .. }
             | AstExpr::Index { .. }
+            | AstExpr::Slice { .. }
             | AstExpr::StructLit { .. }
             | AstExpr::Tuple(_)
             | AstExpr::Array(_)
@@ -518,6 +519,7 @@ impl Checker<'_> {
             | AstExpr::Call { .. }
             | AstExpr::MethodCall { .. }
             | AstExpr::Index { .. }
+            | AstExpr::Slice { .. }
             | AstExpr::StructLit { .. }
             | AstExpr::Tuple(_)
             | AstExpr::Array(_)

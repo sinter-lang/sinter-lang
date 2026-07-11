@@ -102,6 +102,11 @@ fn expand_expr(e: &mut Expr, base: Option<&Path>, ctx: &str) -> Result<(), Compi
             expand_expr(b, base, ctx)?;
             expand_expr(index, base, ctx)
         }
+        Expr::Slice { base: b, hi, lo } => {
+            expand_expr(b, base, ctx)?;
+            expand_expr(hi, base, ctx)?;
+            expand_expr(lo, base, ctx)
+        }
         Expr::StructLit { fields, .. } => fields
             .iter_mut()
             .try_for_each(|FieldInit { value, .. }| expand_expr(value, base, ctx)),

@@ -967,6 +967,39 @@ impl Checker<'_> {
                 self.check_expr(index, env, hint.as_ref(), ctx, pos)?;
                 (**elem).clone()
             }
+            Expr::Slice { base, hi, lo } => {
+                // `base[hi:lo]` extracts bits `hi..=lo` of an unsigned scalar
+                // (DESIGN §6.13, BIT1). Restricted to unsigned so the lowering is
+                // a plain logical shift + truncate (a signed operand would need a
+                // sign-changing cast, which is deferred — §6.3).
+                let bt = self.check_expr(base, env, None, ctx, pos)?;
+                let FType::Uint(w) = bt else {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!(
+                            "bit-slice requires an unsigned integer (`uN`) operand, not `{bt}`"
+                        ),
+                    ));
+                };
+                let hi = const_len(hi, "bit-slice high index", ctx, pos)?;
+                let lo = const_len(lo, "bit-slice low index", ctx, pos)?;
+                if hi < lo {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("bit-slice high index `{hi}` must be ≥ the low index `{lo}`"),
+                    ));
+                }
+                if hi >= u64::from(w) {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("bit-slice index `{hi}` is out of range for a `u{w}` value"),
+                    ));
+                }
+                FType::Uint((hi - lo + 1) as u32)
+            }
             Expr::Call { func, args } => self.check_call(func, args, env, ctx, pos)?,
             Expr::MethodCall {
                 receiver,

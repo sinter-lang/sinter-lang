@@ -618,6 +618,40 @@ impl Elaborator<'_> {
                     .nth(i)
                     .ok_or_else(|| err(&self.ctx, pos, format!("index {i} out of bounds")))
             }
+            Expr::Slice { base, hi, lo } => {
+                // `base[hi:lo]` -> `(base >> lo)` truncated to `hi-lo+1` bits. The
+                // operand is unsigned (F1), so the shift is logical and the wrap
+                // cast keeps exactly bits `lo..=hi`. Reuses the IR shift + cast.
+                let b = self.lower(env, base, None, depth, pos)?;
+                let (be, _) = scalar_parts(&b, &self.ctx, pos)?;
+                let hi = self.const_index(hi, pos)? as u32;
+                let lo = self.const_index(lo, pos)? as u32;
+                let out_w = hi - lo + 1;
+                let w = be.ty.width();
+                let shifted = if lo == 0 {
+                    be
+                } else {
+                    typed(
+                        ir::ExprKind::Shr {
+                            expr: Box::new(be),
+                            amount: lo,
+                        },
+                        Type::Uint(w - lo),
+                    )
+                };
+                let result = if shifted.ty.width() == out_w {
+                    shifted
+                } else {
+                    typed(
+                        ir::ExprKind::Cast {
+                            expr: Box::new(shifted),
+                            mode: CastMode::Wrap,
+                        },
+                        Type::Uint(out_w),
+                    )
+                };
+                Ok(Val::Scalar(result, 0))
+            }
             Expr::Call { func, args } => self.lower_call(env, func, args, depth, pos),
             Expr::MethodCall {
                 receiver,
