@@ -1225,7 +1225,7 @@ emitter — so CHAN1 is a near-mechanical clone of the landed MEM1 path.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **CHAN1** | Single-owner **lossless** `fifo<T, N>` (scalar `T` ≤ 64 b, power-of-two `N`): `next(push: Option<T>, pop: u1)` + pure `front()`/`is_empty()`/`is_full()`/`len()`. Register-backed desugar, SROA-flattened, `Static(0)` combinational `front()`, READ_FIRST same-cycle push+pop, empty/zero reset. `next()` barred from `if`/`match` arms (single-driver); reads unrestricted. | a producer→queue→consumer example (`fn_fifo.snt`) round-trips the §7.4 oracle bit-for-bit |
+| **CHAN1** | ✅ Single-owner **lossless** `fifo<T, N>` (scalar `T` ≤ 64 b, power-of-two `N`): `next(push: Option<T>, pop: u1)` + pure `front()`/`is_empty()`/`is_full()`/`len()`. Register-backed desugar, SROA-flattened, `Static(0)` combinational `front()`, READ_FIRST same-cycle push+pop, empty/zero reset. `next()` barred from `if`/`match` arms (single-driver); reads unrestricted. | a producer→queue→consumer example (`fn_fifo.snt`) round-trips the §7.4 oracle bit-for-bit |
 | **CHAN2** | **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar; loss policy fixed by the type. `flow<T>` (depth-1 newest-wins) only if an example needs it. | a `ring` overwrite-oldest example oracle-passes; `fifo` goldens unchanged |
 | **CHAN3** | Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: wiring a non-backpressure-aware producer to a `Sender` is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | a cross-module producer/consumer example oracle-passes; an ungated producer is rejected at type-check |
 | **CHAN4** | Deep **BRAM-backed opaque** `fifo` IR primitive (guarded out of SROA, new side-vector + Verilog emitter + sim path); `front()` becomes a registered `Static(1)` first-word-fall-through read. Gated on depth. | a deep FIFO oracle-passes accounting for the 1-cycle read latency |
@@ -1263,7 +1263,7 @@ exercised by fixed-point (F4).
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **BIT1** | Constant-bound bit-slice `x[hi:lo]` (type `u{hi-lo+1}`), constant-amount `<<`/`>>` (folding to IR `Shl`/`Shr`, arithmetic `>>` for signed), and concatenation `a @ b` (type `u{wa+wb}`). Grammar + AST + typecheck + elaborate; no new IR node. | slice/shift/concat examples pass the oracle; a field-extract + reassemble example round-trips |
+| **BIT1** | ✅ Constant-bound bit-slice `x[hi:lo]` (type `u{hi-lo+1}`), constant-amount `<<`/`>>` (folding to IR `Shl`/`Shr`, arithmetic `>>` for signed), and concatenation `a @ b` (type `u{wa+wb}`). Grammar + AST + typecheck + elaborate; no new IR node. | slice/shift/concat examples pass the oracle; a field-extract + reassemble example round-trips |
 | **BIT2** | **Variable** shift (barrel), `x >> sh` / `x << sh` with runtime `sh`: a new IR `VarShift` node lowering to a mux tree (Rust sim) and a native shift (Verilog), arithmetic vs logical by signedness. | a variable-shift example (e.g. a funnel/rotate) passes the oracle bit-for-bit |
 
 Deferred: dynamic-bound bit-slice (a barrel shift + mask), bit-reverse / `popcount`

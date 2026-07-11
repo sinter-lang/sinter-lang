@@ -160,17 +160,23 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
     contents from an inline array literal or `include_hex!("f.hex")`.
   - **Option** (O1–O2, §6.5 / §9.4) — `Option<T>`, `Some` / `None`, `match`, and
     the postfix `?` validity-propagation operator.
+  - **Channels** (CHAN1, §6.11 / §9.8) — `fifo<T, N>` fixed-capacity lossless
+    FIFO, `front()` / `is_full()` / `is_empty()` / `len()` / `next(push, pop)`,
+    a register-backed shift-register desugar (`fifo_desugar.rs`).
+  - **Bit manipulation** (BIT1, §6.13 / §9.10) — constant `<<` / `>>` (widen /
+    narrow, arithmetic for signed), bit-slice `x[hi:lo]`, and concat `a @ b`, all
+    lowered to the existing IR shift / cast / or nodes.
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
   the functional surface. Both surfaces share the AST's `Expr`.
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
-fixed-capacity channels — the `fifo` / `ring` / `flow` family (§6.11 / §9.8);
-fault flags — sticky `FaultSet<Fault>` + sim-only `assert!` (§6.12 / §9.9);
-bit manipulation — slice / shift / concat (§6.13 / §9.10); runtime-indexed register
-files (§6.14 / §9.11); the RV32 flagship soft core that composes them (§9.12);
-elastic `Stream<T>` (per-stage ready/valid + skid buffers), clock-domain phantom
-types (§6.7), multi-port / dual-clock / non-scalar-element memories, `include_bin!`
-and inferred-depth ROMs, and data-dependent (`Bounded` / `Dynamic`) latencies with
-the §3.5 latency prover.
+the lossy `ring` / depth-1 `flow` channels + directional `Sender`/`Receiver` views
++ deep BRAM-backed FIFO (CHAN2–4, §6.11 / §9.8); variable (barrel) shift (BIT2,
+§9.10); fault flags — sticky `FaultSet<Fault>` + sim-only `assert!` (§6.12 / §9.9);
+runtime-indexed register files (§6.14 / §9.11); the RV32 flagship soft core that
+composes them (§9.12); elastic `Stream<T>` (per-stage ready/valid + skid buffers),
+clock-domain phantom types (§6.7), multi-port / dual-clock / non-scalar-element
+memories, `include_bin!` and inferred-depth ROMs, and data-dependent (`Bounded` /
+`Dynamic`) latencies with the §3.5 latency prover.
