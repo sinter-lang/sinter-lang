@@ -69,6 +69,10 @@ xor_op   = { "^" }
 and_op   = { "&" }
 eq_op    = { "==" | "!=" }
 rel_op   = { "<=" | ">=" | "<" | ">" }
+// Bit shifts (functional surface only, DESIGN §6.13 / §9.10, BIT1). `<<`/`>>`
+// must precede `<`/`>` at their level, but they live below `rel_op` (§f_shift)
+// so there is no clash with the comparison operators.
+shift_op = { "<<" | ">>" }
 add_op   = { "+" | "-" }
 mul_op   = { "*" }
 unary_op = { "!" | "~" | "-" }
@@ -214,7 +218,10 @@ f_or   = { f_xor ~ (or_op ~ f_xor)* }
 f_xor  = { f_and ~ (xor_op ~ f_and)* }
 f_and  = { f_eq ~ (and_op ~ f_eq)* }
 f_eq   = { f_rel ~ (eq_op ~ f_rel)* }
-f_rel  = { f_add ~ (rel_op ~ f_add)* }
+f_rel  = { f_shift ~ (rel_op ~ f_shift)* }
+// Shifts bind looser than `+`/`-` but tighter than the comparisons (as in Rust):
+// `a + b << c` is `(a + b) << c` (DESIGN §6.13, BIT1).
+f_shift = { f_add ~ (shift_op ~ f_add)* }
 f_add  = { f_mul ~ (add_op ~ f_mul)* }
 f_mul  = { f_cast ~ (mul_op ~ f_cast)* }
 

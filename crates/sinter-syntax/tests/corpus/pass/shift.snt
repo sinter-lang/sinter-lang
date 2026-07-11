@@ -1,0 +1,17 @@
+// Constant bit shifts `<<` / `>>` (DESIGN §6.13 / §9.10, BIT1). Pins the
+// operators (`BinOp::Shl` / `BinOp::Shr`) and their precedence: shifts bind
+// looser than `+`/`-` but tighter than the comparisons, so `a + b << c` parses
+// as `(a + b) << c` and `x >> s < y` as `(x >> s) < y`.
+struct S {
+    v: u8 = 0,
+}
+
+impl S {
+    fn widen(self, a: u8, b: u8) -> u16 {
+        a + b << 2
+    }
+
+    fn compare(self, x: u8, s: u8, y: u8) -> u1 {
+        x >> s < y
+    }
+}

@@ -1591,6 +1591,54 @@ impl Checker<'_> {
                 }
                 Ok(make_fx(ls, ibits, fbits))
             }
+            BinOp::Shl | BinOp::Shr => {
+                // `x << k` / `x >> k` (DESIGN §6.13, BIT1). The amount `k` is a
+                // compile-time literal; `<<` widens the result by `k` bits, `>>`
+                // narrows it by `k` (arithmetic for a signed operand).
+                let l = self.check_expr(lhs, env, None, ctx, pos)?;
+                let (ls, li, lf) =
+                    fx_parts(&l).ok_or_else(|| sem(ctx, pos, format!("cannot shift `{l}`")))?;
+                if lf != 0 {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        format!("shift operands must be integers (`uN`/`iN`), not `{l}`"),
+                    ));
+                }
+                let Expr::Literal(k) = rhs else {
+                    return Err(sem(
+                        ctx,
+                        pos,
+                        "the shift amount must be a literal constant (BIT1)".to_string(),
+                    ));
+                };
+                let k = u32::try_from(*k)
+                    .map_err(|_| sem(ctx, pos, format!("shift amount `{k}` is too large")))?;
+                let out_bits = if op == BinOp::Shl {
+                    let w = li + k;
+                    if w > MAX_WIDTH {
+                        return Err(sem(
+                            ctx,
+                            pos,
+                            format!(
+                                "`<<` result `{}` exceeds the {MAX_WIDTH}-bit limit",
+                                make_fx(ls, w, 0)
+                            ),
+                        ));
+                    }
+                    w
+                } else {
+                    if k >= li {
+                        return Err(sem(
+                            ctx,
+                            pos,
+                            format!("`>>` amount `{k}` must be less than the operand width `{li}`"),
+                        ));
+                    }
+                    li - k
+                };
+                Ok(make_fx(ls, out_bits, 0))
+            }
             _ => Err(sem(ctx, pos, "unsupported binary operator".to_string())),
         }
     }

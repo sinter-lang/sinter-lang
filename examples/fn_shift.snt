@@ -1,0 +1,24 @@
+// BIT1a: constant bit shifts `<<` / `>>` (DESIGN §6.13 / §9.10).
+//
+// The shift amount is a compile-time constant. Following width inference
+// (DESIGN §6.2), `x << k` widens the result by `k` bits (no bits lost — it is
+// `x * 2^k`) and `x >> k` narrows it by `k` bits (drops the low `k`; the shift
+// is arithmetic — sign-preserving — for a signed operand, logical for an
+// unsigned one). Both lower to the IR const-shift nodes already used by
+// fixed-point, so the Rust sim and the emitted Verilog agree bit-for-bit.
+struct Top {
+    hi:   u4  = 0, // top nibble of x       : x >> 4  (u8 >> 4 = u4)
+    quad: u10 = 0, // x * 4                 : x << 2  (u8 << 2 = u10)
+    sar:  i5  = 0, // arithmetic (signed) shift: s >> 3 (i8 >> 3 = i5)
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8, s: i8) -> Top {
+        Top {
+            hi: x >> 4,
+            quad: x << 2,
+            sar: s >> 3,
+        }
+    }
+}

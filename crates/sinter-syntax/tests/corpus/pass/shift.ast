@@ -1,0 +1,197 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "S",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "v",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "S",
+                methods: [
+                    Func {
+                        attrs: [],
+                        vis: Private,
+                        color: Comb,
+                        name: "widen",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 10,
+                                    col: 14,
+                                },
+                            },
+                            Typed {
+                                name: "a",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 10,
+                                    col: 20,
+                                },
+                            },
+                            Typed {
+                                name: "b",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 10,
+                                    col: 27,
+                                },
+                            },
+                        ],
+                        ret: Scalar(
+                            Uint(
+                                16,
+                            ),
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: Binary {
+                                op: Shl,
+                                lhs: Binary {
+                                    op: Add,
+                                    lhs: Ident(
+                                        "a",
+                                    ),
+                                    rhs: Ident(
+                                        "b",
+                                    ),
+                                },
+                                rhs: Literal(
+                                    2,
+                                ),
+                            },
+                            pos: Pos {
+                                line: 10,
+                                col: 41,
+                            },
+                        },
+                        pos: Pos {
+                            line: 10,
+                            col: 5,
+                        },
+                    },
+                    Func {
+                        attrs: [],
+                        vis: Private,
+                        color: Comb,
+                        name: "compare",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 14,
+                                    col: 16,
+                                },
+                            },
+                            Typed {
+                                name: "x",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 14,
+                                    col: 22,
+                                },
+                            },
+                            Typed {
+                                name: "s",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 14,
+                                    col: 29,
+                                },
+                            },
+                            Typed {
+                                name: "y",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 14,
+                                    col: 36,
+                                },
+                            },
+                        ],
+                        ret: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: Binary {
+                                op: Lt,
+                                lhs: Binary {
+                                    op: Shr,
+                                    lhs: Ident(
+                                        "x",
+                                    ),
+                                    rhs: Ident(
+                                        "s",
+                                    ),
+                                },
+                                rhs: Ident(
+                                    "y",
+                                ),
+                            },
+                            pos: Pos {
+                                line: 14,
+                                col: 49,
+                            },
+                        },
+                        pos: Pos {
+                            line: 14,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 9,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

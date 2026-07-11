@@ -123,6 +123,14 @@ const EXAMPLES: &[Example] = &[
         name: "fn_fifo",
         source: include_str!("../../../examples/fn_fifo.snt"),
     },
+    // BIT1a: constant bit shifts `<<` / `>>`. The random `x`/`s` stimulus drives
+    // `x >> 4` (logical, u8->u4), `x << 2` (widening, u8->u10), and `s >> 3`
+    // (arithmetic, i8->i5) — co-simulated sim vs Verilog bit-for-bit reusing the
+    // IR const-shift nodes (DESIGN §6.13 / §9.10 / §7.4).
+    Example {
+        name: "fn_shift",
+        source: include_str!("../../../examples/fn_shift.snt"),
+    },
     // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
     // register per carried value + a phase counter, sharing ONE multiplier across
     // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,

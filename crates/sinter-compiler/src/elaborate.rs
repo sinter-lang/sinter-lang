@@ -828,6 +828,38 @@ impl Elaborator<'_> {
                 let ty = int_ty(signed, ibits + fbits);
                 Ok(Val::Scalar(typed(binary(op, le, re), ty), fbits))
             }
+            BinOp::Shl | BinOp::Shr => {
+                // `x << k` / `x >> k` with a literal `k` (checked by F1). Reuse the
+                // IR const-shift nodes (the fixed-point path): `<<` widens by `k`
+                // bits, `>>` narrows by `k` (arithmetic for a signed operand).
+                let l = self.lower(env, lhs, None, depth, pos)?;
+                let (le, lf) = scalar_parts(&l, &self.ctx, pos)?;
+                let Expr::Literal(k) = rhs else {
+                    return Err(err(&self.ctx, pos, "shift amount must be a literal"));
+                };
+                let k = *k as u32;
+                let lty = le.ty;
+                let signed = lty.is_signed();
+                let width = lty.width();
+                let (kind, ty) = if op == BinOp::Shl {
+                    (
+                        ir::ExprKind::Shl {
+                            expr: Box::new(le),
+                            amount: k,
+                        },
+                        int_ty(signed, width + k),
+                    )
+                } else {
+                    (
+                        ir::ExprKind::Shr {
+                            expr: Box::new(le),
+                            amount: k,
+                        },
+                        int_ty(signed, width - k),
+                    )
+                };
+                Ok(Val::Scalar(typed(kind, ty), lf))
+            }
             _ => Err(err(&self.ctx, pos, "unsupported operator")),
         }
     }

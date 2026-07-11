@@ -179,6 +179,12 @@ pub enum BinOp {
     Sub,
     /// `*`
     Mul,
+    /// `<<` — left shift by a constant amount (DESIGN §6.13, BIT1); the result
+    /// widens by the shift amount.
+    Shl,
+    /// `>>` — right shift by a constant amount (DESIGN §6.13, BIT1); the result
+    /// narrows by the shift amount (arithmetic for a signed operand).
+    Shr,
     /// `&`
     And,
     /// `|`

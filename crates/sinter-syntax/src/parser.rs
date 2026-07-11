@@ -226,6 +226,7 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         | Rule::f_and
         | Rule::f_eq
         | Rule::f_rel
+        | Rule::f_shift
         | Rule::f_add
         | Rule::f_mul => fold_binary(pair),
         Rule::f_cast => parse_fcast(pair),
@@ -364,6 +365,8 @@ fn bin_op(text: &str) -> Result<BinOp, ParseError> {
         "+" => BinOp::Add,
         "-" => BinOp::Sub,
         "*" => BinOp::Mul,
+        "<<" => BinOp::Shl,
+        ">>" => BinOp::Shr,
         "&" => BinOp::And,
         "|" => BinOp::Or,
         "^" => BinOp::Xor,
