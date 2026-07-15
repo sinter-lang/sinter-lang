@@ -725,12 +725,14 @@ read ports `rs1`/`rs2` and one write port `rd`) — is therefore not expressible
 complementary routes, both with locally-legible cost:
 
 - **Runtime index on a vector-of-registers.** A runtime read `regs[i]` lowers to a
-  combinational **N:1 mux tree**; a runtime write `regs[i] = v` (as one field of the
-  returned state) to per-element **guarded holds** under a 1:N decode of the write
-  index (`x_k <= (i == k & we) ? v : x_k`) — the single-driver rule per element,
-  unchanged. Multiple read ports are just multiple mux trees over the same array; a
-  hardwired-zero register (RV32 `x0`) is a guarded write that never commits. Cost
-  (LUT mux/demux) is explicit, not inferred.
+  combinational **N:1 mux tree**; a functional-update write `regs.set(i, v)` — a
+  pure array method returning the array with element `i` replaced — lowers to
+  per-element `mux(i == k, v, regs[k])`, i.e. **guarded holds** under a 1:N decode
+  (`x_k <= (i == k & we) ? v : x_k` once gated by an `if we`), the single-driver
+  rule per element, unchanged. (There is no statement-level `regs[i] = v`; the
+  surface has no assignment.) Multiple read ports are just multiple mux trees over
+  the same array; a hardwired-zero register (RV32 `x0`) is a `set` the enable never
+  commits. Cost (LUT mux/demux) is explicit, not inferred.
 - **Multi-port memory** (`mem<T, N, R, W>`, the §9.6 deferred axis). A 2R1W BRAM
   register file trades the mux-tree LUTs for block RAM and a registered
   (`Static(1)`) read — the right choice for wide/deep files, a stage-latency change
@@ -1278,7 +1280,7 @@ decode. Reuses the SROA leaf-register machinery; no new IR primitive.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **REG1** | Runtime read `a[i]` (mux tree) and runtime write `a[i] = v` in a returned-state field (guarded-hold decode) on a vector-of-registers, `i` a runtime `uN`; multiple runtime reads = multiple mux trees; index masked to `N`. | a 2R1W register-file example (with a hardwired-zero slot) round-trips the oracle bit-for-bit |
+| **REG1** | ✅ Runtime read `a[i]` (combinational N:1 mux tree) and functional-update write `a.set(i, v)` (per-element `mux(i==k, v, a[k])` — the guarded-hold decode when gated by an `if we`) on a vector-of-registers, `i` a runtime index; multiple runtime reads = multiple mux trees. Purely `functional` + `elaborate` (reuses `Index` / `MethodCall` syntax — no new AST). | a 2R1W register-file example (`fn_regfile.snt`, hardwired-zero slot) round-trips the oracle bit-for-bit |
 
 Deferred: the BRAM-backed 2R1W path (`mem<T, N, R, W>`, the §9.6 multi-port axis),
 and byte-enable / sub-word masked writes (§9.6) needed for sub-word stores.

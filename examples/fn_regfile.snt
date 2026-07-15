@@ -1,0 +1,29 @@
+// REG1: a runtime-indexed register file (DESIGN §6.14 / §9.11).
+//
+// A `[u8; 8]` vector-of-registers with two combinational read ports and one
+// synchronous write port — the RISC-V register-file shape. Distinct from a
+// `mem<T, N>`: a runtime read `regs[i]` lowers to an N:1 mux tree (`Static(0)`,
+// so both ports read the SAME cycle, unlike a memory's registered read), and
+// the write `regs.set(i, v)` lowers to a per-element guarded hold
+// (`x_k <= (i == k & we) ? v : x_k`) — a 1:N decode over ordinary flops.
+//
+// Register 0 is hardwired to zero, RISC-V style: it resets to 0 and the write
+// enable excludes it (`rd != 0`), so it reads 0 forever.
+struct RegFile {
+    regs: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0],
+}
+
+impl RegFile {
+    #[clock(domain = sys)]
+    fn tick(self, we: u1, rd: u3, wdata: u8, rs1: u3, rs2: u3) -> (RegFile, (u8, u8)) {
+        let a = self.regs[rs1]; // read port 1 (combinational)
+        let b = self.regs[rs2]; // read port 2 (combinational)
+        let wen = we == 1 & rd != 0; // x0 is never written
+        let regs2 = if wen == 1 {
+            self.regs.set(rd, wdata)
+        } else {
+            self.regs
+        };
+        (RegFile { regs: regs2 }, (a, b))
+    }
+}

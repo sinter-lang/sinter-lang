@@ -1175,6 +1175,9 @@ impl Checker<'_> {
         {
             return self.check_mem_method(elem, *depth, *writable, method, args, env, ctx, pos);
         }
+        if let FType::Array(elem, n) = &recv {
+            return self.check_array_method(elem, *n, method, args, env, ctx, pos);
+        }
         let type_name = match &recv {
             FType::Struct(s) | FType::Enum(s) => s.clone(),
             _ => return Err(sem(ctx, pos, format!("`{recv}` has no methods"))),
@@ -1218,6 +1221,47 @@ impl Checker<'_> {
     /// `next(raddr, we, waddr, wdata)` for a writable `mem`, `next(raddr)` for a
     /// read-only `rom`. The transition returns the memory so it threads into the
     /// tail `Self { m: self.m.next(…) }` (that threading commits it).
+    /// A built-in method on a `[T; N]` vector-of-registers. `set(i, v)` returns
+    /// the array with element `i` replaced by `v` — a pure, combinational
+    /// functional update (DESIGN §6.14, REG1); a runtime `i` lowers to a 1:N
+    /// guarded-hold decode. Reads use `a[i]` (index syntax), not a method.
+    #[allow(clippy::too_many_arguments)]
+    fn check_array_method(
+        &self,
+        elem: &FType,
+        n: u64,
+        method: &str,
+        args: &[Expr],
+        env: &Env,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<FType, CompileError> {
+        if method != "set" {
+            return Err(sem(
+                ctx,
+                pos,
+                format!("`[{elem}; {n}]` has no method `{method}` (only `set`)"),
+            ));
+        }
+        if args.len() != 2 {
+            return Err(sem(
+                ctx,
+                pos,
+                format!(
+                    "`set` expects 2 arguments (index, value), found {}",
+                    args.len()
+                ),
+            ));
+        }
+        // A bare-literal index adopts the natural index width (like `a[i]`); the
+        // value must match the element type.
+        let hint = matches!(args[0], Expr::Literal(_))
+            .then(|| FType::Uint((u64::BITS - n.leading_zeros()).max(1)));
+        self.check_expr(&args[0], env, hint.as_ref(), ctx, pos)?;
+        self.check_expr(&args[1], env, Some(elem), ctx, pos)?;
+        Ok(FType::Array(Box::new(elem.clone()), n))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn check_mem_method(
         &self,

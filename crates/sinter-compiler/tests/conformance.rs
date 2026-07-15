@@ -147,6 +147,15 @@ const EXAMPLES: &[Example] = &[
         name: "fn_concat",
         source: include_str!("../../../examples/fn_concat.snt"),
     },
+    // REG1: a runtime-indexed register file (`[u8; 8]`, 2 read ports + 1 write).
+    // The random stimulus drives `we`/`rd`/`wdata`/`rs1`/`rs2`, exercising the
+    // combinational N:1 read mux trees and the `we`-gated 1:N write decode (with
+    // register 0 hardwired to zero) — co-simulated sim vs Verilog bit-for-bit
+    // (DESIGN §6.14 / §9.11 / §7.4).
+    Example {
+        name: "fn_regfile",
+        source: include_str!("../../../examples/fn_regfile.snt"),
+    },
     // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
     // register per carried value + a phase counter, sharing ONE multiplier across
     // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,

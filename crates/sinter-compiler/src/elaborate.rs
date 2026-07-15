@@ -612,11 +612,25 @@ impl Elaborator<'_> {
                 let Val::Array(items) = b else {
                     return Err(err(&self.ctx, pos, "indexing a non-array"));
                 };
-                let i = self.const_index(index, pos)?;
-                items
-                    .into_iter()
-                    .nth(i)
-                    .ok_or_else(|| err(&self.ctx, pos, format!("index {i} out of bounds")))
+                // Constant index: pick the element directly (the SROA fast path).
+                if let Ok(i) = self.const_index(index, pos) {
+                    return items
+                        .into_iter()
+                        .nth(i)
+                        .ok_or_else(|| err(&self.ctx, pos, format!("index {i} out of bounds")));
+                }
+                // Runtime index (REG1, §9.11): a combinational N:1 mux tree over the
+                // elements. Start from the last element (the default for an
+                // out-of-range index) and fold down so element `k` wins on `i == k`.
+                let idx = self.lower_scalar(env, index, None, depth, pos)?;
+                let iw = idx.ty.width();
+                let mut result = items[items.len() - 1].clone();
+                for k in (0..items.len() - 1).rev() {
+                    let klit = typed(ir::ExprKind::Literal(mask(k as u64, iw)), idx.ty);
+                    let cond = typed(binary(BinOp::Eq, idx.clone(), klit), Type::Uint(1));
+                    result = self.mux(&cond, &items[k], &result, pos)?;
+                }
+                Ok(result)
             }
             Expr::Slice { base, hi, lo } => {
                 // `base[hi:lo]` -> `(base >> lo)` truncated to `hi-lo+1` bits. The
@@ -1108,6 +1122,32 @@ impl Elaborator<'_> {
                 depth,
                 pos,
             );
+        }
+        if let Val::Array(items) = &recv {
+            // `a.set(i, v)` (REG1, §9.11) -> a new array where element `k` is
+            // `mux(i == k, v, a[k])`: with a runtime `i` this is the 1:N
+            // guarded-hold decode; each element remains an ordinary register.
+            if method != "set" {
+                return Err(err(
+                    &self.ctx,
+                    pos,
+                    format!("array has no method `{method}`"),
+                ));
+            }
+            let idx = self.lower_scalar(env, &args[0], None, depth, pos)?;
+            let elem_ty = items.first().map(val_ty);
+            let v = self.lower(env, &args[1], elem_ty.as_ref(), depth, pos)?;
+            let iw = idx.ty.width();
+            let out = items
+                .iter()
+                .enumerate()
+                .map(|(k, cur)| {
+                    let klit = typed(ir::ExprKind::Literal(mask(k as u64, iw)), idx.ty);
+                    let cond = typed(binary(BinOp::Eq, idx.clone(), klit), Type::Uint(1));
+                    self.mux(&cond, &v, cur, pos)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Val::Array(out));
         }
         let type_name = match &recv {
             Val::Struct(s, _) => s.clone(),
