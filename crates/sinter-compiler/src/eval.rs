@@ -104,6 +104,23 @@ pub fn eval_expr(expr: &Expr, env: &HashMap<String, u64>) -> u64 {
             expr: inner,
             amount,
         } => apply_shr(eval_expr(inner, env), inner.ty, expr.ty.width(), *amount),
+        // Variable (barrel) shift, same operand width. Reuses the const-shift
+        // helpers with the runtime amount clamped (they already treat an amount
+        // `>= width` as `0` / sign-fill).
+        ExprKind::VarShift {
+            expr: inner,
+            amount,
+            left,
+        } => {
+            let v = eval_expr(inner, env);
+            let sh = u32::try_from(eval_expr(amount, env)).unwrap_or(u32::MAX);
+            let w = expr.ty.width();
+            if *left {
+                apply_shl(v, w, sh)
+            } else {
+                apply_shr(v, inner.ty, w, sh)
+            }
+        }
     }
 }
 

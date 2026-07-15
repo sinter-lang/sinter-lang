@@ -163,9 +163,11 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   - **Channels** (CHAN1, §6.11 / §9.8) — `fifo<T, N>` fixed-capacity lossless
     FIFO, `front()` / `is_full()` / `is_empty()` / `len()` / `next(push, pop)`,
     a register-backed shift-register desugar (`fifo_desugar.rs`).
-  - **Bit manipulation** (BIT1, §6.13 / §9.10) — constant `<<` / `>>` (widen /
-    narrow, arithmetic for signed), bit-slice `x[hi:lo]`, and concat `a @ b`, all
-    lowered to the existing IR shift / cast / or nodes.
+  - **Bit manipulation** (BIT1–BIT2, §6.13 / §9.10) — a **literal**-amount `<<` /
+    `>>` (widen / narrow, arithmetic for signed), bit-slice `x[hi:lo]`, and concat
+    `a @ b`, all lowered to existing IR shift / cast / or nodes; plus a **runtime**
+    (barrel) shift (BIT2) — a same-width `ir::VarShift` → native Verilog shift, the
+    `SLL` / `SRL` / `SRA` primitive.
   - **Register files** (REG1, §6.14 / §9.11) — runtime-indexed `[T; N]`
     vector-of-registers: read `a[i]` (combinational N:1 mux tree, any number of
     read ports) and functional-update write `a.set(i, v)` (1:N guarded-hold
@@ -177,8 +179,8 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
 the lossy `ring` / depth-1 `flow` channels + directional `Sender`/`Receiver` views
-+ deep BRAM-backed FIFO (CHAN2–4, §6.11 / §9.8); variable (barrel) shift (BIT2,
-§9.10); fault flags — sticky `FaultSet<Fault>` + sim-only `assert!` (§6.12 / §9.9);
++ deep BRAM-backed FIFO (CHAN2–4, §6.11 / §9.8); fault flags — sticky
+`FaultSet<Fault>` + sim-only `assert!` (§6.12 / §9.9);
 byte-enable / multi-port `mem` (the BRAM register-file / sub-word-store axis, §9.6);
 the RV32 flagship soft core that composes them (§9.12); elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),

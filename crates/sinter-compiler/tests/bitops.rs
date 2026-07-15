@@ -1,8 +1,9 @@
-//! BIT1 bit-manipulation tests (DESIGN §6.13 / §9.10): constant `<<` / `>>`
-//! (logical for unsigned, arithmetic for signed), bit-slice `x[hi:lo]`, and
-//! concatenation `a @ b` — width inference, semantics, and the BIT1 rejections.
-//! The sim↔Verilog oracle is in `conformance.rs` (`fn_shift` / `fn_slice` /
-//! `fn_concat`).
+//! BIT1/BIT2 bit-manipulation tests (DESIGN §6.13 / §9.10): constant `<<` / `>>`
+//! (BIT1, logical for unsigned / arithmetic for signed), bit-slice `x[hi:lo]`,
+//! concatenation `a @ b`, and the variable (barrel) shift by a runtime amount
+//! (BIT2) — width inference, semantics, and the rejections. The sim↔Verilog
+//! oracle is in `conformance.rs` (`fn_shift` / `fn_slice` / `fn_concat` /
+//! `fn_barrel`).
 
 use std::collections::HashMap;
 
@@ -128,11 +129,78 @@ fn concat_operands_must_be_unsigned() {
 }
 
 #[test]
-fn shift_amount_must_be_a_literal() {
+fn variable_barrel_shift_semantics() {
+    let design = compile_str(include_str!("../../../examples/fn_barrel.snt")).expect("compile");
+    let m = &design.modules[0];
+    // A variable shift keeps the operand width (unlike a constant shift).
+    let width = |n: &str| m.regs.iter().find(|r| r.name == n).map(|r| r.ty.width());
+    assert_eq!(width("sll"), Some(8), "u8 << sh stays u8");
+    assert_eq!(width("sra"), Some(8), "i8 >> sh stays i8");
+
+    let mut sim = Simulator::new(m);
+    // Registered outputs appear the cycle after their inputs.
+    let mut barrel = |x: u64, s: u64, sh: u64| -> (u64, u64, u64) {
+        sim.step(
+            &[
+                ("x".to_string(), x),
+                ("s".to_string(), s),
+                ("sh".to_string(), sh),
+            ]
+            .into_iter()
+            .collect::<HashMap<_, _>>(),
+        );
+        let o = sim.step(
+            &[
+                ("x".to_string(), 0),
+                ("s".to_string(), 0),
+                ("sh".to_string(), 0),
+            ]
+            .into_iter()
+            .collect::<HashMap<_, _>>(),
+        );
+        (o["sll_q"], o["srl_q"], o["sra_q"])
+    };
+    // Shift by 0 is the identity.
+    assert_eq!(barrel(0xAB, 0x05, 0), (0xAB, 0xAB, 0x05));
+    // Logical left/right within the width (bits shifted out are lost).
+    assert_eq!(barrel(0xAB, 0, 4), ((0xABu64 << 4) & 0xFF, 0xAB >> 4, 0));
+    // Arithmetic right shift of a negative: -8 >> 1 = -4 (i8 = 0xFC).
+    assert_eq!(barrel(0, 0xF8, 1).2, 0xFC);
+    // Shift == width (8): logical -> 0; arithmetic -> the sign fill.
+    assert_eq!(barrel(0xFF, 0xFF, 8), (0, 0, 0xFF), "s=-1 sign-fills");
+    assert_eq!(barrel(0xFF, 0x7F, 8), (0, 0, 0), "s=+127 -> 0");
+    // Shift > width (up to 15): same as >= width.
+    assert_eq!(barrel(0xFF, 0xF0, 15), (0, 0, 0xFF), "s=-16 sign-fills");
+}
+
+#[test]
+fn named_const_shift_amount_is_a_same_width_barrel() {
+    // A *literal* amount widens (`u8 << 2` = u10); a named `const` is a
+    // non-literal, so it takes the same-width barrel path (`u8 << K` = u8) — no
+    // silent widening (and any width-mismatched use is a loud type error). This
+    // pins the DESIGN §6.13 literal-vs-runtime rule.
+    let design = compile_str(
+        "const K: u8 = 2;\n\
+         struct S { y: u8 = 0 }\n\
+         impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> (S, u8) { (S { y: 0 }, x << K) } }",
+    )
+    .expect("compile");
+    let m = &design.modules[0];
+    // The `x << K` output port is u8 (same width), not u10 (a widened literal).
+    let out = m.ports.iter().find(|p| p.name == "out").expect("out port");
+    assert_eq!(
+        out.ty.width(),
+        8,
+        "`x << K` (K a const) is a same-width barrel"
+    );
+}
+
+#[test]
+fn variable_shift_amount_must_be_unsigned() {
     compile_err(
         "struct S { y: u8 = 0 }\n\
-         impl S { #[clock(domain = sys)] fn tick(self, x: u8, k: u8) -> S { S { y: x >> k } } }",
-        "must be a literal",
+         impl S { #[clock(domain = sys)] fn tick(self, x: u8, sh: i4) -> S { S { y: x << sh } } }",
+        "unsigned",
     );
 }
 

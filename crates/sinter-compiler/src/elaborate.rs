@@ -877,36 +877,45 @@ impl Elaborator<'_> {
                 Ok(Val::Scalar(typed(binary(op, le, re), ty), fbits))
             }
             BinOp::Shl | BinOp::Shr => {
-                // `x << k` / `x >> k` with a literal `k` (checked by F1). Reuse the
-                // IR const-shift nodes (the fixed-point path): `<<` widens by `k`
-                // bits, `>>` narrows by `k` (arithmetic for a signed operand).
                 let l = self.lower(env, lhs, None, depth, pos)?;
                 let (le, lf) = scalar_parts(&l, &self.ctx, pos)?;
-                let Expr::Literal(k) = rhs else {
-                    return Err(err(&self.ctx, pos, "shift amount must be a literal"));
-                };
-                let k = *k as u32;
                 let lty = le.ty;
-                let signed = lty.is_signed();
-                let width = lty.width();
-                let (kind, ty) = if op == BinOp::Shl {
-                    (
-                        ir::ExprKind::Shl {
-                            expr: Box::new(le),
-                            amount: k,
-                        },
-                        int_ty(signed, width + k),
-                    )
+                if let Expr::Literal(k) = rhs {
+                    // BIT1: a literal amount -> the widening/narrowing IR const-shift
+                    // nodes (the fixed-point path): `<<` widens by `k`, `>>` narrows
+                    // by `k` (arithmetic for a signed operand).
+                    let k = *k as u32;
+                    let signed = lty.is_signed();
+                    let width = lty.width();
+                    let (kind, ty) = if op == BinOp::Shl {
+                        (
+                            ir::ExprKind::Shl {
+                                expr: Box::new(le),
+                                amount: k,
+                            },
+                            int_ty(signed, width + k),
+                        )
+                    } else {
+                        (
+                            ir::ExprKind::Shr {
+                                expr: Box::new(le),
+                                amount: k,
+                            },
+                            int_ty(signed, width - k),
+                        )
+                    };
+                    Ok(Val::Scalar(typed(kind, ty), lf))
                 } else {
-                    (
-                        ir::ExprKind::Shr {
-                            expr: Box::new(le),
-                            amount: k,
-                        },
-                        int_ty(signed, width - k),
-                    )
-                };
-                Ok(Val::Scalar(typed(kind, ty), lf))
+                    // BIT2 (DESIGN §9.10): a runtime amount -> a same-width barrel
+                    // shift node (arithmetic vs logical by the operand's signedness).
+                    let amount = self.lower_scalar(env, rhs, None, depth, pos)?;
+                    let kind = ir::ExprKind::VarShift {
+                        expr: Box::new(le),
+                        amount: Box::new(amount),
+                        left: op == BinOp::Shl,
+                    };
+                    Ok(Val::Scalar(typed(kind, lty), lf))
+                }
             }
             BinOp::Concat => {
                 // `a @ b` -> `(a << wb) | zext(b)` in the `wa+wb`-bit result. Both

@@ -67,6 +67,10 @@ impl Cse {
                 self.visit(lhs);
                 self.visit(rhs);
             }
+            ir::ExprKind::VarShift { expr, amount, .. } => {
+                self.visit(expr);
+                self.visit(amount);
+            }
             ir::ExprKind::If { cond, then, els } => {
                 self.visit(cond);
                 self.visit(then);
@@ -131,6 +135,9 @@ fn key(e: &ir::Expr) -> String {
         ir::ExprKind::Cast { expr, mode } => format!("C{mode:?}:{}({})", tystr(e.ty), key(expr)),
         ir::ExprKind::Shl { expr, amount } => format!("SL{amount}({})", key(expr)),
         ir::ExprKind::Shr { expr, amount } => format!("SR{amount}({})", key(expr)),
+        ir::ExprKind::VarShift { expr, amount, left } => {
+            format!("VS{left}({},{})", key(expr), key(amount))
+        }
     }
 }
 

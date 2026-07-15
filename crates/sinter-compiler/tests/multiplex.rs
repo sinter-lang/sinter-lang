@@ -32,6 +32,7 @@ fn count_mul(e: &Expr) -> usize {
         | ExprKind::Shl { expr, .. }
         | ExprKind::Shr { expr, .. } => count_mul(expr),
         ExprKind::Binary { lhs, rhs, .. } => count_mul(lhs) + count_mul(rhs),
+        ExprKind::VarShift { expr, amount, .. } => count_mul(expr) + count_mul(amount),
         ExprKind::If { cond, then, els } => count_mul(cond) + count_mul(then) + count_mul(els),
         ExprKind::Literal(_) | ExprKind::Ident(_) => 0,
     }

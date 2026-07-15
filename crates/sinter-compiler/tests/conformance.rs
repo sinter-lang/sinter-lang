@@ -156,6 +156,15 @@ const EXAMPLES: &[Example] = &[
         name: "fn_regfile",
         source: include_str!("../../../examples/fn_regfile.snt"),
     },
+    // BIT2: variable (barrel) shift by a runtime amount. The random `x`/`s`/`sh`
+    // stimulus drives `x << sh` (logical), `x >> sh` (logical), and `s >> sh`
+    // (arithmetic), with `sh: u4` exercising shifts past the 8-bit width (-> 0 /
+    // sign fill) — co-simulated sim vs a native Verilog barrel shift bit-for-bit
+    // (DESIGN §6.13 / §9.10 / §7.4).
+    Example {
+        name: "fn_barrel",
+        source: include_str!("../../../examples/fn_barrel.snt"),
+    },
     // M1 multiplex: a `multiplex fn` time-folds its `yield`-phases onto one
     // register per carried value + a phase counter, sharing ONE multiplier across
     // the phases (operand-muxed, IR Mul-CSE'd). dot2 (2 phases) / dot3 (3 phases,

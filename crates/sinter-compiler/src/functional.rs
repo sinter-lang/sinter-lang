@@ -1682,39 +1682,58 @@ impl Checker<'_> {
                         format!("shift operands must be integers (`uN`/`iN`), not `{l}`"),
                     ));
                 }
-                let Expr::Literal(k) = rhs else {
-                    return Err(sem(
-                        ctx,
-                        pos,
-                        "the shift amount must be a literal constant (BIT1)".to_string(),
-                    ));
-                };
-                let k = u32::try_from(*k)
-                    .map_err(|_| sem(ctx, pos, format!("shift amount `{k}` is too large")))?;
-                let out_bits = if op == BinOp::Shl {
-                    let w = li + k;
-                    if w > MAX_WIDTH {
+                if let Expr::Literal(k) = rhs {
+                    // BIT1: a literal amount widens (`<<`) / narrows (`>>`) the
+                    // result exactly.
+                    let k = u32::try_from(*k)
+                        .map_err(|_| sem(ctx, pos, format!("shift amount `{k}` is too large")))?;
+                    let out_bits = if op == BinOp::Shl {
+                        let w = li + k;
+                        if w > MAX_WIDTH {
+                            return Err(sem(
+                                ctx,
+                                pos,
+                                format!(
+                                    "`<<` result `{}` exceeds the {MAX_WIDTH}-bit limit",
+                                    make_fx(ls, w, 0)
+                                ),
+                            ));
+                        }
+                        w
+                    } else {
+                        if k >= li {
+                            return Err(sem(
+                                ctx,
+                                pos,
+                                format!(
+                                    "`>>` amount `{k}` must be less than the operand width `{li}`"
+                                ),
+                            ));
+                        }
+                        li - k
+                    };
+                    Ok(make_fx(ls, out_bits, 0))
+                } else {
+                    // BIT2 (DESIGN §9.10): a non-literal amount is a same-width
+                    // barrel shift — the result keeps the operand's type. The
+                    // amount is an unsigned integer; a shift `>=` the width yields 0
+                    // (or the sign fill for an arithmetic right shift). Only a
+                    // *literal* widens (like array/`mem` lengths and slice bounds,
+                    // which also require a literal); a named `const` is a
+                    // non-literal, so `x << K` is a barrel shift, not a widen.
+                    let amt = self.check_expr(rhs, env, None, ctx, pos)?;
+                    if !matches!(amt, FType::Uint(_)) {
                         return Err(sem(
                             ctx,
                             pos,
                             format!(
-                                "`<<` result `{}` exceeds the {MAX_WIDTH}-bit limit",
-                                make_fx(ls, w, 0)
+                                "a variable shift amount must be an unsigned integer (`uN`), not \
+                                 `{amt}`"
                             ),
                         ));
                     }
-                    w
-                } else {
-                    if k >= li {
-                        return Err(sem(
-                            ctx,
-                            pos,
-                            format!("`>>` amount `{k}` must be less than the operand width `{li}`"),
-                        ));
-                    }
-                    li - k
-                };
-                Ok(make_fx(ls, out_bits, 0))
+                    Ok(l)
+                }
             }
             BinOp::Concat => {
                 // `a @ b` (DESIGN §6.13, BIT1): join two unsigned integers into a

@@ -1,0 +1,26 @@
+// BIT2: variable (barrel) shift `x << sh` / `x >> sh` by a runtime amount
+// (DESIGN §6.13 / §9.10) — the `SLL` / `SRL` / `SRA` primitive for a soft CPU.
+//
+// A runtime shift amount gives a **same-width** result (unlike a constant
+// amount, which widens/narrows — BIT1): bits shifted past the width are lost,
+// and a shift `>= width` yields 0 (or the sign fill for an arithmetic right
+// shift). Left is logical; right is arithmetic for a signed operand, logical
+// for an unsigned one. The amount `sh` is a `u4` here (0..15) so the random
+// stimulus also exercises shifts past the 8-bit width. Lowers to a native
+// Verilog barrel shift (`<<` / `>>` / `>>>`), co-simulated bit-for-bit.
+struct Top {
+    sll: u8 = 0, // x << sh  (logical left)
+    srl: u8 = 0, // x >> sh  (logical right, unsigned)
+    sra: i8 = 0, // s >> sh  (arithmetic right, signed)
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8, s: i8, sh: u4) -> Top {
+        Top {
+            sll: x << sh,
+            srl: x >> sh,
+            sra: s >> sh,
+        }
+    }
+}

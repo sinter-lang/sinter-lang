@@ -289,6 +289,23 @@ fn expr(e: &Expr) -> String {
                 format!("{w}'({} >> {amount})", expr(inner))
             }
         }
+        // Variable (barrel) shift, same width: a native shift by a runtime
+        // amount, kept to `w` bits (a shift `>= w` yields 0 / the sign fill).
+        // Arithmetic (`>>>`) for a signed right shift, else logical.
+        ExprKind::VarShift {
+            expr: inner,
+            amount,
+            left,
+        } => {
+            let w = e.ty.width();
+            if *left {
+                format!("{w}'({} << {})", expr(inner), expr(amount))
+            } else if inner.ty.is_signed() {
+                format!("{w}'($signed({}) >>> {})", expr(inner), expr(amount))
+            } else {
+                format!("{w}'({} >> {})", expr(inner), expr(amount))
+            }
+        }
     }
 }
 

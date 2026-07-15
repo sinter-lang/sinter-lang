@@ -701,11 +701,18 @@ width-explicit and predictably lowered (§1 goal 4):
   and `lo` are **compile-time constants** in v1 (a dynamic slice is a barrel shift
   + mask, deferred). Distinct from `[T; N]` indexing, which selects a whole element
   and is only legal on a vector-of-registers.
-- **Shift** — `<<` / `>>` surface operators. A **constant** amount folds to the
-  existing IR `Shl`/`Shr`; a **variable** amount (a barrel shift, e.g. `x >> sh`)
-  needs a new IR node lowering to a mux tree (or a native Verilog shift), with `>>`
-  **arithmetic** for a signed operand and **logical** for unsigned. Result width
-  follows width inference (§6.2).
+- **Shift** — `<<` / `>>` surface operators, split by the shift *amount*:
+  - a **literal** amount folds to the existing IR `Shl`/`Shr` and follows width
+    inference (§6.2) — `<<` **widens** the result by the amount (`x << 2` is
+    `u{w+2}`, no bits lost), `>>` **narrows** it. (Consistent with the rest of the
+    language, only a *literal* is accepted as a widening amount — a named `const`
+    is not, exactly as array/`mem` lengths and slice bounds require a literal.)
+  - a **non-literal** amount (a runtime value, or a named `const`) is a
+    **same-width barrel shift** (a new IR `VarShift` node → a native Verilog shift),
+    keeping the operand type: bits shifted past the width are lost and a shift
+    `>= width` yields `0` (or the sign fill for an arithmetic `>>`). `>>` is
+    **arithmetic** for a signed operand, **logical** for unsigned; `<<` is logical.
+    The amount is an unsigned integer. This is the `SLL`/`SRL`/`SRA` primitive.
 - **Concatenation** — `a @ b` (or `{a, b}`): a width-additive, MSB-first join, type
   `u{wa+wb}`. The dual of slicing; how scattered immediate fields are assembled.
 - **Sign-extension from bit k** — a widening `as iN`/`as uN` cast already
@@ -1266,7 +1273,7 @@ exercised by fixed-point (F4).
 | Phase | Scope | Done when |
 |---|---|---|
 | **BIT1** | ✅ Constant-bound bit-slice `x[hi:lo]` (type `u{hi-lo+1}`), constant-amount `<<`/`>>` (folding to IR `Shl`/`Shr`, arithmetic `>>` for signed), and concatenation `a @ b` (type `u{wa+wb}`). Grammar + AST + typecheck + elaborate; no new IR node. | slice/shift/concat examples pass the oracle; a field-extract + reassemble example round-trips |
-| **BIT2** | **Variable** shift (barrel), `x >> sh` / `x << sh` with runtime `sh`: a new IR `VarShift` node lowering to a mux tree (Rust sim) and a native shift (Verilog), arithmetic vs logical by signedness. | a variable-shift example (e.g. a funnel/rotate) passes the oracle bit-for-bit |
+| **BIT2** | ✅ **Variable** (barrel) shift `x << sh` / `x >> sh` with a runtime (non-literal) `sh`: a new IR `VarShift` node, **same-width** result, arithmetic vs logical by the operand's signedness, `sh >= width` → 0 / sign fill. Reuses the `apply_shl`/`apply_shr` helpers (Rust sim) and a native Verilog barrel shift (`<<` / `>>` / `>>>`). | `fn_barrel.snt` (`SLL`/`SRL`/`SRA` by a runtime amount, `sh` past the width) passes the oracle bit-for-bit |
 
 Deferred: dynamic-bound bit-slice (a barrel shift + mask), bit-reverse / `popcount`
 / `clz` intrinsics, and `sext(x, k)` sugar (expressible via `@` + cast).

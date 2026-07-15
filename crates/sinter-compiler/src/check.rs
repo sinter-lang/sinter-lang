@@ -595,6 +595,11 @@ impl Checker<'_> {
                     *amount,
                 ))
             }
+            ExprKind::VarShift { .. } => Err(CompileError::semantic(
+                self.module,
+                pos,
+                "a variable (runtime-amount) shift is not a constant expression".to_string(),
+            )),
         }
     }
 }

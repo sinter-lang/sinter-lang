@@ -210,4 +210,17 @@ pub enum ExprKind {
         /// The (compile-time constant) shift amount.
         amount: u32,
     },
+    /// Variable (barrel) shift by a runtime `amount`, keeping the operand width
+    /// (DESIGN §6.13 / §9.10, BIT2). Left is logical; right is arithmetic for a
+    /// signed operand, logical for an unsigned one. A shift of `amount >= width`
+    /// yields `0` (or the sign fill for an arithmetic right shift). The node type
+    /// is the operand type (same width).
+    VarShift {
+        /// The value being shifted.
+        expr: Box<Expr>,
+        /// The runtime shift amount (an unsigned integer).
+        amount: Box<Expr>,
+        /// Left (`<<`) if true, right (`>>`) if false.
+        left: bool,
+    },
 }
