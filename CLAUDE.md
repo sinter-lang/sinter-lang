@@ -160,9 +160,13 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
     contents from an inline array literal or `include_hex!("f.hex")`.
   - **Option** (O1–O2, §6.5 / §9.4) — `Option<T>`, `Some` / `None`, `match`, and
     the postfix `?` validity-propagation operator.
-  - **Channels** (CHAN1, §6.11 / §9.8) — `fifo<T, N>` fixed-capacity lossless
-    FIFO, `front()` / `is_full()` / `is_empty()` / `len()` / `next(push, pop)`,
-    a register-backed shift-register desugar (`fifo_desugar.rs`).
+  - **Channels** (CHAN1–CHAN2, §6.11 / §9.8) — the fixed-capacity channel family,
+    all register-backed source-to-source desugars (`channel_desugar.rs`): the
+    lossless `fifo<T, N>` and the overwrite-oldest `ring<T, N>` share one queue
+    template (`front()` / `is_full()` / `is_empty()` / `len()` / `next(push, pop)`,
+    differing only in the `pushf` / `shiftf` flags), and the depth-1 newest-wins
+    `flow<T>` (`value()` / `next(push)`, no pop) erases to an `Option<T>` register.
+    The loss policy is in the type, never a call-site flag.
   - **Bit manipulation** (BIT1–BIT2, §6.13 / §9.10) — a **literal**-amount `<<` /
     `>>` (widen / narrow, arithmetic for signed), bit-slice `x[hi:lo]`, and concat
     `a @ b`, all lowered to existing IR shift / cast / or nodes; plus a **runtime**
@@ -178,8 +182,8 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   the functional surface. Both surfaces share the AST's `Expr`.
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
-the lossy `ring` / depth-1 `flow` channels + directional `Sender`/`Receiver` views
-+ deep BRAM-backed FIFO (CHAN2–4, §6.11 / §9.8); fault flags — sticky
+directional `Sender`/`Receiver` views + deep BRAM-backed FIFO (CHAN3–4, §6.11 /
+§9.8); fault flags — sticky
 `FaultSet<Fault>` + sim-only `assert!` (§6.12 / §9.9);
 byte-enable / multi-port `mem` (the BRAM register-file / sub-word-store axis, §9.6);
 the RV32 flagship soft core that composes them (§9.12); elastic `Stream<T>`

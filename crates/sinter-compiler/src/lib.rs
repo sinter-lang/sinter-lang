@@ -10,11 +10,11 @@
 #![warn(missing_docs)]
 
 pub mod board;
+pub mod channel_desugar;
 pub mod check;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
-pub mod fifo_desugar;
 pub mod functional;
 pub mod include_expand;
 pub mod ir;
@@ -81,10 +81,11 @@ fn compile_program(
     use sinter_syntax::ast::{FnColor, Item};
     let mut program = program;
     include_expand::expand_includes(&mut program, base)?;
-    // Lower `fifo<T, N>` fields to synthesized struct + impl (DESIGN §9.8, CHAN1)
-    // before the staged-color desugars, so they see only ordinary state.
-    let program = if fifo_desugar::has_fifo(&program) {
-        fifo_desugar::desugar_fifos(&program)?
+    // Lower channel fields (`fifo`/`ring`/`flow`) to synthesized struct + impl
+    // (DESIGN §9.8) before the staged-color desugars, so they see only ordinary
+    // state.
+    let program = if channel_desugar::has_channel(&program) {
+        channel_desugar::desugar_channels(&program)?
     } else {
         program
     };

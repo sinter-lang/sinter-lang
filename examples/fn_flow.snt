@@ -1,0 +1,22 @@
+// CHAN2: a depth-1 newest-wins channel (DESIGN §6.11 / §9.8).
+//
+// `flow<u8>` is the "latest sample" register: a single valid slot read with
+// `value() -> Option<u8>`, advanced with `next(push)`. A push always wins (it
+// overwrites whatever was there); with no push the slot holds. There is no pop —
+// a consumer reads the newest sample whenever it likes, and a producer never
+// blocks. It resets empty (`None`) and erases exactly like an `Option<u8>`: a
+// valid bit plus the payload.
+//
+// The use for it is sampling a fast signal from slower logic, where only the
+// current value matters and stale samples are meant to be dropped.
+struct Sampler {
+    latest: flow<u8>,
+}
+
+impl Sampler {
+    #[clock(domain = sys)]
+    fn tick(self, incoming: Option<u8>) -> (Sampler, Option<u8>) {
+        let sample = self.latest.value();
+        (Sampler { latest: self.latest.next(incoming) }, sample)
+    }
+}

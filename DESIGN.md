@@ -589,9 +589,10 @@ combinational (`Static(0)`); the deep BRAM-backed tier makes it a registered
 - **`ring<T, N>` — overwrite-oldest.** Identical surface; a push into a full ring
   advances the head (drops the oldest) and always accepts. For trace/telemetry
   buffers where the newest data matters most.
-- **`flow<T>` — depth-1 newest-wins** (optional, low priority). A single valid
-  slot, `value() -> Option<T>`, no pop — erased exactly like `Option`. A "latest
-  sample" register.
+- **`flow<T>` — depth-1 newest-wins.** A single valid slot, `value() -> Option<T>`,
+  no pop — erased exactly like `Option`. A "latest sample" register: a push always
+  wins (overwriting a live sample), and with no push the slot holds. Reading does
+  not consume, so a producer never blocks and a consumer never waits.
 
 **Overflow safety — the honest ceiling.** "Push into a full FIFO" cannot be made a
 *compile error* in general (it needs a static occupancy proof — undecidable
@@ -1235,7 +1236,7 @@ emitter — so CHAN1 is a near-mechanical clone of the landed MEM1 path.
 | Phase | Scope | Done when |
 |---|---|---|
 | **CHAN1** | ✅ Single-owner **lossless** `fifo<T, N>` (scalar `T` ≤ 64 b, power-of-two `N`): `next(push: Option<T>, pop: u1)` + pure `front()`/`is_empty()`/`is_full()`/`len()`. Register-backed desugar, SROA-flattened, `Static(0)` combinational `front()`, READ_FIRST same-cycle push+pop, empty/zero reset. `next()` barred from `if`/`match` arms (single-driver); reads unrestricted. | a producer→queue→consumer example (`fn_fifo.snt`) round-trips the §7.4 oracle bit-for-bit |
-| **CHAN2** | **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar; loss policy fixed by the type. `flow<T>` (depth-1 newest-wins) only if an example needs it. | a `ring` overwrite-oldest example oracle-passes; `fifo` goldens unchanged |
+| **CHAN2** | ✅ **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar, loss policy fixed by the type: one shared queue template parameterized by `pushf` (a `ring` always accepts) and `shiftf` (a full ring retires its oldest word), so `ring` costs no state a `fifo` does not. Plus `flow<T>` (depth-1 newest-wins): `value()` / `next(push)`, no pop, erased to an `Option<T>` register. | ✅ `fn_ring.snt` (overwrite-oldest) + `fn_flow.snt` (newest-wins) oracle-pass bit-for-bit; `fifo` goldens unchanged |
 | **CHAN3** | Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: wiring a non-backpressure-aware producer to a `Sender` is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | a cross-module producer/consumer example oracle-passes; an ungated producer is rejected at type-check |
 | **CHAN4** | Deep **BRAM-backed opaque** `fifo` IR primitive (guarded out of SROA, new side-vector + Verilog emitter + sim path); `front()` becomes a registered `Static(1)` first-word-fall-through read. Gated on depth. | a deep FIFO oracle-passes accounting for the 1-cycle read latency |
 

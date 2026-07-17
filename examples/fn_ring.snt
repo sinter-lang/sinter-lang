@@ -1,0 +1,27 @@
+// CHAN2: a fixed-capacity lossy ring buffer (DESIGN §6.11 / §9.8).
+//
+// `ring<u8, 4>` has the *same* surface as `fifo<u8, 4>` — `front()`, `is_full()`,
+// `is_empty()`, `len()`, and the threaded `next(push, pop)` transition. Only the
+// loss policy differs, and it lives in the type rather than a call-site flag: a
+// push into a full ring drops the *oldest* word and always accepts, where a
+// `fifo` would refuse the word (a guarded hold).
+//
+// That is the trade a trace/telemetry buffer wants: the newest data matters most,
+// so overwrite-oldest beats blocking the producer. Because the policy is spelled
+// in the type, this queue reads as lossy at a glance — and `ring` is the *only*
+// way to get overwriting, since `fifo` has no method that clobbers a live slot.
+//
+// This producer deliberately ignores `is_full()` (it pushes unconditionally) —
+// legal here precisely because the type accepts loss.
+struct Trace {
+    r: ring<u8, 4>,
+}
+
+impl Trace {
+    #[clock(domain = sys)]
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Trace, (Option<u8>, u1)) {
+        let head = self.r.front();
+        // Push regardless of occupancy: a full ring drops its oldest word.
+        (Trace { r: self.r.next(incoming, take) }, (head, self.r.is_full()))
+    }
+}

@@ -626,17 +626,40 @@ pub enum TypeRef {
         /// Number of write ports (MEM1: always 1).
         write_ports: u32,
     },
-    /// A fixed-capacity FIFO queue `fifo<T, N>` (DESIGN §6.11 / §9.8, CHAN1). A
-    /// lossless single-clock queue held in a struct field, accessed method-style
-    /// (`front()` / `next(push, pop)` / `is_full()` / …). Lowered by a
-    /// source-to-source desugar (`fifo_desugar`) into a plain `struct` +
-    /// `impl` before type-checking, so no later stage sees this variant.
-    Fifo {
+    /// A fixed-capacity channel (DESIGN §6.11 / §9.8): the `fifo<T, N>` /
+    /// `ring<T, N>` / `flow<T>` family. A single-clock queue held in a struct
+    /// field and accessed method-style (`front()` / `next(push, pop)` / …), with
+    /// the loss policy chosen by [`ChannelKind`] rather than a call-site flag.
+    /// Lowered by a source-to-source desugar (`channel_desugar`) into a plain
+    /// `struct` + `impl` before type-checking, so no later stage sees this
+    /// variant.
+    Channel {
+        /// Which member of the family — and so the loss policy and surface.
+        kind: ChannelKind,
         /// The element type (a scalar).
         elem: Box<TypeRef>,
-        /// The capacity (a power-of-two constant expression).
+        /// The capacity (a power-of-two constant expression). A `flow<T>` is
+        /// depth-1 by definition and writes no capacity in source, so the parser
+        /// synthesizes the literal `1` for it.
         depth: Box<Expr>,
     },
+}
+
+/// Which member of the fixed-capacity channel family a [`TypeRef::Channel`] is
+/// (DESIGN §6.11). The loss policy lives in the type — never in a call-site flag
+/// — so a lossy queue reads as lossy at a glance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelKind {
+    /// `fifo<T, N>` — lossless. A push into a full queue with no simultaneous pop
+    /// is a guarded hold: the word is refused, live data is never overwritten.
+    Fifo,
+    /// `ring<T, N>` — overwrite-oldest. A push into a full ring drops the oldest
+    /// word and always accepts. For trace/telemetry buffers where the newest data
+    /// matters most.
+    Ring,
+    /// `flow<T>` — depth-1, newest-wins. A single valid slot read with `value()`;
+    /// there is no pop. A "latest sample" register.
+    Flow,
 }
 
 /// A block: zero or more statements followed by a tail expression (its value).

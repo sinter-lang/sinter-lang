@@ -1,7 +1,8 @@
 // A fixed-capacity FIFO type `fifo<T, N>` (DESIGN §6.11 / §9.8, CHAN1) held in a
 // struct field, read with `front()` and advanced with `next(push, pop)` — the
-// `mem`-style stateful-instance surface. Pins `TypeRef::Fifo` and the method
-// calls (a source-to-source desugar lowers it later; this only checks parsing).
+// `mem`-style stateful-instance surface. Pins `TypeRef::Channel` (`kind: Fifo` —
+// the lossless member of the family) and the method calls (a source-to-source
+// desugar lowers it later; this only checks parsing).
 struct Queue {
     q: fifo<u8, 16>,
 }

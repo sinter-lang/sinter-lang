@@ -1,0 +1,170 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "Sampler",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "latest",
+                        ty: Channel {
+                            kind: Flow,
+                            elem: Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                            depth: Literal(
+                                1,
+                            ),
+                        },
+                        default: None,
+                        pos: Pos {
+                            line: 7,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 6,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Sampler",
+                methods: [
+                    Func {
+                        attrs: [
+                            Attr {
+                                name: "clock",
+                                args: [
+                                    AttrArg {
+                                        key: "domain",
+                                        value: Some(
+                                            Ident(
+                                                "sys",
+                                            ),
+                                        ),
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 11,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Private,
+                        color: Comb,
+                        name: "tick",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 12,
+                                    col: 13,
+                                },
+                            },
+                            Typed {
+                                name: "incoming",
+                                ty: Option(
+                                    Scalar(
+                                        Uint(
+                                            8,
+                                        ),
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 12,
+                                    col: 19,
+                                },
+                            },
+                        ],
+                        ret: Tuple(
+                            [
+                                Named(
+                                    "Sampler",
+                                ),
+                                Option(
+                                    Scalar(
+                                        Uint(
+                                            8,
+                                        ),
+                                    ),
+                                ),
+                            ],
+                        ),
+                        body: Block {
+                            stmts: [
+                                Let {
+                                    pattern: Binding(
+                                        "sample",
+                                    ),
+                                    ty: None,
+                                    value: MethodCall {
+                                        receiver: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "latest",
+                                        },
+                                        method: "value",
+                                        args: [],
+                                    },
+                                    pos: Pos {
+                                        line: 13,
+                                        col: 9,
+                                    },
+                                },
+                            ],
+                            tail: Tuple(
+                                [
+                                    StructLit {
+                                        name: "Sampler",
+                                        fields: [
+                                            FieldInit {
+                                                name: "latest",
+                                                value: MethodCall {
+                                                    receiver: Field {
+                                                        base: Ident(
+                                                            "self",
+                                                        ),
+                                                        field: "latest",
+                                                    },
+                                                    method: "next",
+                                                    args: [
+                                                        Ident(
+                                                            "incoming",
+                                                        ),
+                                                    ],
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    Ident(
+                                        "sample",
+                                    ),
+                                ],
+                            ),
+                            pos: Pos {
+                                line: 12,
+                                col: 66,
+                            },
+                        },
+                        pos: Pos {
+                            line: 11,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 10,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

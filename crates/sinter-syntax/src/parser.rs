@@ -7,10 +7,10 @@ use pest::iterators::Pair;
 use pest::Parser as _;
 
 use crate::ast::{
-    Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, ConstItem, Dir, EnumItem,
-    EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item, LetBinding, MatchArm, ModItem,
-    Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt, StructField, StructItem,
-    Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
+    Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, ChannelKind, ConstItem,
+    Dir, EnumItem, EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item, LetBinding,
+    MatchArm, ModItem, Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt,
+    StructField, StructItem, Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
 };
 
 /// The `pest`-generated parser and `Rule` enum. Isolated in a submodule so the
@@ -876,15 +876,32 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 write_ports,
             })
         }
-        Rule::f_fifo_ty => {
-            // `fifo<T, N>` (DESIGN §6.11 / §9.8) — the same `<elem, depth>` shape
-            // as `mem`; a source-to-source desugar lowers it later.
+        Rule::f_fifo_ty | Rule::f_ring_ty => {
+            // `fifo<T, N>` / `ring<T, N>` (DESIGN §6.11 / §9.8) — the same
+            // `<elem, depth>` shape as `mem`, differing only in loss policy; a
+            // source-to-source desugar lowers both later.
+            let kind = if inner.as_rule() == Rule::f_fifo_ty {
+                ChannelKind::Fifo
+            } else {
+                ChannelKind::Ring
+            };
             let mut it = inner.into_inner();
-            let elem = parse_typeref(next_pair(&mut it, "fifo element type")?)?;
-            let depth = parse_mem_depth(next_pair(&mut it, "fifo capacity")?)?;
-            Ok(TypeRef::Fifo {
+            let elem = parse_typeref(next_pair(&mut it, "channel element type")?)?;
+            let depth = parse_mem_depth(next_pair(&mut it, "channel capacity")?)?;
+            Ok(TypeRef::Channel {
+                kind,
                 elem: Box::new(elem),
                 depth: Box::new(depth),
+            })
+        }
+        Rule::f_flow_ty => {
+            // `flow<T>` (DESIGN §6.11 / §9.8) — depth-1 newest-wins, so source
+            // names no capacity and we synthesize the `1` the type implies.
+            let elem = parse_typeref(first_inner(inner, "flow element type")?)?;
+            Ok(TypeRef::Channel {
+                kind: ChannelKind::Flow,
+                elem: Box::new(elem),
+                depth: Box::new(Expr::Literal(1)),
             })
         }
         Rule::f_scalar_ty => parse_scalar_typeref(&inner),

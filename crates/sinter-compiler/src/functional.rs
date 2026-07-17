@@ -573,14 +573,14 @@ fn resolve_type(
                 writable: *write_ports == 1,
             }
         }
-        TypeRef::Fifo { .. } => {
-            // `fifo<T, N>` is lowered by the `fifo` desugar (DESIGN §9.8, CHAN1)
-            // into a plain struct + impl before type-checking, so a surviving
-            // `Fifo` type here is a compiler bug (a missed desugar).
+        TypeRef::Channel { .. } => {
+            // A channel (`fifo`/`ring`/`flow`) is lowered by the channel desugar
+            // (DESIGN §9.8) into a plain struct + impl before type-checking, so a
+            // surviving `Channel` type here is a compiler bug (a missed desugar).
             return Err(sem(
                 ctx,
                 pos,
-                "internal error: `fifo<T, N>` should have been desugared before type-checking",
+                "internal error: a channel type should have been desugared before type-checking",
             ));
         }
     };

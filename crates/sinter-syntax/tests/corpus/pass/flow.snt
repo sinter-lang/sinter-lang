@@ -1,0 +1,16 @@
+// A depth-1 newest-wins channel `flow<T>` (DESIGN §6.11 / §9.8, CHAN2) held in a
+// struct field. It names no capacity — depth-1 is the type's definition — so the
+// parser synthesizes the `1` the golden shows, and the surface is `value()` +
+// `next(push)` with no pop. A source-to-source desugar lowers it later; this only
+// checks parsing.
+struct Sampler {
+    latest: flow<u8>,
+}
+
+impl Sampler {
+    #[clock(domain = sys)]
+    fn tick(self, incoming: Option<u8>) -> (Sampler, Option<u8>) {
+        let sample = self.latest.value();
+        (Sampler { latest: self.latest.next(incoming) }, sample)
+    }
+}

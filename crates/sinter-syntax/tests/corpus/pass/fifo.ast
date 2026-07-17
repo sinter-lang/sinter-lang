@@ -10,7 +10,8 @@ Program {
                     StructField {
                         vis: Private,
                         name: "q",
-                        ty: Fifo {
+                        ty: Channel {
+                            kind: Fifo,
                             elem: Scalar(
                                 Uint(
                                     8,
@@ -22,13 +23,13 @@ Program {
                         },
                         default: None,
                         pos: Pos {
-                            line: 6,
+                            line: 7,
                             col: 5,
                         },
                     },
                 ],
                 pos: Pos {
-                    line: 5,
+                    line: 6,
                     col: 1,
                 },
             },
@@ -52,7 +53,7 @@ Program {
                                     },
                                 ],
                                 pos: Pos {
-                                    line: 10,
+                                    line: 11,
                                     col: 5,
                                 },
                             },
@@ -63,7 +64,7 @@ Program {
                         params: [
                             SelfRef {
                                 pos: Pos {
-                                    line: 11,
+                                    line: 12,
                                     col: 13,
                                 },
                             },
@@ -77,7 +78,7 @@ Program {
                                     ),
                                 ),
                                 pos: Pos {
-                                    line: 11,
+                                    line: 12,
                                     col: 19,
                                 },
                             },
@@ -89,7 +90,7 @@ Program {
                                     ),
                                 ),
                                 pos: Pos {
-                                    line: 11,
+                                    line: 12,
                                     col: 41,
                                 },
                             },
@@ -126,7 +127,7 @@ Program {
                                         args: [],
                                     },
                                     pos: Pos {
-                                        line: 12,
+                                        line: 13,
                                         col: 9,
                                     },
                                 },
@@ -164,18 +165,18 @@ Program {
                                 ],
                             ),
                             pos: Pos {
-                                line: 11,
+                                line: 12,
                                 col: 74,
                             },
                         },
                         pos: Pos {
-                            line: 10,
+                            line: 11,
                             col: 5,
                         },
                     },
                 ],
                 pos: Pos {
-                    line: 9,
+                    line: 10,
                     col: 1,
                 },
             },

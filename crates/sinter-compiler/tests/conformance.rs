@@ -123,6 +123,24 @@ const EXAMPLES: &[Example] = &[
         name: "fn_fifo",
         source: include_str!("../../../examples/fn_fifo.snt"),
     },
+    // CHAN2: a lossy overwrite-oldest `ring<u8, 4>`. Same stimulus shape as
+    // `fn_fifo` — an `Option<u8>` push and a pop flag — but the producer ignores
+    // `is_full()`, so the random drive keeps the ring saturated and exercises the
+    // drop-oldest path (the `shiftf` term a `fifo` never takes) alongside ordinary
+    // enqueue/pop — co-simulated sim vs Verilog bit-for-bit
+    // (DESIGN §6.11 / §9.8 / §7.4).
+    Example {
+        name: "fn_ring",
+        source: include_str!("../../../examples/fn_ring.snt"),
+    },
+    // CHAN2: a depth-1 newest-wins `flow<u8>`. The random `incoming` stimulus
+    // exercises overwrite (push over a live sample) and hold (no push), with the
+    // slot erased to an `Option<u8>` register — co-simulated sim vs Verilog
+    // bit-for-bit (DESIGN §6.11 / §9.8 / §7.4).
+    Example {
+        name: "fn_flow",
+        source: include_str!("../../../examples/fn_flow.snt"),
+    },
     // BIT1a: constant bit shifts `<<` / `>>`. The random `x`/`s` stimulus drives
     // `x >> 4` (logical, u8->u4), `x << 2` (widening, u8->u10), and `s >> 3`
     // (arithmetic, i8->i5) — co-simulated sim vs Verilog bit-for-bit reusing the

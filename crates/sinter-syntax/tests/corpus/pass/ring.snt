@@ -1,0 +1,16 @@
+// A lossy overwrite-oldest ring buffer `ring<T, N>` (DESIGN §6.11 / §9.8, CHAN2)
+// held in a struct field. It parses to the same `TypeRef::Channel` as a `fifo`,
+// distinguished only by `ChannelKind::Ring` — the loss policy is in the type, and
+// the surface (`front()` / `next(push, pop)`) is identical. A source-to-source
+// desugar lowers it later; this only checks parsing.
+struct Trace {
+    r: ring<u8, 16>,
+}
+
+impl Trace {
+    #[clock(domain = sys)]
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Trace, Option<u8>) {
+        let head = self.r.front();
+        (Trace { r: self.r.next(incoming, take) }, head)
+    }
+}
