@@ -34,7 +34,8 @@
         "yzhang.markdown-all-in-one",
         "bierner.markdown-mermaid",
         "Anthropic.claude-code",
-        "xoronic.pestfile"
+        "xoronic.pestfile",
+        "mutantdino.resourcemonitor"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash",
