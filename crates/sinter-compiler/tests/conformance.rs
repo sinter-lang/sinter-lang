@@ -141,6 +141,15 @@ const EXAMPLES: &[Example] = &[
         name: "fn_flow",
         source: include_str!("../../../examples/fn_flow.snt"),
     },
+    // FLT0: a sim-only `assert!` fault check (a saturating counter's clamp
+    // invariant). The invariant holds for all stimulus, so the sim never aborts
+    // and the emitted SV carries zero assertion bits — co-simulated sim vs Verilog
+    // bit-for-bit, confirming the assert is compile-out clean (DESIGN §6.12 / §9.9
+    // / §7.4).
+    Example {
+        name: "fn_assert",
+        source: include_str!("../../../examples/fn_assert.snt"),
+    },
     // BIT1a: constant bit shifts `<<` / `>>`. The random `x`/`s` stimulus drives
     // `x >> 4` (logical, u8->u4), `x << 2` (widening, u8->u10), and `s >> 3`
     // (arithmetic, i8->i5) — co-simulated sim vs Verilog bit-for-bit reusing the

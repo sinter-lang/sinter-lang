@@ -695,6 +695,22 @@ pub enum Stmt {
         /// Source position of the `yield` keyword.
         pos: Pos,
     },
+    /// A sim-only assertion `assert!(cond, "msg")` / `debug_assert!(cond, "msg")`
+    /// (DESIGN §6.12, FLT0). A `u1` predicate over already-computed signals whose
+    /// failure aborts the reference simulation (a test failure) but emits **no**
+    /// bit in either backend — the compile-out escape hatch. The silicon-latched
+    /// fault code (FLT1) builds on this same site.
+    Assert {
+        /// Whether this is `debug_assert!` (vs `assert!`); reserved for a future
+        /// debug-only build mode. Both check identically in the FLT0 sim.
+        debug: bool,
+        /// The 1-bit predicate that must hold; a `0` (false) is a failure.
+        cond: Expr,
+        /// The diagnostic message reported when the assertion fires.
+        msg: String,
+        /// Source position of the `assert!` keyword.
+        pos: Pos,
+    },
 }
 
 /// A pattern (in `let` bindings and `match` arms).

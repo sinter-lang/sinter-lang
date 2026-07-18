@@ -164,6 +164,16 @@ fn reject_reserved_in_block(b: &Block, ctx: &str) -> Result<(), CompileError> {
                     reject_reserved_in_expr(v, ctx)?;
                 }
             }
+            // FLT0 scopes `assert!` to combinational / `#[clock]` bodies. This
+            // walk is recursive (via `reject_reserved_in_expr`), so rejecting here
+            // catches asserts at any depth in a `multiplex fn`.
+            Stmt::Assert { pos, .. } => {
+                return Err(sem(
+                    ctx,
+                    *pos,
+                    "`assert!` is not yet supported inside a `multiplex fn` (FLT0)".to_string(),
+                ))
+            }
         }
     }
     reject_reserved_in_expr(&b.tail, ctx)
@@ -545,6 +555,10 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
                         value: value.clone(),
                         pos: *pos,
                     },
+                    // Unreachable: asserts in a `multiplex fn` are rejected up
+                    // front (`reject_reserved_in_block`). Pass through for
+                    // exhaustiveness.
+                    Stmt::Assert { .. } => s.clone(),
                 })
                 .collect(),
             tail: Box::new(mux_rewrite(plan, &b.tail, seg, muls)),
@@ -644,6 +658,9 @@ fn count_muls(e: &Expr) -> usize {
                 .map(|s| match s {
                     Stmt::Let { value, .. } => count_muls(value),
                     Stmt::Yield { .. } => 0,
+                    // The `assert!` construct adds no multiply; count any in its
+                    // condition (unreachable — asserts are rejected in multiplex).
+                    Stmt::Assert { cond, .. } => count_muls(cond),
                 })
                 .sum::<usize>()
                 + count_muls(&b.tail)

@@ -45,6 +45,11 @@ pub struct Module {
     pub mem_reads: Vec<MemRead>,
     /// Memory write ports: each commits to its array on the clock edge.
     pub mem_writes: Vec<MemWrite>,
+    /// Sim-only assertions (DESIGN §6.12, FLT0). Evaluated by the simulator each
+    /// cycle over the pre-edge environment; a `0` (false) condition is a failure.
+    /// The Verilog backend **ignores** this vector entirely, so it emits zero bits
+    /// — the compile-out guarantee that keeps the two lowerings byte-identical.
+    pub asserts: Vec<Assert>,
 }
 
 impl Module {
@@ -128,6 +133,23 @@ pub struct MemRead {
     pub mem: String,
     /// Read address (masked to `addr_bits`).
     pub addr: Expr,
+}
+
+/// A sim-only assertion (DESIGN §6.12, FLT0). The condition is a self-contained
+/// combinational [`Expr`] over the module's signals — it is stored **only** here,
+/// never hoisted into [`Module::lets`], so the Verilog backend (which never reads
+/// `asserts`) emits nothing for it. A failing `cond` aborts the reference sim with
+/// `msg` and `loc`.
+#[derive(Debug, Clone)]
+pub struct Assert {
+    /// The 1-bit predicate; a `0` value is a failure.
+    pub cond: Expr,
+    /// The diagnostic message reported on failure.
+    pub msg: String,
+    /// A best-effort source location for the failure report (FLT0: the module
+    /// context + source line; FLT1 will replace this with the full inlined
+    /// call/instance path — the "static backtrace").
+    pub loc: String,
 }
 
 /// A checked combinational wire binding.

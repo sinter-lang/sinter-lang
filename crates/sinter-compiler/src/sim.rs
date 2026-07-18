@@ -16,6 +16,19 @@ use crate::error::mask;
 use crate::eval::eval_expr;
 use crate::ir::Module;
 
+/// A sim-only assertion failure (DESIGN §6.12, FLT0): an `assert!` whose
+/// condition read false during a cycle. Recorded rather than panicked so callers
+/// (tests, the CLI) decide how to report — a library never aborts the process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssertFailure {
+    /// The 0-based cycle index the assertion fired on.
+    pub cycle: usize,
+    /// The assertion's diagnostic message.
+    pub msg: String,
+    /// The assertion's source location (FLT0: module + line).
+    pub loc: String,
+}
+
 /// A running cycle-accurate model of one [`Module`].
 pub struct Simulator<'a> {
     module: &'a Module,
@@ -23,6 +36,10 @@ pub struct Simulator<'a> {
     state: HashMap<String, u64>,
     /// Current memory contents, keyed by memory name (DESIGN §6.6/§9.6).
     mem: HashMap<String, Vec<u64>>,
+    /// Cycles advanced so far (the index the next [`Simulator::step`] evaluates).
+    cycle: usize,
+    /// `assert!` failures observed so far, in cycle order (DESIGN §6.12, FLT0).
+    assert_failures: Vec<AssertFailure>,
 }
 
 impl<'a> Simulator<'a> {
@@ -39,10 +56,17 @@ impl<'a> Simulator<'a> {
             .iter()
             .map(|m| (m.name.clone(), m.reset.clone()))
             .collect();
-        Simulator { module, state, mem }
+        Simulator {
+            module,
+            state,
+            mem,
+            cycle: 0,
+            assert_failures: Vec::new(),
+        }
     }
 
-    /// Restore all registers and memories to their reset values.
+    /// Restore all registers and memories to their reset values, and clear the
+    /// cycle counter and recorded assertion failures.
     pub fn reset(&mut self) {
         for r in &self.module.regs {
             self.state.insert(r.name.clone(), r.reset);
@@ -50,6 +74,15 @@ impl<'a> Simulator<'a> {
         for m in &self.module.mems {
             self.mem.insert(m.name.clone(), m.reset.clone());
         }
+        self.cycle = 0;
+        self.assert_failures.clear();
+    }
+
+    /// The `assert!` failures observed so far, in cycle order (DESIGN §6.12,
+    /// FLT0). Empty unless a sim-only assertion read false.
+    #[must_use]
+    pub fn assert_failures(&self) -> &[AssertFailure] {
+        &self.assert_failures
     }
 
     /// Advance one cycle. `inputs` maps input-port names to values (masked to
@@ -72,6 +105,22 @@ impl<'a> Simulator<'a> {
             let v = eval_expr(&l.value, &env);
             env.insert(l.name.clone(), v);
         }
+
+        // Sim-only assertions (DESIGN §6.12, FLT0): evaluate each over the fully
+        // populated pre-edge environment (inputs + registers + wires) — the same
+        // one `out_drives`/`reg_updates` read. A `0` (false) condition is recorded
+        // as a failure; the Verilog backend has no counterpart, so this affects
+        // no output bit and the co-simulation stays byte-identical.
+        for a in &self.module.asserts {
+            if eval_expr(&a.cond, &env) == 0 {
+                self.assert_failures.push(AssertFailure {
+                    cycle: self.cycle,
+                    msg: a.msg.clone(),
+                    loc: a.loc.clone(),
+                });
+            }
+        }
+        self.cycle += 1;
 
         // Sample outputs from the current state/inputs.
         let mut outputs = HashMap::new();

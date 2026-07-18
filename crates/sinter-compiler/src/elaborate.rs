@@ -183,6 +183,7 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         consts: const_values(program)?,
         branch_depth: Cell::new(0),
         guards: RefCell::new(Vec::new()),
+        asserts: RefCell::new(Vec::new()),
     };
     el.build(state_ty, tick, &domain).map(Some)
 }
@@ -259,6 +260,11 @@ struct Elaborator<'p> {
     /// per inlined function and AND-folds whatever it collected into that
     /// function's `Option` result.
     guards: RefCell<Vec<ir::Expr>>,
+    /// Sim-only assertions collected across the whole elaboration (DESIGN §6.12,
+    /// FLT0). Unlike `guards`, this accumulator is **never** swapped — every
+    /// `assert!` site, in the root body or any inlined method, appends here, and
+    /// the finished list becomes `ir::Module::asserts`.
+    asserts: RefCell<Vec<ir::Assert>>,
 }
 
 impl Elaborator<'_> {
@@ -376,6 +382,10 @@ impl Elaborator<'_> {
                     value,
                     pos,
                 } => (pattern, ty, value, pos),
+                Stmt::Assert { cond, msg, pos, .. } => {
+                    self.lower_assert(&env, cond, msg, 0, *pos)?;
+                    continue;
+                }
                 Stmt::Yield { pos, .. } => {
                     return Err(err(
                         &self.ctx,
@@ -519,6 +529,10 @@ impl Elaborator<'_> {
             mems,
             mem_reads,
             mem_writes,
+            // Every `assert!` site collected while lowering the body + inlined
+            // methods (DESIGN §6.12, FLT0). Sim-only; the Verilog backend ignores
+            // this vector, so the two lowerings stay byte-identical.
+            asserts: self.asserts.take(),
         })
     }
 
@@ -776,6 +790,10 @@ impl Elaborator<'_> {
                             value,
                             pos,
                         } => (pattern, ty, value, pos),
+                        Stmt::Assert { cond, msg, pos, .. } => {
+                            self.lower_assert(&local, cond, msg, depth, *pos)?;
+                            continue;
+                        }
                         Stmt::Yield { pos, .. } => {
                             return Err(err(
                                 &self.ctx,
@@ -806,6 +824,42 @@ impl Elaborator<'_> {
             Val::Scalar(x, _) | Val::Enum(_, x) => Ok(x),
             _ => Err(err(&self.ctx, pos, "expected a scalar value")),
         }
+    }
+
+    /// Lower an `assert!(cond, "msg")` site (DESIGN §6.12, FLT0): evaluate the
+    /// condition to a 1-bit IR expression and append it to the shared assert
+    /// accumulator (→ `ir::Module::asserts`). The condition is stored only in the
+    /// assert record — never in `Module::lets` — so the Verilog backend emits
+    /// nothing for it (the byte-identical / compile-out guarantee).
+    ///
+    /// An `assert!` in an `if`/`match` arm is only conditionally reached, but the
+    /// sim evaluates the flat assert list unconditionally, so it is rejected in a
+    /// branch (as `mem.next()` is): gate the predicate explicitly instead. Being
+    /// out of every branch, a top-level assert is always live, so its unconditional
+    /// evaluation is exactly correct.
+    fn lower_assert(
+        &self,
+        env: &Env,
+        cond: &Expr,
+        msg: &str,
+        depth: usize,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        if self.branch_depth.get() > 0 {
+            return Err(err(
+                &self.ctx,
+                pos,
+                "`assert!` may not appear in an `if`/`match` arm (FLT0); fold the branch condition \
+                 into the predicate instead",
+            ));
+        }
+        let c = self.lower_scalar(env, cond, Some(Type::Uint(1)), depth, pos)?;
+        self.asserts.borrow_mut().push(ir::Assert {
+            cond: c,
+            msg: msg.to_string(),
+            loc: format!("{} (line {})", self.ctx, pos.line),
+        });
+        Ok(())
     }
 
     fn lower_unary(
@@ -1370,6 +1424,10 @@ impl Elaborator<'_> {
                     value,
                     pos,
                 } => (pattern, ty, value, pos),
+                Stmt::Assert { cond, msg, pos, .. } => {
+                    self.lower_assert(&local, cond, msg, depth, *pos)?;
+                    continue;
+                }
                 Stmt::Yield { pos, .. } => {
                     return Err(err(
                         &self.ctx,

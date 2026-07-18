@@ -39,6 +39,10 @@ pub fn emit_module(m: &Module) -> String {
     emit_comb(&mut out, m);
     emit_seq(&mut out, m);
     emit_mem_writes(&mut out, m);
+    // `m.asserts` (DESIGN §6.12, FLT0) are sim-only and deliberately emit no
+    // Verilog: the compile-out guarantee that keeps this module byte-identical
+    // whether or not it carries assertions. The silicon-latched fault path (FLT1)
+    // is what will add emitted bits, gated on the `--faults` build knob.
 
     let _ = writeln!(out, "endmodule");
     let _ = writeln!(out);

@@ -1,0 +1,173 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "Guard",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "v",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
+            },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Guard",
+                methods: [
+                    Func {
+                        attrs: [
+                            Attr {
+                                name: "clock",
+                                args: [
+                                    AttrArg {
+                                        key: "domain",
+                                        value: Some(
+                                            Ident(
+                                                "sys",
+                                            ),
+                                        ),
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 10,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Private,
+                        color: Comb,
+                        name: "tick",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 11,
+                                    col: 13,
+                                },
+                            },
+                            Typed {
+                                name: "x",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 11,
+                                    col: 19,
+                                },
+                            },
+                        ],
+                        ret: Tuple(
+                            [
+                                Named(
+                                    "Guard",
+                                ),
+                                Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                            ],
+                        ),
+                        body: Block {
+                            stmts: [
+                                Assert {
+                                    debug: false,
+                                    cond: Binary {
+                                        op: Le,
+                                        lhs: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "v",
+                                        },
+                                        rhs: Literal(
+                                            255,
+                                        ),
+                                    },
+                                    msg: "u8 fits in a u8",
+                                    pos: Pos {
+                                        line: 12,
+                                        col: 9,
+                                    },
+                                },
+                                Assert {
+                                    debug: true,
+                                    cond: Binary {
+                                        op: Ge,
+                                        lhs: Ident(
+                                            "x",
+                                        ),
+                                        rhs: Literal(
+                                            0,
+                                        ),
+                                    },
+                                    msg: "unsigned is non-negative",
+                                    pos: Pos {
+                                        line: 13,
+                                        col: 9,
+                                    },
+                                },
+                            ],
+                            tail: Tuple(
+                                [
+                                    StructLit {
+                                        name: "Guard",
+                                        fields: [
+                                            FieldInit {
+                                                name: "v",
+                                                value: Ident(
+                                                    "x",
+                                                ),
+                                            },
+                                        ],
+                                    },
+                                    Field {
+                                        base: Ident(
+                                            "self",
+                                        ),
+                                        field: "v",
+                                    },
+                                ],
+                            ),
+                            pos: Pos {
+                                line: 11,
+                                col: 41,
+                            },
+                        },
+                        pos: Pos {
+                            line: 10,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 9,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

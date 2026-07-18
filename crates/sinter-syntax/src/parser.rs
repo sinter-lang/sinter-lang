@@ -763,6 +763,7 @@ fn parse_fblock(pair: Pair<Rule>) -> Result<Block, ParseError> {
         match inner.as_rule() {
             Rule::f_let => stmts.push(parse_flet(inner)?),
             Rule::f_yield => stmts.push(parse_fyield(inner)?),
+            Rule::f_assert => stmts.push(parse_fassert(inner)?),
             Rule::f_expr => tail = Some(parse_expr(inner)?),
             other => return Err(unexpected(other, "block")),
         }
@@ -790,6 +791,30 @@ fn parse_fyield(pair: Pair<Rule>) -> Result<Stmt, ParseError> {
         }
     }
     Ok(Stmt::Yield { value, pos })
+}
+
+fn parse_fassert(pair: Pair<Rule>) -> Result<Stmt, ParseError> {
+    let pos = pos_of(&pair);
+    let mut inner = pair.into_inner();
+    // The atomic keyword token (`assert!` or `debug_assert!`) leads the rule.
+    let kw = next_pair(&mut inner, "assert keyword")?;
+    let debug = kw.as_str().starts_with("debug_");
+    let cond = parse_expr(next_pair(&mut inner, "assert condition")?)?;
+    // The message is a `string`; strip the surrounding double quotes (as in
+    // `include_hex!`). No escape processing in the MVP.
+    let s = next_pair(&mut inner, "assert message")?;
+    let text = s.as_str();
+    let msg = text
+        .strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(text)
+        .to_string();
+    Ok(Stmt::Assert {
+        debug,
+        cond,
+        msg,
+        pos,
+    })
 }
 
 fn parse_flet(pair: Pair<Rule>) -> Result<Stmt, ParseError> {

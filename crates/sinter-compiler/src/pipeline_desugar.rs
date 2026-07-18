@@ -260,6 +260,15 @@ impl Plan {
                     }
                     groups.push(Vec::new());
                 }
+                // FLT0 scopes `assert!` to combinational / `#[clock]` bodies; a
+                // staged color splits the body across stage registers (deferred).
+                Stmt::Assert { pos, .. } => {
+                    return Err(sem(
+                        ctx,
+                        *pos,
+                        format!("`assert!` is not yet supported inside a `{kind} fn` (FLT0)"),
+                    ))
+                }
             }
         }
         let latency = groups.len() - 1;
@@ -650,6 +659,10 @@ impl Plan {
                             value: value.clone(),
                             pos: *pos,
                         },
+                        // Unreachable: asserts in a staged fn are rejected up
+                        // front (stage split + `reject_nested_yields`). Pass
+                        // through for exhaustiveness.
+                        Stmt::Assert { .. } => s.clone(),
                     })
                     .collect(),
                 tail: Box::new(self.rewrite(&b.tail, seg)),
@@ -785,6 +798,15 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
                              staging is not supported)",
                     )),
                     Stmt::Let { value, .. } => reject_yields_in_expr(value, ctx)?,
+                    // FLT0 does not support `assert!` in a staged fn; this walk
+                    // (via `reject_nested_yields`) reaches nested blocks, so it
+                    // catches asserts the top-level stage split does not.
+                    Stmt::Assert { pos, .. } => return Err(sem(
+                        ctx,
+                        *pos,
+                        "`assert!` is not yet supported inside a staged (`pipeline`/`multiplex`) \
+                         fn (FLT0)",
+                    )),
                 }
             }
             reject_yields_in_expr(&b.tail, ctx)
@@ -860,6 +882,9 @@ pub(crate) fn reject_shadowing(
                     }
                     // Nested `yield`s are already rejected by `reject_nested_yields`.
                     Stmt::Yield { .. } => {}
+                    // Asserts in a staged fn are likewise already rejected; nothing
+                    // to shadow-check here.
+                    Stmt::Assert { .. } => {}
                 }
             }
             reject_shadowing(&b.tail, defs, ctx)

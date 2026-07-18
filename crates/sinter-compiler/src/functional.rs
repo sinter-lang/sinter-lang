@@ -776,6 +776,16 @@ impl Checker<'_> {
                     }
                     stages += 1;
                 }
+                // FLT0 scopes `assert!` to combinational / `#[clock]` bodies; a
+                // staged color splits the body across stage registers, which the
+                // fault site would have to be threaded through (deferred).
+                Stmt::Assert { pos, .. } => {
+                    return Err(sem(
+                        &f.name,
+                        *pos,
+                        "`assert!` is not yet supported inside a `pipeline fn` (FLT0)".to_string(),
+                    ))
+                }
             }
         }
         if stages == 0 {
@@ -845,6 +855,15 @@ impl Checker<'_> {
                     }
                     phases += 1;
                 }
+                // FLT0 scopes `assert!` to combinational / `#[clock]` bodies; the
+                // multiplex color time-folds the body across phases (deferred).
+                Stmt::Assert { pos, .. } => {
+                    return Err(sem(
+                        &f.name,
+                        *pos,
+                        "`assert!` is not yet supported inside a `multiplex fn` (FLT0)".to_string(),
+                    ))
+                }
             }
         }
         if phases == 0 {
@@ -875,13 +894,26 @@ impl Checker<'_> {
     ) -> Result<FType, CompileError> {
         let mut local = env.clone();
         for stmt in &block.stmts {
-            let (pattern, ty, value, pos) = match stmt {
+            match stmt {
                 Stmt::Let {
                     pattern,
                     ty,
                     value,
                     pos,
-                } => (pattern, ty, value, *pos),
+                } => {
+                    let pos = *pos;
+                    let want = match ty {
+                        Some(t) => Some(resolve_type(&self.known(), t, ctx, pos)?),
+                        None => None,
+                    };
+                    let vt = self.check_expr(value, &local, want.as_ref(), ctx, pos)?;
+                    self.bind_pattern(pattern, &vt, &mut local, ctx, pos)?;
+                }
+                // A sim-only `assert!` (DESIGN §6.12, FLT0): the condition must be
+                // 1-bit; it binds nothing and produces no value.
+                Stmt::Assert { cond, pos, .. } => {
+                    self.check_expr(cond, &local, Some(&FType::Uint(1)), ctx, *pos)?;
+                }
                 // `yield` is a pipeline stage boundary; the pipeline color is
                 // rejected up front (PL2/PL3 not lowered), so it cannot appear in
                 // a checked (combinational) body.
@@ -893,13 +925,7 @@ impl Checker<'_> {
                             .to_string(),
                     ))
                 }
-            };
-            let want = match ty {
-                Some(t) => Some(resolve_type(&self.known(), t, ctx, pos)?),
-                None => None,
-            };
-            let vt = self.check_expr(value, &local, want.as_ref(), ctx, pos)?;
-            self.bind_pattern(pattern, &vt, &mut local, ctx, pos)?;
+            }
         }
         self.check_expr(&block.tail, &local, expected, ctx, block.pos)
     }

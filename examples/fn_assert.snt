@@ -1,0 +1,38 @@
+// FLT0: a sim-only `assert!` fault check (DESIGN §6.12 / §9.9).
+//
+// A saturating up-counter that clamps at a cap of 200. The `assert!` states the
+// invariant the saturation logic is supposed to maintain — that the stored count
+// never exceeds the cap. It is a *sim-only* check: the reference simulator
+// evaluates it every cycle and a failure aborts the run (a test failure), but it
+// emits **zero** bits in either backend. The generated SystemVerilog is
+// byte-identical whether or not the `assert!` is present — the compile-out
+// guarantee (§6.12). The silicon-latched fault *code* (FLT1) will build on this
+// same site.
+//
+// Under the oracle's pseudo-random stimulus the invariant always holds, so the
+// sim ↔ Verilog co-simulation passes bit-for-bit; a separate unit test drives a
+// design whose invariant is violated to confirm the failure is recorded.
+struct Sat {
+    count: u8 = 0,
+}
+
+impl Sat {
+    #[clock(domain = sys)]
+    fn tick(self, inc: u1) -> (Sat, u8) {
+        // Saturating increment: hold at the cap of 200 rather than wrapping.
+        let next: u8 = if inc == 1 {
+            if self.count == 200 {
+                200
+            } else {
+                (self.count + 1) as u8 wrap
+            }
+        } else {
+            self.count
+        };
+        // The invariant: the clamp above is supposed to keep `count` in [0, 200].
+        // If a future edit broke it (e.g. dropped the `== 200` guard), this fires
+        // in the sim while the emitted hardware stays unchanged.
+        assert!(self.count <= 200, "count exceeded the saturation cap of 200");
+        (Sat { count: next }, self.count)
+    }
+}

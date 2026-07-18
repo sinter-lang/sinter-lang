@@ -68,6 +68,9 @@ fn expand_block(
                     expand_expr(v, base, ctx)?;
                 }
             }
+            // An `assert!` condition is an ordinary expression; expand any
+            // `include_hex!` in it (unlikely but keeps the walk uniform).
+            Stmt::Assert { cond, .. } => expand_expr(cond, base, ctx)?,
         }
     }
     expand_expr(&mut block.tail, base, ctx)

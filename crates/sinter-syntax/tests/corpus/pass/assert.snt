@@ -1,0 +1,16 @@
+// A sim-only `assert!` / `debug_assert!` statement (DESIGN §6.12 / §9.9, FLT0)
+// in a functional method body. Pins the `Stmt::Assert` variant and the
+// `name!(cond, "msg")` macro-call shape (a source-to-source / sim-only construct
+// lowered later; this only checks parsing). The message reuses the `string` rule.
+struct Guard {
+    v: u8 = 0,
+}
+
+impl Guard {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> (Guard, u8) {
+        assert!(self.v <= 255, "u8 fits in a u8");
+        debug_assert!(x >= 0, "unsigned is non-negative");
+        (Guard { v: x }, self.v)
+    }
+}

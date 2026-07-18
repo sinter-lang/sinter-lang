@@ -175,12 +175,18 @@ attr_val  = { ident | literal }
 // `pipeline fn` body additionally uses `yield` statements as stage boundaries
 // (DESIGN §3.1); `yield` is grammatically allowed in any block and restricted to
 // pipelines by a later semantic pass.
-f_block = { "{" ~ (f_let | f_yield)* ~ f_expr ~ "}" }
+f_block = { "{" ~ (f_let | f_yield | f_assert)* ~ f_expr ~ "}" }
 f_let   = { "let" ~ f_pattern ~ (":" ~ f_typeref)? ~ "=" ~ f_expr ~ ";" }
 // `yield;` is a bare stage barrier (live locals auto-register); `yield expr;`
 // additionally taps `expr` out at that stage (reserved; not yet lowered).
 f_yield  = { kw_yield ~ f_expr? ~ ";" }
 kw_yield = @{ "yield" ~ !(ASCII_ALPHANUMERIC | "_") }
+// `assert!(cond, "msg")` / `debug_assert!(cond, "msg")` — a sim-only fault check
+// (DESIGN §6.12, FLT0). The `!` and the `name!(...)` shape mirror `include_hex!`;
+// the message reuses the `string` rule. The keyword is atomic so `assertive` is
+// not mis-lexed as `assert` + `ive`.
+f_assert    = { kw_assert ~ "(" ~ f_expr ~ "," ~ string ~ ")" ~ ";" }
+kw_assert   = @{ ("debug_assert!" | "assert!") }
 
 // Patterns (let bindings and match arms). `f_path_pat` needs at least one `::`
 // so a bare name falls through to `f_binding`; `f_wildcard` needs a word

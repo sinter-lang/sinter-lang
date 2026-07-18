@@ -573,6 +573,11 @@ impl Resolver {
                         self.rewrite_expr(v, cur, locals, src)?;
                     }
                 }
+                // An `assert!` binds nothing; resolve names in its condition (the
+                // message is a literal string needing no resolution).
+                Stmt::Assert { cond, .. } => {
+                    self.rewrite_expr(cond, cur, locals, src)?;
+                }
             }
         }
         self.rewrite_expr(&mut b.tail, cur, locals, src)?;
