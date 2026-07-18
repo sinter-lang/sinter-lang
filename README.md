@@ -28,9 +28,44 @@ and [`CLAUDE.md`](CLAUDE.md) for the coding standards every change must follow.
 `examples/` holds example `.snt` programs; the conformance oracle lives in
 `crates/sinter-compiler/tests/conformance.rs`.
 
+## Install
+
+To use `sinter` as a build tool in another project, install the CLI with
+`cargo install`. The published crate is `sinter-lang`; the installed binary is
+`sinter`.
+
+```sh
+# From this public repository (no SSH key needed). `--locked` pins the exact
+# dependency versions from the committed Cargo.lock for a reproducible build.
+cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
+
+# Reproducible builds: pin to a specific commit (or a tag, once tagged).
+cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --rev <sha> --locked
+
+# Updating a git-installed copy to a newer commit needs --force.
+cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked --force
+
+# Or install from a local checkout of this repo.
+cargo install --path crates/sinter-lang --locked
+```
+
+This puts `sinter` on your `PATH` (via `~/.cargo/bin`). From another project you
+can then compile a design to SystemVerilog + a Verilator harness:
+
+```sh
+sinter check   src/cpu.snt
+sinter build   src/cpu.snt --emit all --out build/rtl
+sinter sim     src/cpu.snt --cycles 64
+```
+
+`sinter build` needs only Rust; the `--emit verilog` output is portable
+SystemVerilog. Yosys/Verilator are needed only to *run* the correctness oracle
+(below), not to install or use the compiler.
+
 ## Quick start
 
-Inside the devcontainer (or any machine with Rust + `oss-cad-suite`):
+Working inside this repository (devcontainer or any machine with Rust +
+`oss-cad-suite`), run the CLI straight from the workspace without installing:
 
 ```sh
 # Parse and type-check a source file.
