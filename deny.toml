@@ -14,6 +14,11 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# The allow list above is a policy — the permissive licenses we pre-approve — not
+# a mirror of today's lockfile, so entries not currently in the tree (BSD, ISC,
+# Zlib, …) are expected. Silence the `license-not-encountered` warning for them;
+# it is meant to catch a stale/typo'd entry, which a curated set is not.
+unused-allowed-license = "allow"
 
 [bans]
 multiple-versions = "warn"
