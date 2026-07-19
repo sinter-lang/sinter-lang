@@ -146,9 +146,12 @@ pub struct Assert {
     pub cond: Expr,
     /// The diagnostic message reported on failure.
     pub msg: String,
-    /// A best-effort source location for the failure report (FLT0: the module
-    /// context + source line; FLT1 will replace this with the full inlined
-    /// call/instance path — the "static backtrace").
+    /// The failure report's static backtrace (DESIGN §6.12, FLT1a): the chain of
+    /// inlined frames from the `#[clock]` root to the assert site, `" -> "`-joined
+    /// and ending in the assert's source line — e.g.
+    /// `"Cpu -> Alu::step@88 -> divide@45 (line 41)"`, where each `@N` is the
+    /// call-site line of that frame. With no inlining it is just
+    /// `"<root type> (line N)"`.
     pub loc: String,
 }
 

@@ -184,6 +184,10 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         branch_depth: Cell::new(0),
         guards: RefCell::new(Vec::new()),
         asserts: RefCell::new(Vec::new()),
+        // Pre-seed the backtrace with the root frame (the `#[clock]` state type);
+        // it is never popped, so an assert at the root body reproduces the FLT0
+        // `"<ctx> (line N)"` loc exactly, and inlined bodies stack on top.
+        frames: RefCell::new(vec![state_ty.to_string()]),
     };
     el.build(state_ty, tick, &domain).map(Some)
 }
@@ -265,6 +269,14 @@ struct Elaborator<'p> {
     /// `assert!` site, in the root body or any inlined method, appends here, and
     /// the finished list becomes `ir::Module::asserts`.
     asserts: RefCell<Vec<ir::Assert>>,
+    /// The chain of inlined frames, root-first, from the `#[clock]` root to the
+    /// body currently being lowered — the static backtrace an `assert!` records
+    /// (DESIGN §6.12, FLT1a). Pre-seeded with the root state-type name; `lower_body`
+    /// pushes one frame per inlined function/method and pops it (balanced across
+    /// the `?` error path), so a nested assert reports its full inline path. The
+    /// root frame is never popped (the elaborator is single-use), so it is never
+    /// empty.
+    frames: RefCell<Vec<String>>,
 }
 
 impl Elaborator<'_> {
@@ -857,9 +869,19 @@ impl Elaborator<'_> {
         self.asserts.borrow_mut().push(ir::Assert {
             cond: c,
             msg: msg.to_string(),
-            loc: format!("{} (line {})", self.ctx, pos.line),
+            loc: self.assert_loc(pos),
         });
         Ok(())
+    }
+
+    /// The static backtrace for an `assert!` at `pos` (DESIGN §6.12, FLT1a): the
+    /// current inline frame stack (root-first, `" -> "`-joined) with the assert's
+    /// own source line appended — e.g. `"Cpu -> Alu::step@88 -> divide@45 (line
+    /// 41)"`, where each `@N` is the call-site line of that inlined frame. With no
+    /// inlining the stack is just the root frame, reproducing the FLT0
+    /// `"<ctx> (line N)"` form exactly.
+    fn assert_loc(&self, pos: Pos) -> String {
+        format!("{} (line {})", self.frames.borrow().join(" -> "), pos.line)
     }
 
     fn lower_unary(
@@ -1153,7 +1175,9 @@ impl Elaborator<'_> {
             .get(name)
             .ok_or_else(|| err(&self.ctx, pos, format!("unknown function `{name}`")))?;
         let inner = self.bind_params(env, None, &f.params, args, depth, pos)?;
-        self.lower_body(&inner, f, depth + 1)
+        // Backtrace frame for a free function: `<callee>@<call-site line>` (FLT1a).
+        // The call-site line disambiguates two calls to the same function.
+        self.lower_body(&inner, f, format!("{name}@{}", pos.line), depth + 1)
     }
 
     fn lower_method(
@@ -1229,7 +1253,15 @@ impl Elaborator<'_> {
                 )
             })?;
         let inner = self.bind_params(env, Some(recv), &m.params, args, depth, pos)?;
-        self.lower_body(&inner, m, depth + 1)
+        // Backtrace frame for a method: `<ReceiverType>::<method>@<call-site line>`
+        // (FLT1a) — the receiver's concrete type qualifies the frame, and the
+        // call-site line disambiguates two calls to the same method.
+        self.lower_body(
+            &inner,
+            m,
+            format!("{type_name}::{method}@{}", pos.line),
+            depth + 1,
+        )
     }
 
     /// Lower a built-in memory method (DESIGN §6.6/§9.6). `value()` returns the
@@ -1375,14 +1407,26 @@ impl Elaborator<'_> {
         ty.map(|t| self.resolve(t, pos)).transpose()
     }
 
-    fn lower_body(&self, env: &Env, f: &Func, depth: usize) -> Result<Val, CompileError> {
+    fn lower_body(
+        &self,
+        env: &Env,
+        f: &Func,
+        frame: String,
+        depth: usize,
+    ) -> Result<Val, CompileError> {
         let ret = self.resolve(&f.ret, f.pos)?;
         // `?` operators in THIS body contribute validity bits to THIS function's
         // result; swap in a fresh accumulator and restore the caller's on the way
         // out (so a nested call's `?`s do not leak into ours, and vice-versa).
         let outer_guards = self.guards.replace(Vec::new());
+        // Push this body's backtrace frame for the span of its lowering (FLT1a);
+        // pop it on the way out — balanced across the `?` error path below because
+        // `result` is captured without `?` and propagated only after the pop, the
+        // same discipline as the `guards` restore it sits beside.
+        self.frames.borrow_mut().push(frame);
         let result = self.lower_body_inner(env, f, &ret, depth);
         let my_guards = self.guards.replace(outer_guards);
+        self.frames.borrow_mut().pop();
         let body = result?;
 
         if my_guards.is_empty() {

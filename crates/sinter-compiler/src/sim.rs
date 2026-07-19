@@ -25,7 +25,8 @@ pub struct AssertFailure {
     pub cycle: usize,
     /// The assertion's diagnostic message.
     pub msg: String,
-    /// The assertion's source location (FLT0: module + line).
+    /// The assertion's static backtrace — the inlined call path to the site
+    /// (DESIGN §6.12, FLT1a), e.g. `"Cpu -> Alu::step@88 -> divide@45 (line 41)"`.
     pub loc: String,
 }
 

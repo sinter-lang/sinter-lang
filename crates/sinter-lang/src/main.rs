@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use log::info;
+use log::{error, info};
 
 use sinter_compiler::ir::Module;
 use sinter_compiler::pinmap::PinMap;
@@ -218,6 +218,20 @@ fn cmd_sim(file: &Path, cycles: usize, seed: u64, trace: Option<&Path>) -> Resul
             .collect::<Vec<_>>()
             .join(" ");
         println!("{k:5} | {in_str} || {out_str}");
+    }
+
+    // Sim-only assertion failures (DESIGN §6.12, FLT0) are a test-style failure:
+    // surface each with its message + backtrace (the per-cycle table above went to
+    // stdout as program output; diagnostics go to the log) and fail the command.
+    let failures = sim.assert_failures();
+    if !failures.is_empty() {
+        for f in failures {
+            error!("assert failed (cycle {}): {} [{}]", f.cycle, f.msg, f.loc);
+        }
+        bail!(
+            "{} sim-only assertion failure(s); see the log above",
+            failures.len()
+        );
     }
     Ok(())
 }

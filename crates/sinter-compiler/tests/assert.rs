@@ -106,6 +106,105 @@ impl M {
     );
 }
 
+#[test]
+fn backtrace_records_the_inlined_call_path() {
+    // An `assert!` inside a method that is inlined into the `#[clock]` root must
+    // record the full static backtrace (root -> frame), while a root-level assert
+    // records just the root frame — the FLT1a "where did it come from" property.
+    let src = "\
+struct Inner {
+    v: u8 = 0,
+}
+impl Inner {
+    fn check(self, x: u8) -> u8 {
+        assert!(x == 0, \"x should be zero\");
+        x
+    }
+}
+struct Outer {
+    inner: Inner,
+}
+impl Outer {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> (Outer, u8) {
+        let y: u8 = self.inner.check(x);
+        assert!(self.inner.v == 0, \"top-level invariant\");
+        (Outer { inner: self.inner }, y)
+    }
+}
+";
+    let design = compile_str(src).expect("compile");
+    let asserts = &design.modules[0].asserts;
+    let nested = asserts
+        .iter()
+        .find(|a| a.msg == "x should be zero")
+        .expect("the nested assert");
+    let root = asserts
+        .iter()
+        .find(|a| a.msg == "top-level invariant")
+        .expect("the root assert");
+    // The nested assert's backtrace is the inlined path `root -> Type::method@<call
+    // line>`, ending in the assert's own line. The `@N` call-site line makes two
+    // calls to the same method distinguishable.
+    assert!(
+        nested.loc.starts_with("Outer -> Inner::check@") && nested.loc.ends_with(')'),
+        "nested backtrace should show the inline path with a call-site line, got: {}",
+        nested.loc
+    );
+    assert!(
+        nested.loc.contains(" (line "),
+        "nested backtrace should end in the assert's own line, got: {}",
+        nested.loc
+    );
+    // The root assert has only the root frame (no inlining) — the FLT0 shape.
+    assert!(
+        root.loc.starts_with("Outer (line "),
+        "root backtrace should be just the root frame, got: {}",
+        root.loc
+    );
+}
+
+#[test]
+fn two_call_sites_of_one_method_get_distinct_backtraces() {
+    // The same method inlined at two call sites must yield two DISTINCT
+    // backtraces (the `@<call-site line>` disambiguates them), so a failure report
+    // points at the actual path — the call-stack property the feature is for.
+    let src = "\
+struct Inner {
+    v: u8 = 0,
+}
+impl Inner {
+    fn check(self, x: u8) -> u8 {
+        assert!(x == 0, \"x should be zero\");
+        x
+    }
+}
+struct Outer {
+    a: Inner,
+    b: Inner,
+}
+impl Outer {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> (Outer, u9) {
+        let p: u8 = self.a.check(x);
+        let q: u8 = self.b.check(x);
+        (Outer { a: self.a, b: self.b }, p + q)
+    }
+}
+";
+    let design = compile_str(src).expect("compile");
+    let locs: Vec<String> = design.modules[0]
+        .asserts
+        .iter()
+        .map(|a| a.loc.clone())
+        .collect();
+    assert_eq!(locs.len(), 2, "one assert per inlined call site: {locs:?}");
+    assert_ne!(
+        locs[0], locs[1],
+        "two call sites of the same method must have distinct backtraces: {locs:?}"
+    );
+}
+
 /// Shared: compile `src`, expect a semantic error containing `needle`.
 fn compile_err(src: &str, needle: &str) {
     match compile_str(src) {
