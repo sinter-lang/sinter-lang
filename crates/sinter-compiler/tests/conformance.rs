@@ -266,6 +266,21 @@ fn compile_one(source: &str) -> Module {
     design.modules.into_iter().next().expect("one module")
 }
 
+/// FLT1b: examples compiled with `--faults=on` so the synthesized silicon fault
+/// latch (the sticky bitmap + the `fault_code` sideband) is co-simulated. The
+/// sideband is an ordinary output port, so the oracle diffs it sim↔Verilog with no
+/// harness change (DESIGN §6.12 / §9.9).
+const FAULT_EXAMPLES: &[Example] = &[Example {
+    name: "fn_fault",
+    source: include_str!("../../../examples/fn_fault.snt"),
+}];
+
+fn compile_one_faults_on(source: &str) -> Module {
+    let design = sinter_compiler::compile_str_faults(source, sinter_compiler::FaultMode::On)
+        .expect("fault example should compile in on-mode");
+    design.modules.into_iter().next().expect("one module")
+}
+
 fn compile_project_one(root: &str) -> Module {
     let design = sinter_compiler::compile_project(std::path::Path::new(root))
         .expect("project should compile");
@@ -283,6 +298,12 @@ fn all_cases() -> Vec<(String, Module)> {
         PROJECTS
             .iter()
             .map(|p| (p.name.to_string(), compile_project_one(p.root))),
+    );
+    // FLT1b fault-latch examples, compiled in `--faults=on` mode.
+    cases.extend(
+        FAULT_EXAMPLES
+            .iter()
+            .map(|ex| (ex.name.to_string(), compile_one_faults_on(ex.source))),
     );
     cases
 }

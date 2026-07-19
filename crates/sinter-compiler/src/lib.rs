@@ -15,6 +15,7 @@ pub mod check;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
+pub mod fault_latch;
 pub mod functional;
 pub mod include_expand;
 pub mod ir;
@@ -28,6 +29,7 @@ pub mod verilator;
 pub mod verilog;
 
 pub use error::CompileError;
+pub use fault_latch::FaultMode;
 pub use ir::{Design, Module};
 
 /// Parse and check Sinter source, returning the typed design.
@@ -41,9 +43,20 @@ pub use ir::{Design, Module};
 /// # Errors
 /// Returns a [`CompileError`] on a parse or semantic error.
 pub fn compile_str(source: &str) -> Result<Design, CompileError> {
+    compile_str_faults(source, FaultMode::Off)
+}
+
+/// Like [`compile_str`], but with an explicit [`FaultMode`] (DESIGN §6.12,
+/// FLT1b): `On` emits the silicon fault latch (a sticky bitmap + a `fault_code`
+/// sideband); `Off` is functional-neutral (byte-identical to the assert-free
+/// module).
+///
+/// # Errors
+/// Returns a [`CompileError`] on a parse or semantic error.
+pub fn compile_str_faults(source: &str, faults: FaultMode) -> Result<Design, CompileError> {
     let program = sinter_syntax::parse_program(source)?;
     // No source directory, so `include_hex!` has nowhere to resolve against.
-    compile_program(program, None)
+    compile_program(program, None, faults)
 }
 
 /// Parse, resolve, and check a multi-file project rooted at `root` (DESIGN §10).
@@ -56,10 +69,22 @@ pub fn compile_str(source: &str) -> Result<Design, CompileError> {
 /// # Errors
 /// Returns a [`CompileError`] on a load, resolution, or semantic error.
 pub fn compile_project(root: &std::path::Path) -> Result<Design, CompileError> {
+    compile_project_faults(root, FaultMode::Off)
+}
+
+/// Like [`compile_project`], but with an explicit [`FaultMode`] (DESIGN §6.12,
+/// FLT1b).
+///
+/// # Errors
+/// Returns a [`CompileError`] on a load, resolution, or semantic error.
+pub fn compile_project_faults(
+    root: &std::path::Path,
+    faults: FaultMode,
+) -> Result<Design, CompileError> {
     let tree = sinter_syntax::load_project(root)?;
     let program = resolve::resolve_project(&tree)?;
     // `include_hex!` paths resolve against the root source file's directory.
-    compile_program(program, root.parent())
+    compile_program(program, root.parent(), faults)
 }
 
 /// Check and lower an already-resolved [`Design`] from a flat program. `base` is
@@ -77,6 +102,7 @@ pub fn compile_project(root: &std::path::Path) -> Result<Design, CompileError> {
 fn compile_program(
     program: sinter_syntax::ast::Program,
     base: Option<&std::path::Path>,
+    faults: FaultMode,
 ) -> Result<Design, CompileError> {
     use sinter_syntax::ast::{FnColor, Item};
     let mut program = program;
@@ -114,6 +140,12 @@ fn compile_program(
             // Collapse the desugar's shared (then SROA-duplicated) multiply into
             // one physical multiplier (DESIGN §3.2).
             ir_cse::share_muls(&mut module);
+        }
+        // FLT1b: when faults are on, synthesize the silicon latch (sticky bitmap +
+        // `fault_code` sideband) from the assert sites. Read once here, so both
+        // backends fold from one IR; `off` leaves the module functional-neutral.
+        if faults == FaultMode::On {
+            fault_latch::apply(&mut module)?;
         }
         design.modules.push(module);
     }

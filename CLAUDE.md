@@ -176,7 +176,7 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
     vector-of-registers: read `a[i]` (combinational N:1 mux tree, any number of
     read ports) and functional-update write `a.set(i, v)` (1:N guarded-hold
     decode); `functional` + `elaborate` only (no new syntax).
-  - **Faults** (FLT0–FLT1a, §6.12 / §9.9) — a **location-based** fault model
+  - **Faults** (FLT0–FLT1b, §6.12 / §9.9) — a **location-based** fault model
     (not the earlier enum-`FaultSet` sketch): a fault is identified by *where* it
     fires, the compiler names the site, and the "call stack" falls out of
     elaboration's inlining. FLT0: sim-only `assert!(cond, "msg")` /
@@ -187,7 +187,13 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
     backtrace** — a `frames` push/pop stack threaded through the `elaborate`
     inliner records the inlined call path (`Top -> Inner::guard@16 (line 6)`,
     each `@N` a call-site line). The CLI `sim` reports failures and exits
-    non-zero. Sim-only so far; see the pending FLT1b below for the silicon path.
+    non-zero. FLT1b: the **silicon latch** (`fault_latch.rs`) — a gated
+    IR-construction pass (built from the same assert sites, no new backend code)
+    synthesizes a sticky one-hot bitmap register + a priority-encoded `fault_code`
+    sideband output + an offline `<module>.faults.json` table, gated by a global
+    `--faults on|off` (`compile_str_faults` / CLI `build --faults`). `off` is
+    byte-identical to the assert-free module; `on` co-simulates the sideband
+    bit-for-bit (`fn_fault`).
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
@@ -195,11 +201,9 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
 directional `Sender`/`Receiver` views + deep BRAM-backed FIFO (CHAN3–4, §6.11 /
-§9.8); the **FLT1b** silicon fault latch (§6.12 / §9.9) — a sticky one-hot
-bitmap over the `assert!` sites, a priority-encoded fault *code* on a sideband
-output, an offline `code → backtrace` fault table, and a global `--faults on|off`
-build knob (`off` folds it all away, oracle-clean per mode); per-file enable and
-the `assert_static!` / `unreachable!()` SMT tier (FLT2) after that;
+§9.8); the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a
+`#[faults(mode)]` attribute or build-time file list; FLT1b ships the global knob
+only) and the `assert_static!` / `unreachable!()` SMT-prover bucket;
 byte-enable / multi-port `mem` (the BRAM register-file / sub-word-store axis, §9.6);
 the RV32 flagship soft core that composes them (§9.12); elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),

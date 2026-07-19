@@ -1,0 +1,26 @@
+// FLT1b: the silicon fault latch (DESIGN §6.12 / §9.9).
+//
+// Two data-dependent `assert!` sites. Built with `--faults=off` (the default)
+// they are sim-only and emit zero bits — the module is byte-identical to its
+// assert-free form. Built with `--faults=on` the compiler synthesizes, from these
+// same sites, a sticky one-hot bitmap register and a priority-encoded `fault_code`
+// output (the sideband): once a check fails its bit latches (monotonic), and
+// `fault_code` reports the lowest-code fired site (0 = no fault).
+//
+// The oracle drives random `a` / `b`, so these checks DO fire (by design here, to
+// exercise the latch — a real assert is a "should never happen"): the sticky
+// bitmap accumulates them and the sim ↔ Verilog `fault_code` agrees bit-for-bit,
+// which is the FLT1b property. `fault_code` reaches only the sideband, never the
+// datapath, so `--faults=off` is provably functional-neutral.
+struct Mon {
+    last: u8 = 0,
+}
+
+impl Mon {
+    #[clock(domain = sys)]
+    fn tick(self, a: u8, b: u8) -> (Mon, u8) {
+        assert!(a < 200, "a exceeded threshold 200");
+        assert!(b < 128, "b high bit set");
+        (Mon { last: a }, (a + b) as u8 wrap)
+    }
+}

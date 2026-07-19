@@ -18,7 +18,7 @@ use log::{error, info};
 use sinter_compiler::ir::Module;
 use sinter_compiler::pinmap::PinMap;
 use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
-use sinter_compiler::{board, compile_project, verilator, verilog};
+use sinter_compiler::{board, compile_project_faults, fault_latch, verilator, verilog, FaultMode};
 
 /// The Sinter HDL compiler.
 #[derive(Parser)]
@@ -49,6 +49,11 @@ enum Command {
         /// wrapper and the matching nextpnr PCF (DESIGN §7.6).
         #[arg(long)]
         pins: Option<PathBuf>,
+        /// Emit the silicon fault latch (DESIGN §6.12, FLT1b): a sticky bitmap +
+        /// a priority-encoded `fault_code` sideband, plus a `<module>.faults.json`
+        /// `code -> backtrace` table. Off by default (functional-neutral).
+        #[arg(long)]
+        faults: bool,
     },
     /// Run the cycle-accurate reference simulator over a generated stimulus.
     Sim {
@@ -89,7 +94,8 @@ fn main() -> Result<()> {
             emit,
             out,
             pins,
-        } => cmd_build(&file, emit, &out, pins.as_deref()),
+            faults,
+        } => cmd_build(&file, emit, &out, pins.as_deref(), faults),
         Command::Sim {
             file,
             cycles,
@@ -103,14 +109,14 @@ fn main() -> Result<()> {
 /// `mod` declarations pull in sibling files, names resolve across modules, and
 /// the result lowers to the same flat IR as the equivalent single file (DESIGN
 /// §10). A file with no `mod`s compiles exactly as before.
-fn read_and_compile(file: &Path) -> Result<Vec<Module>> {
-    let design =
-        compile_project(file).with_context(|| format!("compiling `{}`", file.display()))?;
+fn read_and_compile(file: &Path, faults: FaultMode) -> Result<Vec<Module>> {
+    let design = compile_project_faults(file, faults)
+        .with_context(|| format!("compiling `{}`", file.display()))?;
     Ok(design.modules)
 }
 
 fn cmd_check(file: &Path) -> Result<()> {
-    let modules = read_and_compile(file)?;
+    let modules = read_and_compile(file, FaultMode::Off)?;
     for m in &modules {
         println!(
             "ok: module `{}` ({} ports, {} regs, {} wires)",
@@ -133,8 +139,13 @@ fn cmd_check(file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>) -> Result<()> {
-    let modules = read_and_compile(file)?;
+fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: bool) -> Result<()> {
+    let mode = if faults {
+        FaultMode::On
+    } else {
+        FaultMode::Off
+    };
+    let modules = read_and_compile(file, mode)?;
     fs::create_dir_all(out).with_context(|| format!("creating output dir `{}`", out.display()))?;
 
     for m in &modules {
@@ -147,6 +158,14 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>) -> Result
         if matches!(emit, Emit::Harness | Emit::All) {
             let path = out.join(format!("{}_tb.cpp", m.name));
             fs::write(&path, verilator::emit_cpp_harness(m))
+                .with_context(|| format!("writing `{}`", path.display()))?;
+            info!("wrote {}", path.display());
+        }
+        // FLT1b: with `--faults`, emit the offline `code -> backtrace` fault table
+        // alongside the SV so a latched `fault_code` can be decoded (DESIGN §6.12).
+        if faults && !m.asserts.is_empty() {
+            let path = out.join(format!("{}.faults.json", m.name));
+            fs::write(&path, fault_latch::fault_table_json(m))
                 .with_context(|| format!("writing `{}`", path.display()))?;
             info!("wrote {}", path.display());
         }
@@ -184,7 +203,7 @@ fn emit_board(modules: &[Module], pins: &Path, out: &Path) -> Result<()> {
 }
 
 fn cmd_sim(file: &Path, cycles: usize, seed: u64, trace: Option<&Path>) -> Result<()> {
-    let modules = read_and_compile(file)?;
+    let modules = read_and_compile(file, FaultMode::Off)?;
     let module = modules
         .first()
         .context("source contains no modules to simulate")?;
