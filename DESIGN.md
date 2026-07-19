@@ -624,7 +624,17 @@ the owner reconciles in one `next()`. This gives the Rust Sender/Receiver
 ergonomics with the single-driver invariant untouched. A `fifo` is also the
 skid-buffer building block for the elastic `Stream<T>` (§3.1). Milestone: §9.8.
 
-### 6.12 Fault flags and assertions (RESOLVED shape)
+### 6.12 Fault flags and assertions (RESOLVED shape — **location-based**)
+
+> **Revised.** An earlier sketch made a fault a user-authored `enum Fault { … }`
+> raised through a threaded `FaultSet<Fault>` field (`.raise` / `first()`), with
+> cross-hierarchy aggregation an explicit owner-threaded merge. That is **replaced**
+> by the **location-based** model below: a fault is identified by *where* it fires
+> (its source site + inlined call stack), the compiler assigns the codes, and the
+> "call stack" falls out of elaboration's symbolic inlining — which dissolves the
+> aggregation problem entirely (one compiler-authored code space; the call stack
+> *is* the hierarchy path). The load-bearing invariants — the three buckets,
+> observation-only, oracle-clean compile-out — carry over unchanged.
 
 "Should never happen" conditions sort into three buckets, matching the language's
 "prefer a type error; a sim-only assertion (or SMT obligation) otherwise" stance
@@ -632,61 +642,70 @@ skid-buffer building block for the elastic `Stream<T>` (§3.1). Milestone: §9.8
 
 1. **Statically excludable** → `unreachable!()`, which the compiler must **prove
    dead** (a compile error otherwise). Zero emitted bits — the true "panic that
-   compiles out."
+   compiles out." (FLT2.)
 2. **Runtime but diagnostic-only** → `assert!(cond, "msg")` / `debug_assert!` —
-   **sim-only** predicates over already-traced signals; a failure aborts the sim
-   run (a test failure) but emits **no** bit in either backend. This is the §5
-   "sim-only assertion" escape hatch made first-class.
-3. **Runtime, data-dependent, latched in silicon** → a `FaultSet<Fault>` — ordinary
-   threaded state (below).
+   **sim-only** predicates over already-computed signals; a failure is recorded by
+   the reference sim (a test failure) but emits **no** bit in either backend. This
+   is the §5 "sim-only assertion" escape hatch made first-class. (FLT0.)
+3. **Runtime, data-dependent, latched in silicon** → the *same* `assert!` site with
+   the build knob set to latch: a sticky, location-coded fault register (below).
 
-**`FaultSet<Fault>` — a sticky, one-way fault register.** `Fault` is a user `enum`
-with **explicit discriminants** (so the aggregated code is stable across edits; `0`
-is reserved for "no fault"). The set is a sticky one-hot over the variants, raised
-and read method-style:
+**One construct, the site is the identity.** There is no user `enum` and no
+`FaultSet` field. A fault is an `assert!` *site*; the compiler names it. Because the
+`#[clock]` root is built by **symbolic inlining** (a reusable method's `assert!` is
+inlined into many concrete sites), the inlining path — which instance, through which
+method, to which line — is a **static backtrace**, captured for free during
+elaboration (`Top -> Inner::guard@16 (line 6)`; FLT1a). The build knob picks a
+site's fate uniformly:
 
-```
-enum Fault { DivZero = 1, BadOpcode = 2, Overflow = 3 }
-struct Alu { acc: i32 = 0, faults: FaultSet<Fault> = {} }   // resets empty
+- `--faults=off` → compiled out, zero bits (buckets fold away).
+- sim (default today) → the FLT0 sim-only check; a failure is recorded with its
+  message and backtrace.
+- latch (FLT1b) → the site is assigned a stable **code** (0 = no fault); a failure
+  latches that code into silicon.
 
-// raise(cond, F) is the guarded set (the we-gated write); it threads like
-// mem.next() and chains, folding to `faults_q | (OR of one-hots)`:
-let f = self.faults.raise(div0, Fault::DivZero)
-                    .raise(bad,  Fault::BadOpcode);
-// ... Alu { faults: f, .. }        // threading = the single-driver commit
+**The silicon latch (FLT1b) — a sticky, location-coded register.** All `assert!`
+sites in a build share **one** sticky one-hot bitmap register (one bit per
+elaborated site, `q <= q | fired`, resets empty). `any()` is the OR-reduce; the
+reported code is a **priority encoder** over the accumulated set (**lowest code
+wins** — pipeline-invariant, because the encode is over the monotonic accumulated
+set, not "first in time"). The compiler emits an offline `code → backtrace` table
+(`<module>.faults.json`), the defmt / linker-map model: silicon carries numbers,
+the table carries meaning. This is a small delta on the sketch's machinery — the
+same sticky register, observation-only rule, and compile-out — with one
+substitution: the fault namespace is authored by the *compiler* (by location),
+not by a user `enum`.
 
-fn first(self)           -> Option<Fault>   // priority-encode: WHICH site faulted
-fn any(self)             -> u1
-fn contains(self, Fault) -> u1
-```
+**Aggregation is inherent — no bus, no merge.** There is one design-wide code
+space, and each code's backtrace already *is* its hierarchy path, so cross-level
+aggregation needs no `.raise` / `.nest` / merge combinator and no ambient bus (the
+emergent wired-OR §5 exists to outlaw). The register is a single owned latch fed
+only by its own site conditions; the "which sub-module faulted" question is answered
+by the code's backtrace, not by teleporting leaf state to the root.
 
-`first()` is the "spit out a number telling which thing faulted" the design wants;
-its `Option<Fault>` threads through `match`/`?`. `.raise` is sticky
-(`q <= q | mask`) — a guarded set that never vanishes (§6.4 boundary intact) and,
-like `mem.next()`, may not sit in an `if`/`match` arm. It erases to one `uN`
-register and SROA-flattens (no opaque IR).
+**Fault latency is a don't-care.** Because faults are **sticky** (monotonic) and
+**observation-only** (below, they never reach the datapath), the aggregation network
+may be **registered/pipelined freely** — a fault that fires in cycle *T* may surface
+at the sideband in *T+k* with zero functional consequence. FLT1b starts fully
+combinational; pipelining the priority encoder is a later *physical* optimization
+with no semantic or oracle change. (The same two invariants that make compile-out
+clean also make the fault channel freely pipelineable.)
 
-**No implicit global fault bus.** An ambient bus every `assert!` silently ORs into
-is exactly the emergent wired-OR §5 exists to outlaw, and it teleports leaf state to
-the root against §4.3 ownership. Faults are named, owner-threaded fields;
-cross-hierarchy aggregation is explicit (an owner merges a sub-FSM's set into its
-own and threads it up — the §5 named OR-combinator). A future `#[fault]` roll-up
-attribute may synthesize the *edit-invariant* `any()` reduction only.
+**Observation-only rule (the compile-out keystone).** A fault read (`any()`, the
+code, a `contains`) is *diagnostic*: it may sink only into the trace, another fault
+read (fault-channel → fault-channel: an aggregation is allowed), or a dedicated
+**fault-sideband output** of the `#[clock]` root — **never** a datapath register's
+next-state or a functional output. Faults therefore cannot influence the datapath
+(to squash a datapath, use an explicit `Option`/guarded hold on the datapath itself,
+not the fault channel).
 
-**Observation-only rule (the compile-out keystone).** A value from
-`first()`/`any()`/`contains()` is *diagnostic*: it may sink only into the trace
-(`<field>_q`), another `FaultSet` read, or a dedicated **fault-sideband output** of
-the `#[clock]` root — **never** a register next-state or a functional output. Faults
-therefore cannot influence the datapath (to squash a datapath, use an explicit
-`Option`/guarded hold on the datapath itself, not the fault channel).
-
-**Compile-out is oracle-clean.** A `--faults on|off` build knob is read **once** at
-`ir::Design` construction, so both backends fold from one IR (a Verilog-only strip
-is unrepresentable). With `off`, `FaultSet` fields collapse to 0-width, `.raise`
-folds to identity, the reads fold to `None`/`0` and DCE away, and the sideband port
-is **tied off** (port shape mode-invariant). Because diagnostic values can't reach
-the datapath, every functional bit is provably identical across modes. The oracle
-runs **per mode** (on ≡ on, off ≡ off), never cross-comparing. Milestone: §9.9.
+**Compile-out is oracle-clean.** A global `--faults on|off` build knob is read
+**once** at `ir::Design` construction, so both backends fold from one IR (a
+Verilog-only strip is unrepresentable). With `off`, the fault bitmap collapses to
+0-width, the site conditions fold to identity + DCE away, and the sideband port is
+**tied off** (port shape mode-invariant). Because diagnostic values can't reach the
+datapath, every functional bit is provably identical across modes. The oracle runs
+**per mode** (on ≡ on, off ≡ off), never cross-comparing. Milestone: §9.9.
 
 ### 6.13 Bit manipulation: slicing, variable shift, concatenation
 
@@ -1246,23 +1265,26 @@ watermarks, dual-clock (async) FIFOs (the §6.7 phantom-domain interaction — a
 primitive), non-scalar element types, and any **deadlock/liveness** guarantee
 (§6.6's hard tier). The elastic `Stream<T>` (§3.1) is built *on* CHAN1/CHAN3.
 
-### 9.9 Fault flags — proposed milestone (FLT0–FLT2)
+### 9.9 Fault flags — **location-based** milestone (FLT0–FLT2)
 
 A one-way **sticky fault** mechanism (§6.12): latch a "should never happen"
-condition, aggregate to a code naming *which* site, and optionally compile the whole
-system out — while keeping the sim ↔ Verilog oracle bit-identical *within* a build
-mode.
+condition and surface a compact **code** naming *which site* fired — where the site
+identity is the source location plus the inlined call stack (not a user-authored
+`enum`), the compiler assigns the codes, and an offline table translates a code back
+to its backtrace. Optionally compile the whole thing out — while keeping the sim ↔
+Verilog oracle bit-identical *within* a build mode.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **FLT0** | Sim-only `assert!(pred, "msg")` / `debug_assert!` over `#[clock]`-reachable bodies: a pure `u1` predicate, a sim-node abort gated on `~pred`, **zero** emitted bits in either backend (§6.4 precedent). | an example whose `assert!` fires makes the conformance sim fail, and the emitted SV is byte-identical with and without it |
-| **FLT1** | `FaultSet<Fault>` carried into silicon: a built-in parameterized type over a user `enum` (≤ 64 variants, explicit discriminants), `= {}` empty reset; `.raise(cond, F) -> FaultSet<Fault>` threaded advance (single-driver, no-`if`/`match`-arm, chainable `q\|mask`); pure `first() -> Option<Fault>` / `any()` / `contains(F)`; the **observation-only** taint rule in `functional.rs`; erased to a sticky-OR `uN` register (SROA-flattened, `<field>_q` exposed); `--faults on\|off` read once at `ir::Design` build (`off` folds to identity + DCE, sideband tied off). | an example that raises on data-dependent conditions round-trips the oracle bit-for-bit with `--faults=on`, and its functional outputs are identical (and `_q` absent) with `--faults=off` |
+| **FLT0** | ✅ Sim-only `assert!(pred, "msg")` / `debug_assert!` over `#[clock]`-reachable bodies: a pure `u1` predicate the reference sim checks each cycle (recorded as an `AssertFailure`), **zero** emitted bits in either backend (§6.4 precedent). Rejected in `if`/`match` arms (gate the predicate) and staged (`pipeline`/`multiplex`) fns. | ✅ an example whose `assert!` fires makes the conformance sim record a failure, and the emitted SV is byte-identical with and without it (`fn_assert` + `tests/assert.rs`) |
+| **FLT1a** | ✅ **Static backtrace**: a `frames` push/pop stack threaded through the `elaborate` inliner gives each assert its inlined call path (`Top -> Inner::guard@16 (line 6)`, each `@N` a call-site line), recorded in `ir::Assert::loc` and reported by the CLI `sim` (non-zero exit). Still sim-only, zero bits. | ✅ a nested-method assert reports the full path; two call sites of one method get distinct backtraces; oracle unchanged |
+| **FLT1b** | The **silicon latch**: each `assert!` site is assigned a stable code (0 = none); a sticky one-hot bitmap register (one bit per site) OR-accumulates fired sites (`any()` = OR-reduce, the winning code = a priority encoder, lowest code wins — pipeline-invariant); the code reaches a dedicated **fault-sideband** output only (the §6.12 observation-only rule — never the datapath), with a **don't-care latency** so the aggregation may be registered later as a pure physical optimization. An offline `<module>.faults.json` table maps `code → backtrace`. A global `--faults on\|off` read once at `ir::Design` build (`off` folds it all to 0-width + DCE, sideband tied off). | an example latches a data-dependent fault and round-trips the oracle bit-for-bit with `--faults=on`; its functional outputs are identical (and the sideband absent) with `--faults=off` |
 | **FLT2** | Static buckets behind a prover: `assert_static!(p)` (SMT discharge, compiled out) and `unreachable!()` (must-prove-dead else compile error), with a **loud** `#[assume]` escape that demotes to a sim-only `debug_assert!`. | an unprovable `assert_static!` is a compile error (or a loud demotion); a provable one emits no bits |
 
-Deferred beyond FLT2: clear/re-arm (a distinct `FaultReg<Fault>` — clearing reopens
-the skip-vs-hold question); a `#[fault]` design-level roll-up attribute (the
-*edit-invariant* `any()` aggregate only, never an elaboration-ordered code);
-non-`u1` (payload-bearing) faults.
+Deferred beyond FLT2: **per-file** fault enable (a `#[faults(mode)]` module attribute
+or a build-time file list — FLT1b ships the global knob only); content-addressed
+codes stable across edits (FLT1b uses a per-build table); clear/re-arm; a `#[fault]`
+design-level roll-up attribute; non-`u1` (payload-bearing) faults.
 
 ### 9.10 Bit manipulation — proposed milestone (BIT1–BIT2)
 
@@ -1455,11 +1477,16 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   `mem` (single-driver); loss policy is in the type; v1 exposes ready/valid and
   guarantees no-corruption, not deadlock-freedom; `Sender`/`Receiver` are
   directional capability views over one owner, not two drivers (§6.11 / §9.8).
-- Faults are threaded `FaultSet<Fault>` state (sticky one-hot, `.raise` / `first()`),
-  never an implicit global bus; `assert!` / `debug_assert!` are sim-only,
-  `unreachable!()` must prove dead; a diagnostic (fault-read) value may reach only
-  the trace or a fault sideband, making `--faults=off` provably functional-neutral
-  (§6.12 / §9.9).
+- Faults are **location-based**, not a user `enum`: the `assert!` *site* is the
+  identity, the compiler assigns codes, and the inlined call stack (captured during
+  elaboration) is the backtrace — so cross-hierarchy aggregation is inherent (one
+  code space, no bus, no merge). `assert!` / `debug_assert!` are sim-only (FLT0)
+  with a static backtrace (FLT1a); the silicon latch (FLT1b) is a sticky one-hot
+  bitmap over sites + a priority-encoded code on a fault sideband + an offline
+  `code → backtrace` table, gated by a global `--faults on|off`; `unreachable!()`
+  must prove dead (FLT2). A diagnostic (fault-read) value may reach only the trace,
+  another fault read, or the sideband — never the datapath — making `--faults=off`
+  provably functional-neutral (§6.12 / §9.9).
 - Bit-slice `x[hi:lo]`, `<<` / `>>` (constant folds to IR `Shl`/`Shr`; variable = a
   barrel-shift IR node), and concat `a @ b` are the datapath bit primitives (§6.13).
   Runtime `[T; N]` indexing lowers to a mux tree / guarded-hold decode (register
