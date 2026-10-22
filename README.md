@@ -45,6 +45,9 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 - No editor support (LSP / syntax highlighting) and no package / dependency
   layer yet.
 
+To use the emitted SystemVerilog from your own Verilog (port names, reset,
+timing), see [`docs/generated-verilog.md`](docs/generated-verilog.md).
+
 The legacy `module { reg …; }` surface (`counter.snt`, `accumulator.snt`) is
 frozen; new designs should use the functional surface.
 

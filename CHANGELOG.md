@@ -15,6 +15,9 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   example CSVs through Verilator as well.
 - **Waveforms**: `sinter sim --vcd out.vcd` writes a VCD of the inputs,
   outputs, registers, and wires.
+- **Interface documentation**: `docs/generated-verilog.md` specifies the
+  generated module's port names, ordering, reset, and timing, and
+  `tests/interface.rs` pins those rules.
 
 ### Changed
 

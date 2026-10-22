@@ -36,9 +36,12 @@ Close the gaps that force workarounds today.
 - [x] **Waveforms**: `sinter sim --vcd` writes VCD.
 - [ ] **Verilog interop**: declare an external Verilog module (PLL, vendor
       primitive, IP) and instantiate it from Sinter.
-- [ ] **Documented module interface**: clock / reset naming, port naming for
-      nested structs and arrays, and reset behaviour, written down and pinned
-      by tests.
+- [x] **Documented module interface**: clock / reset naming, port naming for
+      nested structs and arrays, and reset behaviour, written down
+      ([docs/generated-verilog.md](docs/generated-verilog.md)) and pinned by
+      `tests/interface.rs`.
+- [ ] **Q-format port comments**: CLAUDE.md requires fixed-point ports to be
+      documented with Q-notation in the emitted Verilog. It isn't yet.
 - [ ] **Diagnostics**: errors point at source spans with a caret, and one run
       reports more than one error.
 
