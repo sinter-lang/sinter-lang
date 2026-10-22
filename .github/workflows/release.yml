@@ -1,0 +1,83 @@
+name: Release
+
+# Pushing a `v*` tag builds a static (musl) `sinter` binary per architecture
+# and publishes them as assets on a GitHub release for that tag. Downstream
+# projects can then install with one `curl` (see README "Install") instead of
+# compiling from source.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches the crate version
+        # A `v1.2.3` tag must release a binary that reports `sinter 1.2.3`.
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match workspace version ${version}" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        # The arm64 runner image may not ship rustup; install it if missing.
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: Build static binary
+        # Pure Rust, so musl links self-contained; no C cross toolchain needed.
+        run: cargo build --release --locked -p sinter-lang --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          name="sinter-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          tar -czf "${name}.tar.gz" -C "target/${{ matrix.target }}/release" sinter
+          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sinter-${{ matrix.target }}
+          path: sinter-*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

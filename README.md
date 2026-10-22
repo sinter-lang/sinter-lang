@@ -63,9 +63,26 @@ frozen; new designs should use the functional surface.
 
 ## Install
 
-To use `sinter` as a build tool in another project, install the CLI with
-`cargo install`. The published crate is `sinter-lang`; the installed binary is
-`sinter`.
+To use `sinter` as a build tool in another project, either download a
+prebuilt binary or build it with `cargo install`. The published crate is
+`sinter-lang`; the installed binary is `sinter`.
+
+### Prebuilt binary (v0.1.1+)
+
+Each [release](https://github.com/sinter-lang/sinter-lang/releases) carries
+fully static Linux binaries for `x86_64` and `aarch64`. They have no runtime
+dependencies, so they run on any distro, including Alpine.
+
+```sh
+SINTER_VERSION=v0.1.1
+mkdir -p ~/.local/bin
+curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
+    | tar -xz -C ~/.local/bin sinter
+```
+
+Each tarball has a matching `.sha256` file alongside it.
+
+### From source
 
 ```sh
 # From this public repository (no SSH key needed). `--locked` pins the exact
@@ -98,11 +115,23 @@ SystemVerilog. Yosys/Verilator are needed only to *run* the correctness oracle
 
 ### In a Docker image / devcontainer
 
-To add `sinter` to another project's container, build it in a throwaway stage
-and copy only the binary into your image. That way your image does not carry a
-Rust toolchain. Pin `SINTER_REF` to a release tag so builds are reproducible.
-Use `v0.1.1` or later: `v0.1.0`'s submodules use SSH URLs, so a git install of
-it fails without a GitHub SSH key.
+To add `sinter` to another project's container, fetch the prebuilt static
+binary. This needs `curl` and `ca-certificates` in the image, and the version
+is pinned so builds are reproducible.
+
+```dockerfile
+# --- Sinter HDL compiler ---------------------------------------------------
+ARG SINTER_VERSION=v0.1.1
+RUN curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
+        | tar -xz -C /usr/local/bin sinter \
+    && sinter --version
+```
+
+To build from source instead (for example, to pin an untagged commit), build
+`sinter` in a throwaway stage and copy only the binary into your image, so
+your image does not carry a Rust toolchain. Use `v0.1.1` or later:
+`v0.1.0`'s submodules use SSH URLs, so a git install of it fails without a
+GitHub SSH key.
 
 ```dockerfile
 # --- Sinter HDL compiler (build stage) -------------------------------------
@@ -118,8 +147,8 @@ COPY --from=sinter /opt/sinter/bin/sinter /usr/local/bin/sinter
 # ... the rest of your image (e.g. oss-cad-suite for Yosys / Verilator) ...
 ```
 
-The binary needs only glibc. Building on Debian bookworm keeps it compatible
-with Ubuntu 22.04+ and Debian 12+ base images. If your Dockerfile has a
+The source-built binary needs only glibc 2.34+, so it runs on Ubuntu 22.04+
+and Debian 12+ base images. If your Dockerfile has a
 single `FROM`, put the `sinter` stage above it and add the `COPY --from=sinter`
 line to your stage.
 
