@@ -36,7 +36,6 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 
 **Known limitations** (designed in `DESIGN.md`, not yet implemented):
 
-- `sinter sim` has no VCD/FST waveform output yet.
 - Values are at most 64 bits wide (`u65` and wider are rejected).
 - One clock domain per design (no clock-domain types / CDC primitives).
 - No way to instantiate external Verilog (PLLs, vendor primitives, IP) from
@@ -166,8 +165,10 @@ cargo run -p sinter-lang -- build examples/counter.snt
 # Run the cycle-accurate reference simulator over a deterministic stimulus.
 cargo run -p sinter-lang -- sim examples/counter.snt --cycles 16
 
-# ... or over directed CSV vectors, checking expected outputs.
-cargo run -p sinter-lang -- sim examples/fn_counter.snt --stimulus examples/fn_counter.csv
+# ... or over directed CSV vectors, checking expected outputs, and dump a
+# VCD waveform (open it in GTKWave or Surfer).
+cargo run -p sinter-lang -- sim examples/fn_counter.snt \
+    --stimulus examples/fn_counter.csv --vcd build/fn_counter.vcd
 ```
 
 ## Directed stimulus
@@ -197,6 +198,12 @@ Any mismatch is logged with its cycle and line number, and `sinter sim` exits
 non-zero, so a CSV file works directly as a regression test in CI. The
 conformance oracle also replays the example CSVs through Verilator, so a
 directed test that passes in `sinter sim` holds for the emitted Verilog too.
+
+`--vcd FILE` writes a waveform with the input ports, output ports, registers,
+and named wires grouped under `in` / `out` / `reg` / `wire` scopes. Cycle *k*
+starts at the clock's rising edge at *10k* ns, and the next rising edge samples
+it. Values are raw bit patterns, so set a signed display format in your viewer
+for `iN` signals.
 
 ## The correctness oracle
 

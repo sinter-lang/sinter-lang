@@ -41,6 +41,9 @@ pub struct Simulator<'a> {
     cycle: usize,
     /// `assert!` failures observed so far, in cycle order (DESIGN §6.12, FLT0).
     assert_failures: Vec<AssertFailure>,
+    /// The most recent step's pre-edge environment: inputs, registers, and
+    /// wires (for waveform dumps; see [`Simulator::signal`]).
+    last_env: HashMap<String, u64>,
 }
 
 impl<'a> Simulator<'a> {
@@ -63,6 +66,7 @@ impl<'a> Simulator<'a> {
             mem,
             cycle: 0,
             assert_failures: Vec::new(),
+            last_env: HashMap::new(),
         }
     }
 
@@ -77,6 +81,7 @@ impl<'a> Simulator<'a> {
         }
         self.cycle = 0;
         self.assert_failures.clear();
+        self.last_env.clear();
     }
 
     /// The `assert!` failures observed so far, in cycle order (DESIGN §6.12,
@@ -84,6 +89,15 @@ impl<'a> Simulator<'a> {
     #[must_use]
     pub fn assert_failures(&self) -> &[AssertFailure] {
         &self.assert_failures
+    }
+
+    /// The value an input port, register, or wire held during the most recent
+    /// [`Simulator::step`] (registers *before* that step's clock edge). `None`
+    /// before the first step or for an unknown name. Outputs are returned by
+    /// `step` itself.
+    #[must_use]
+    pub fn signal(&self, name: &str) -> Option<u64> {
+        self.last_env.get(name).copied()
     }
 
     /// Advance one cycle. `inputs` maps input-port names to values (masked to
@@ -164,6 +178,7 @@ impl<'a> Simulator<'a> {
 
         self.state = next;
         self.mem = mem_next;
+        self.last_env = env;
 
         outputs
     }

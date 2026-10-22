@@ -26,6 +26,7 @@ pub mod pipeline_desugar;
 pub mod resolve;
 pub mod sim;
 pub mod stimulus;
+pub mod vcd;
 pub mod verilator;
 pub mod verilog;
 

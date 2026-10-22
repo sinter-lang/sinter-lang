@@ -33,7 +33,7 @@ Close the gaps that force workarounds today.
 
 - [x] **Directed stimulus**: `sinter sim --stimulus` reads CSV input vectors
       with optional expected outputs, replayed through the oracle too.
-- [ ] **Waveforms**: `sinter sim` writes VCD.
+- [x] **Waveforms**: `sinter sim --vcd` writes VCD.
 - [ ] **Verilog interop**: declare an external Verilog module (PLL, vendor
       primitive, IP) and instantiate it from Sinter.
 - [ ] **Documented module interface**: clock / reset naming, port naming for

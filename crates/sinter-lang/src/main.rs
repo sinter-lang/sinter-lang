@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -20,6 +21,7 @@ use sinter_compiler::ir::Module;
 use sinter_compiler::pinmap::PinMap;
 use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
 use sinter_compiler::stimulus::{format_value, Stimulus};
+use sinter_compiler::vcd::VcdWriter;
 use sinter_compiler::{board, compile_project_faults, fault_latch, verilator, verilog, FaultMode};
 
 /// The Sinter HDL compiler.
@@ -76,6 +78,10 @@ enum Command {
         /// Optional path to write the binary output trace.
         #[arg(long)]
         trace: Option<PathBuf>,
+        /// Optional path to write a VCD waveform (inputs, outputs, registers,
+        /// and wires; viewable in GTKWave / Surfer).
+        #[arg(long)]
+        vcd: Option<PathBuf>,
     },
 }
 
@@ -110,7 +116,15 @@ fn main() -> Result<()> {
             seed,
             stimulus,
             trace,
-        } => cmd_sim(&file, cycles, seed, stimulus.as_deref(), trace.as_deref()),
+            vcd,
+        } => cmd_sim(
+            &file,
+            cycles,
+            seed,
+            stimulus.as_deref(),
+            trace.as_deref(),
+            vcd.as_deref(),
+        ),
     }
 }
 
@@ -217,6 +231,7 @@ fn cmd_sim(
     seed: u64,
     stimulus: Option<&Path>,
     trace: Option<&Path>,
+    vcd: Option<&Path>,
 ) -> Result<()> {
     let modules = read_and_compile(file, FaultMode::Off)?;
     let module = modules
@@ -263,6 +278,15 @@ fn cmd_sim(
     };
     println!("cycle | {} || {}", names(&inputs), names(&outputs));
 
+    let mut wave = match vcd {
+        Some(path) => {
+            let f = fs::File::create(path)
+                .with_context(|| format!("creating VCD `{}`", path.display()))?;
+            Some(VcdWriter::new(BufWriter::new(f), module).context("writing VCD header")?)
+        }
+        None => None,
+    };
+
     let mut sim = Simulator::new(module);
     let mut mismatches = Vec::new();
     for (k, row) in rows.iter().enumerate() {
@@ -287,6 +311,13 @@ fn cmd_sim(
         if let Some(stim) = &directed {
             mismatches.extend(stim.check_cycle(module, k, &out));
         }
+        if let Some(w) = &mut wave {
+            w.cycle(&sim, &out).context("writing VCD")?;
+        }
+    }
+    if let (Some(w), Some(path)) = (wave, vcd) {
+        w.finish().context("writing VCD")?;
+        info!("wrote {}", path.display());
     }
 
     // Sim-only assertion failures (DESIGN §6.12, FLT0) and directed-stimulus

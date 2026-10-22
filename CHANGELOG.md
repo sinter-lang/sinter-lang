@@ -13,6 +13,8 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   from a CSV file (one row per cycle) and checks optional `expect.<output>`
   columns. Any mismatch fails the run. The conformance oracle replays the
   example CSVs through Verilator as well.
+- **Waveforms**: `sinter sim --vcd out.vcd` writes a VCD of the inputs,
+  outputs, registers, and wires.
 
 ### Changed
 
