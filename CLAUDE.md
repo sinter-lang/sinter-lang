@@ -43,8 +43,9 @@ a possibly-multi-file project — sibling `mod`s are pulled in automatically):
 - `sinter check <file.snt>` — parse + type-check, report errors.
 - `sinter build <file.snt> --emit verilog|harness|all [--out DIR] [--pins F.pins]`
   — emit backend artifacts (default out dir `build/`).
-- `sinter sim <file.snt> --cycles N [--seed S] [--out trace.bin]` — run the
-  cycle-accurate reference simulator over generated stimulus.
+- `sinter sim <file.snt> [--cycles N --seed S | --stimulus F.csv] [--trace
+  trace.bin]` — run the cycle-accurate reference simulator over random or
+  directed CSV stimulus (`stimulus.rs`); `expect.<output>` columns are checked.
 
 ## Compiler pipeline (source → IR)
 

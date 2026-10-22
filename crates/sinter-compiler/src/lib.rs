@@ -25,6 +25,7 @@ pub mod pinmap;
 pub mod pipeline_desugar;
 pub mod resolve;
 pub mod sim;
+pub mod stimulus;
 pub mod verilator;
 pub mod verilog;
 

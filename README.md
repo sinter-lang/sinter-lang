@@ -36,9 +36,8 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 
 **Known limitations** (designed in `DESIGN.md`, not yet implemented):
 
-- `sinter sim` drives seeded-random inputs only; there are no user-supplied
-  stimulus vectors and no VCD/FST waveform output. Directed verification means
-  a Verilator / cocotb testbench around the emitted SystemVerilog.
+- `sinter sim` has no VCD/FST waveform output yet.
+- Values are at most 64 bits wide (`u65` and wider are rejected).
 - One clock domain per design (no clock-domain types / CDC primitives).
 - No way to instantiate external Verilog (PLLs, vendor primitives, IP) from
   Sinter; instead, instantiate the emitted module from a Verilog top.
@@ -166,7 +165,38 @@ cargo run -p sinter-lang -- build examples/counter.snt
 
 # Run the cycle-accurate reference simulator over a deterministic stimulus.
 cargo run -p sinter-lang -- sim examples/counter.snt --cycles 16
+
+# ... or over directed CSV vectors, checking expected outputs.
+cargo run -p sinter-lang -- sim examples/fn_counter.snt --stimulus examples/fn_counter.csv
 ```
+
+## Directed stimulus
+
+By default `sinter sim` drives seeded-random inputs. To test specific
+behaviour, give it a CSV file with `--stimulus`. Each row is one clock cycle.
+
+```text
+# examples/fn_counter.csv: comments and blank lines are ignored.
+en, expect.value_q
+1,  0
+1,  1
+0,  2   # hold
+0,  2
+```
+
+- **Columns** are input port names, or `expect.` + an output port name. The
+  port names are the ones in the header of `sinter sim`'s output table. Input
+  ports with no column are driven `0`.
+- **Values** are decimal (negative only for signed ports), `0x` hex, or `0b`
+  binary, with optional `_` separators. Each must fit its port's type.
+- **Expectations** are checked against the outputs sampled that cycle. A
+  register's `_q` output shows its value *before* the clock edge, so it lags
+  that row's inputs by one cycle. An empty cell or `-` means "don't check".
+
+Any mismatch is logged with its cycle and line number, and `sinter sim` exits
+non-zero, so a CSV file works directly as a regression test in CI. The
+conformance oracle also replays the example CSVs through Verilator, so a
+directed test that passes in `sinter sim` holds for the emitted Verilog too.
 
 ## The correctness oracle
 

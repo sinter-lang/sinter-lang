@@ -5,6 +5,20 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Directed stimulus**: `sinter sim --stimulus vectors.csv` drives inputs
+  from a CSV file (one row per cycle) and checks optional `expect.<output>`
+  columns. Any mismatch fails the run. The conformance oracle replays the
+  example CSVs through Verilator as well.
+
+### Changed
+
+- `sinter sim` prints signed ports as signed decimals (e.g. `-8`, not `8`
+  for an `i4`).
+
 ## [0.1.1] — unreleased
 
 ### Added

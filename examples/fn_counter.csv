@@ -1,0 +1,10 @@
+# Directed stimulus for fn_counter.snt (`sinter sim --stimulus`).
+# One row per clock cycle. `en` drives the input port; `expect.value_q` checks
+# the registered count, which updates one cycle after `en` is sampled.
+en, expect.value_q
+1,  0
+1,  1
+0,  2   # hold
+0,  2
+1,  2
+1,  3

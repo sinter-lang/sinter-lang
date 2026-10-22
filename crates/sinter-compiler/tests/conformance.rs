@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sinter_compiler::ir::Module;
-use sinter_compiler::sim::{gen_stimulus, run_reference, stimulus_to_bytes};
+use sinter_compiler::sim::{gen_stimulus, run_reference, stimulus_to_bytes, Simulator};
+use sinter_compiler::stimulus::Stimulus;
 use sinter_compiler::{compile_str, verilator, verilog};
 
 const CYCLES: usize = 64;
@@ -347,7 +348,14 @@ fn lint_verilator(sv: &Path, top: &str) {
 /// Build and run the Verilator model, returning its output trace bytes. The
 /// build uses the shared pico-gs flag file (`-f verilator.f`) so the generated
 /// SV runs under the same Verilator settings as the downstream project.
-fn run_verilator(dir: &Path, sv: &Path, harness: &Path, top: &str, stim: &Path) -> Vec<u8> {
+fn run_verilator(
+    dir: &Path,
+    sv: &Path,
+    harness: &Path,
+    top: &str,
+    stim: &Path,
+    cycles: usize,
+) -> Vec<u8> {
     let obj = dir.join("obj");
     let build = Command::new("verilator")
         .args(["--cc", "--exe", "--build", "-f", VERILATOR_FLAGS])
@@ -372,7 +380,7 @@ fn run_verilator(dir: &Path, sv: &Path, harness: &Path, top: &str, stim: &Path) 
     let run = Command::new(obj.join("sim"))
         .arg(stim)
         .arg(&trace)
-        .arg(CYCLES.to_string())
+        .arg(cycles.to_string())
         .output()
         .expect("run verilated sim");
     assert!(
@@ -383,65 +391,151 @@ fn run_verilator(dir: &Path, sv: &Path, harness: &Path, top: &str, stim: &Path) 
     std::fs::read(&trace).expect("read dut trace")
 }
 
-#[test]
-fn examples_pass_the_oracle() {
-    let have_yosys = tool_available("yosys");
-    let have_verilator = tool_available("verilator");
+/// Which external tools this run uses; enforces `SINTER_REQUIRE_TOOLS=1`.
+struct Tools {
+    yosys: bool,
+    verilator: bool,
+}
 
+fn tools() -> Tools {
+    let t = Tools {
+        yosys: tool_available("yosys"),
+        verilator: tool_available("verilator"),
+    };
     if require_tools() {
-        assert!(have_yosys, "SINTER_REQUIRE_TOOLS=1 but yosys is missing");
+        assert!(t.yosys, "SINTER_REQUIRE_TOOLS=1 but yosys is missing");
         assert!(
-            have_verilator,
+            t.verilator,
             "SINTER_REQUIRE_TOOLS=1 but verilator is missing"
         );
     }
-    if !have_yosys && !have_verilator {
+    if !t.yosys && !t.verilator {
         eprintln!(
             "skipping Yosys/Verilator conformance: neither tool found \
              (install oss-cad-suite; set SINTER_REQUIRE_TOOLS=1 to enforce)"
         );
     }
+    t
+}
 
-    for (name, module) in &all_cases() {
-        let dir = workdir(name);
+/// Run one oracle case: emit the SV + harness, compute the reference trace over
+/// `stimulus`, then (tools permitting) synthesize, lint, and co-simulate the SV,
+/// asserting its trace matches the reference bit-for-bit.
+fn co_simulate(tools: &Tools, name: &str, module: &Module, stimulus: &[Vec<u64>]) {
+    let dir = workdir(name);
 
-        // Emit artifacts.
-        let sv = dir.join(format!("{}.sv", module.name));
-        std::fs::write(&sv, verilog::emit_module(module)).expect("write sv");
-        let harness = dir.join(format!("{}_tb.cpp", module.name));
-        std::fs::write(&harness, verilator::emit_cpp_harness(module)).expect("write harness");
+    // Emit artifacts.
+    let sv = dir.join(format!("{}.sv", module.name));
+    std::fs::write(&sv, verilog::emit_module(module)).expect("write sv");
+    let harness = dir.join(format!("{}_tb.cpp", module.name));
+    std::fs::write(&harness, verilator::emit_cpp_harness(module)).expect("write harness");
 
-        // Stimulus + reference trace.
-        let stimulus = gen_stimulus(module, CYCLES, 0xDEAD_BEEF);
-        let stim_path = dir.join("stimulus.bin");
-        std::fs::write(&stim_path, stimulus_to_bytes(&stimulus)).expect("write stimulus");
-        let reference = run_reference(module, &stimulus);
+    // Stimulus + reference trace.
+    let stim_path = dir.join("stimulus.bin");
+    std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
+    let reference = run_reference(module, stimulus);
 
-        if have_yosys {
-            run_yosys(&sv, &module.name);
-        }
-        if have_verilator {
-            // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
-            lint_verilator(&sv, &module.name);
-            let dut = run_verilator(&dir, &sv, &harness, &module.name, &stim_path);
+    if tools.yosys {
+        run_yosys(&sv, &module.name);
+    }
+    if tools.verilator {
+        // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
+        lint_verilator(&sv, &module.name);
+        let dut = run_verilator(
+            &dir,
+            &sv,
+            &harness,
+            &module.name,
+            &stim_path,
+            stimulus.len(),
+        );
+        assert_eq!(
+            dut.len(),
+            reference.len(),
+            "trace length mismatch for `{}`",
+            module.name
+        );
+        // Find the first differing 8-byte word for a useful message.
+        for (cycle, (a, b)) in reference
+            .chunks_exact(8)
+            .zip(dut.chunks_exact(8))
+            .enumerate()
+        {
             assert_eq!(
-                dut.len(),
-                reference.len(),
-                "trace length mismatch for `{}`",
+                a, b,
+                "trace mismatch for `{}` at output word {cycle}",
                 module.name
             );
-            // Find the first differing 8-byte word for a useful message.
-            for (cycle, (a, b)) in reference
-                .chunks_exact(8)
-                .zip(dut.chunks_exact(8))
-                .enumerate()
-            {
-                assert_eq!(
-                    a, b,
-                    "trace mismatch for `{}` at output word {cycle}",
-                    module.name
-                );
-            }
         }
+    }
+}
+
+#[test]
+fn examples_pass_the_oracle() {
+    let tools = tools();
+    for (name, module) in &all_cases() {
+        let stimulus = gen_stimulus(module, CYCLES, 0xDEAD_BEEF);
+        co_simulate(&tools, name, module, &stimulus);
+    }
+}
+
+/// Examples with a directed CSV stimulus (`examples/<name>.csv`).
+struct Directed {
+    name: &'static str,
+    source: &'static str,
+    csv: &'static str,
+}
+
+const DIRECTED: &[Directed] = &[
+    Directed {
+        name: "fn_counter",
+        source: include_str!("../../../examples/fn_counter.snt"),
+        csv: include_str!("../../../examples/fn_counter.csv"),
+    },
+    Directed {
+        name: "fn_signed",
+        source: include_str!("../../../examples/fn_signed.snt"),
+        csv: include_str!("../../../examples/fn_signed.csv"),
+    },
+];
+
+/// Directed stimulus: the CSV's expected outputs hold on the reference model,
+/// and the Verilog co-simulates bit-for-bit over the same directed rows — so a
+/// directed test passing under `sinter sim` also holds for the emitted SV.
+#[test]
+fn directed_examples_pass_the_oracle() {
+    let tools = tools();
+    for ex in DIRECTED {
+        let module = compile_one(ex.source);
+        let stim = Stimulus::parse_csv(&module, ex.csv).expect("example CSV parses");
+        assert!(stim.expectation_count() > 0, "`{}` checks nothing", ex.name);
+
+        let mut sim = Simulator::new(&module);
+        let mut mismatches = Vec::new();
+        for (k, row) in stim.inputs.iter().enumerate() {
+            let inputs = module
+                .inputs()
+                .map(|p| p.name.clone())
+                .zip(row.iter().copied())
+                .collect();
+            mismatches.extend(stim.check_cycle(&module, k, &sim.step(&inputs)));
+        }
+        assert!(
+            mismatches.is_empty(),
+            "`{}` expectations failed:\n{}",
+            ex.name,
+            mismatches
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+
+        co_simulate(
+            &tools,
+            &format!("{}-directed", ex.name),
+            &module,
+            &stim.inputs,
+        );
     }
 }

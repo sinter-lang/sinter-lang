@@ -31,8 +31,8 @@ Until 1.0, every `0.x` minor release may break any of these.
 
 Close the gaps that force workarounds today.
 
-- [ ] **Directed stimulus**: `sinter sim` reads user-supplied input vectors
-      (and optionally expected outputs) instead of only seeded-random inputs.
+- [x] **Directed stimulus**: `sinter sim --stimulus` reads CSV input vectors
+      with optional expected outputs, replayed through the oracle too.
 - [ ] **Waveforms**: `sinter sim` writes VCD.
 - [ ] **Verilog interop**: declare an external Verilog module (PLL, vendor
       primitive, IP) and instantiate it from Sinter.
@@ -67,6 +67,8 @@ Implement what 1.0 needs, and explicitly defer the rest.
 - [ ] Settle every DESIGN §11 open question that affects syntax (generator
       signature §4.4, parser strategy §7.1).
 - [ ] Remove the legacy `module` surface.
+- [ ] Decide whether 1.0 lifts the 64-bit value limit (the IR and simulator
+      hold every value in a `u64`).
 
 **Deferred past 1.0** (additive, so they don't break the 1.0 promise):
 

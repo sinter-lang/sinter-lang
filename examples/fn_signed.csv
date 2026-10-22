@@ -1,0 +1,10 @@
+# Directed stimulus for fn_signed.snt: an i4 accumulator that wraps.
+# Signed ports take negative decimals; 0x / 0b give raw bit patterns.
+# `acc_q` is the register, so each row checks the sum of the rows above it.
+x,  expect.acc_q
+7,  0
+1,  7
+0,  -8    # 0 + 7 + 1 = 8 wraps to -8 in i4
+-1, -8
+0x2, 7    # -8 + 0 + -1 = -9 wraps to 7
+0,  -7
