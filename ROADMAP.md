@@ -24,10 +24,10 @@ Until 1.0, every `0.x` minor release may break any of these.
 - [x] Release workflow: tagging `v*` publishes static x86_64 / aarch64 musl
       binaries.
 - [x] CHANGELOG.
-- [ ] Tag `v0.1.1` on `master` and confirm the release assets and the README
-      snippets work.
+- [ ] Tag `v0.1.1` (the "release: v0.1.1" commit) and confirm the release
+      assets and the README snippets work.
 
-## v0.2 — usable in a real project
+## v0.2 — usable in a real project ✅
 
 Close the gaps that force workarounds today.
 
@@ -45,6 +45,8 @@ Close the gaps that force workarounds today.
       commented with their Q-notation in the emitted Verilog.
 - [x] **Diagnostics: file + caret**: semantic errors name the file, quote the
       line, and put a caret under the position.
+
+Release: tag `v0.2.0` on the "release: v0.2.0" commit.
 
 ## v0.3 — dogfood
 
