@@ -84,8 +84,8 @@ restated below so they bind regardless.
 - `ecp5-sv-yosys-verilator` — Yosys/nextpnr + Verilator invocation flow.
 - `systemrs-modeling-skill` — TLM modeling / binary-trace methodology.
 
-Populate them with: `git submodule update --init --recursive` (needs SSH access
-to the `londey`/`systemrs` repos).
+Populate them with: `git submodule update --init --recursive` (public
+HTTPS URLs, so no SSH key is needed).
 
 ## Rust rules (apply to hand-written code AND the compiler's own source)
 
