@@ -768,6 +768,105 @@ complementary routes, both with locally-legible cost:
 The mux-tree route (v1) reuses the existing SROA leaf-register machinery with no new
 IR primitive. Milestone: §9.11.
 
+### 6.15 Foreign Verilog modules: a binding plus a reference model (proposed)
+
+Real projects need to instantiate Verilog that Sinter didn't write: existing IP
+(a UART, a CORDIC), vendor primitives (`SB_MAC16`, `MULT18X18D`), and I/O cells.
+The obstacle is §7.4. Every design lowers to *two* models, the reference
+simulator and the Verilog, and a black box has no simulator model. If the sim
+just treated a foreign module's outputs as unknowns, the oracle would stop
+covering any design that uses one.
+
+**Proposal: a foreign module is an ordinary state struct with a Verilog
+binding.** The struct and its single transition method are the module's
+**reference model**, written in Sinter. `sinter sim` runs the model. The Verilog
+backend does *not* lower the model; it emits an instance of the named Verilog
+module in its place.
+
+```
+// A UART transmitter that already exists in rtl/uart_tx.v.
+#[verilog(module = "uart_tx", src = "rtl/uart_tx.v")]
+struct UartTx {
+    // Model state: used by `sinter sim` only. The Verilog's own registers
+    // are its business.
+    shift: u10 = 0x3FF,
+    count: u4 = 0,
+}
+
+struct UartTxOut {
+    tx: u1,
+    busy: u1,
+}
+
+impl UartTx {
+    // The model of one clock cycle. Parameter names are the Verilog input
+    // port names; the output struct's field names are its output port names.
+    fn step(self, data: u8, start: u1) -> (UartTx, UartTxOut) {
+        ...
+    }
+}
+```
+
+A parent owns and threads it like any other sub-state (§4.3):
+
+```
+let (uart, o) = self.uart.step(byte, go);
+Top { uart: uart, busy: o.busy, ... }
+```
+
+**Rules.**
+
+- **Binding.** `#[verilog(module = "...")]` names the Verilog module. Each
+  binding struct has exactly one `self`-taking method that returns
+  `(Self, Out)`. Its scalar parameters map by name to the module's input
+  ports, and the scalar fields of `Out` map by name to its output ports.
+  Aggregate ports (arrays, nested structs) and port renaming are deferred.
+- **Clock and reset.** If the model struct has state, the instance's `clk`
+  and `rst_n` ports connect to the enclosing domain's. `clk = "..."` and
+  `rst_n = "..."` arguments rename them, and `rst_n = none` declares a module
+  with no reset port. A model with no state is combinational and gets
+  neither.
+- **Timing comes from the model.** If the model computes an output from an
+  input in the same cycle, the acyclicity check (§4.2) treats the Verilog
+  module as having that combinational path too. The model is the contract.
+- **Single-driver.** Each binding instance is stepped at most once per cycle
+  (§4.1), exactly as for any sub-state. Each step call site that owns
+  separate state is a separate Verilog instance.
+- **Verilog parameters.** `#(...)` overrides are deferred. EXT1 instantiates
+  the module with its default parameters.
+
+**The oracle checks the model.** `src = "path.v"` gives the Verilog source,
+resolved relative to the `.snt` file. `sinter build` copies it next to the
+emitted SV, and the conformance harness compiles it into the Verilator
+co-simulation. The reference trace (from the Sinter model) and the Verilator
+trace (from the real Verilog) must still agree bit-for-bit, so **a wrong model
+is an oracle failure, not a silent sim/silicon divergence.** That turns the
+model requirement into a feature: you get equivalence checking between your
+model and the IP for free, over the same stimulus.
+
+For a vendor primitive, `src` names the vendor's simulation library file (for
+example Yosys's `ice40/cells_sim.v`). Without `src`, `sinter build` still
+emits the instance, but the design can't be co-simulated or linted, and the
+CLI says so.
+
+**Out of scope.** Modules that *generate* a clock (PLLs) need multiple clock
+domains (§6.7). Until then, instantiate them in a hand-written Verilog top
+level that wraps the Sinter module (see `docs/generated-verilog.md`).
+
+**Alternatives considered.**
+
+- *An opaque `extern module` with ports and no model.* The sim would have to
+  take the outputs from the stimulus file, which breaks the one-source /
+  two-models property and drops the design out of the oracle. Rejected.
+- *A model in Rust rather than Sinter.* That would be more expressive for
+  complex IP, but it splits the source of truth across languages and needs a
+  plugin ABI. Revisit if a Sinter model turns out to be impractical for real IP.
+- *An `extern` keyword.* An attribute on an ordinary struct reuses the
+  existing struct, impl, threading, and single-driver machinery, and adds no
+  keyword. The only grammar change is allowing string attribute values.
+
+Milestone: §9.13.
+
 ---
 
 ## 7. Compiler & Tooling Architecture
@@ -1346,6 +1445,19 @@ cycle, which would scramble instruction fetch. The core takes its program from a
 harness (beyond the random default) is a companion tooling item worth adding for any
 large example.
 
+### 9.13 Foreign Verilog modules — proposed milestone (EXT1–EXT2)
+
+Instantiate an existing Verilog module from Sinter, with a Sinter reference model
+that the oracle checks against the real Verilog (§6.15).
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **EXT1** | String attribute values in the grammar. `#[verilog(module, src, clk, rst_n)]` on a state struct with one `step(self, ..) -> (Self, Out)` model method, using scalar ports only. A new IR `Instance` node carries the port connections and the model's flattened logic. The sim evaluates the model. The Verilog backend emits a named-port instance (`clk` / `rst_n` wired for stateful models) and leaves the model out. `sinter build` copies `src` beside the emitted SV, and the conformance harness adds it to the Verilator build. | An example that instantiates a small hand-written Verilog module, such as a registered adder, passes the oracle bit-for-bit. A deliberately wrong model fails it. |
+| **EXT2** | `#(...)` parameter overrides (`#[verilog(params(BAUD_DIV = 217))]`), port renaming, and aggregate ports flattened by the `docs/generated-verilog.md` rules. | A parameterized vendor primitive (for example an iCE40 `SB_MAC16` against `cells_sim.v`) passes the oracle. |
+
+Deferred: clock-generating modules (§6.7); inout / tristate ports; Rust-side
+models.
+
 ---
 
 ## 10. Source Organization — Modules & Visibility (SETTLED shape)
@@ -1518,3 +1630,7 @@ version / build-manifest format (cf. the M5 build-system line in §9).
    parser.
 5. §6.6 — **RESOLVED (§6.11 / §9.8):** v1 channels expose ready/valid and guarantee
    no-corruption, not deadlock-freedom (the liveness tier is deferred).
+6. §6.15 — foreign Verilog modules: a `#[verilog(...)]` binding on a state
+   struct whose `step` method is a **mandatory** Sinter reference model that the
+   oracle checks against the real Verilog (proposed), versus an opaque port list
+   with no model.
