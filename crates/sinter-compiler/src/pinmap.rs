@@ -81,7 +81,17 @@ impl PinMap {
     }
 
     fn parse_line(content: &str, source: &str, line: usize) -> Result<PinBinding, CompileError> {
-        let err = |msg: String| CompileError::semantic(source, Pos { line, col: 1 }, msg);
+        let err = |msg: String| {
+            CompileError::semantic(
+                source,
+                Pos {
+                    line,
+                    col: 1,
+                    file: 0,
+                },
+                msg,
+            )
+        };
 
         let tokens: Vec<&str> = content.split_whitespace().collect();
         if tokens[0] != "set_io" {

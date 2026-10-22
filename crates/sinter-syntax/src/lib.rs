@@ -19,5 +19,5 @@ pub use ast::{
     Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt, StructField, StructItem,
     Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
 };
-pub use loader::{load_project, LoadError, ModuleTree};
-pub use parser::{parse_program, ParseError};
+pub use loader::{load_project, load_project_sources, LoadError, ModuleTree, SourceFile};
+pub use parser::{parse_program, parse_program_in, ParseError};

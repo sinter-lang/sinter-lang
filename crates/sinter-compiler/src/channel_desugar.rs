@@ -135,7 +135,7 @@ pub fn desugar_channels(program: &Program) -> Result<Program, CompileError> {
         let src = gen_source(m);
         let parsed = parse_program(&src).map_err(|e| {
             sem(
-                Pos { line: 0, col: 0 },
+                Pos::default(),
                 format!(
                     "internal error: synthesized `{}` source failed to parse: {e}\n{src}",
                     kind_src(m.kind)

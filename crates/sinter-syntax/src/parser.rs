@@ -3,6 +3,8 @@
 //! Built on a `pest` PEG (`grammar/sinter.pest`). The PEG is the normative
 //! surface-syntax spec; this module folds its parse tree into the typed AST.
 
+use std::cell::Cell;
+
 use pest::iterators::Pair;
 use pest::Parser as _;
 
@@ -40,12 +42,36 @@ pub enum ParseError {
     InvalidLiteral(String, usize),
 }
 
+thread_local! {
+    /// The file index stamped on every [`Pos`] built by the current parse (see
+    /// [`parse_program_in`]). pest hands `pos_of` no user context, so the index
+    /// rides in a thread-local scoped to one parse.
+    static FILE: Cell<u32> = const { Cell::new(0) };
+}
+
 /// Parse a complete `.snt` compilation unit.
 ///
 /// # Errors
 /// Returns [`ParseError`] if the source does not match the grammar or contains
 /// a malformed type or literal.
 pub fn parse_program(source: &str) -> Result<Program, ParseError> {
+    parse_program_in(source, 0)
+}
+
+/// Like [`parse_program`], but stamps every [`Pos`] with source-file index
+/// `file`, so diagnostics in a multi-file project can name the file.
+///
+/// # Errors
+/// Returns [`ParseError`] if the source does not match the grammar or contains
+/// a malformed type or literal.
+pub fn parse_program_in(source: &str, file: u32) -> Result<Program, ParseError> {
+    let prev = FILE.replace(file);
+    let result = parse_unit(source);
+    FILE.set(prev);
+    result
+}
+
+fn parse_unit(source: &str) -> Result<Program, ParseError> {
     let mut pairs = SinterParser::parse(Rule::program, source)
         .map_err(|e| ParseError::Syntax(e.to_string()))?;
     // `program` is the sole top-level pair.
@@ -68,7 +94,11 @@ pub fn parse_program(source: &str) -> Result<Program, ParseError> {
 
 fn pos_of(pair: &Pair<Rule>) -> Pos {
     let (line, col) = pair.line_col();
-    Pos { line, col }
+    Pos {
+        line,
+        col,
+        file: FILE.get(),
+    }
 }
 
 fn unexpected(rule: Rule, ctx: &str) -> ParseError {

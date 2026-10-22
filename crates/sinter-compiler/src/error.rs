@@ -1,7 +1,9 @@
 //! Compiler error types.
 
+use std::fmt;
+
 use sinter_syntax::ast::{Pos, Type};
-use sinter_syntax::{LoadError, ParseError};
+use sinter_syntax::{LoadError, ParseError, SourceFile};
 
 /// An error produced while checking or lowering a Sinter program.
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +26,11 @@ pub enum CompileError {
         /// Human-readable message.
         msg: String,
     },
+
+    /// A semantic error located in a project source file, rendered with the
+    /// file path, the offending line, and a caret under the position.
+    #[error("{0}")]
+    InFile(Box<Located>),
 }
 
 impl CompileError {
@@ -34,6 +41,80 @@ impl CompileError {
             pos,
             msg: msg.into(),
         }
+    }
+
+    /// Attach source context from a project's `files` (indexed by
+    /// [`Pos::file`]): a [`CompileError::Semantic`] whose position lies in one
+    /// of them becomes a [`CompileError::InFile`]. Any other error, or one
+    /// with a synthesized (line-0) position, is returned unchanged.
+    #[must_use]
+    pub fn with_sources(self, files: &[SourceFile]) -> Self {
+        let CompileError::Semantic { module, pos, msg } = self else {
+            return self;
+        };
+        let file = usize::try_from(pos.file).ok().and_then(|i| files.get(i));
+        let line_text = pos
+            .line
+            .checked_sub(1)
+            .and_then(|i| file.and_then(|f| f.text.lines().nth(i)));
+        match (file, line_text) {
+            (Some(file), Some(line_text)) => CompileError::InFile(Box::new(Located {
+                path: file.path.clone(),
+                line_text: line_text.to_string(),
+                context: module,
+                pos,
+                msg,
+            })),
+            _ => CompileError::Semantic { module, pos, msg },
+        }
+    }
+}
+
+/// A semantic error with its source location resolved (see
+/// [`CompileError::with_sources`]).
+#[derive(Debug)]
+pub struct Located {
+    /// The source file's path.
+    pub path: String,
+    /// The full text of the offending line.
+    pub line_text: String,
+    /// The item being checked (a function, method, or struct name).
+    pub context: String,
+    /// The position within the file.
+    pub pos: Pos,
+    /// Human-readable message.
+    pub msg: String,
+}
+
+/// Renders rustc-style:
+///
+/// ```text
+/// src/alu.snt:10:20: type mismatch: expected `u8`, found `u9`
+///    |
+/// 10 |             Counter { value: self.value + 1 }
+///    |                    ^
+///    = in `bump`
+/// ```
+impl fmt::Display for Located {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let line_no = self.pos.line.to_string();
+        let gutter = " ".repeat(line_no.len());
+        // Keep tabs so the caret lines up under the same visual column.
+        let pad: String = self
+            .line_text
+            .chars()
+            .take(self.pos.col.saturating_sub(1))
+            .map(|c| if c == '\t' { '\t' } else { ' ' })
+            .collect();
+        writeln!(
+            f,
+            "{}:{}:{}: {}",
+            self.path, self.pos.line, self.pos.col, self.msg
+        )?;
+        writeln!(f, "{gutter} |")?;
+        writeln!(f, "{line_no} | {}", self.line_text)?;
+        writeln!(f, "{gutter} | {pad}^")?;
+        write!(f, "{gutter} = in `{}`", self.context)
     }
 }
 

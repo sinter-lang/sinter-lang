@@ -56,7 +56,7 @@ const CODE: &str = "fault_code";
 const MAX_SITES: usize = 64;
 
 fn sem(msg: impl Into<String>) -> CompileError {
-    CompileError::semantic("faults", sinter_syntax::ast::Pos { line: 0, col: 0 }, msg)
+    CompileError::semantic("faults", sinter_syntax::ast::Pos::default(), msg)
 }
 
 /// Bits needed to hold the value `n` (`0` for `n == 0`): the `fault_code` width.

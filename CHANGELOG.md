@@ -21,6 +21,9 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 
 ### Changed
 
+- Semantic errors name the source **file** (not the item), quote the
+  offending line, and put a caret under the position. In a multi-file
+  project they now point at the right file.
 - `sinter sim` prints signed ports as signed decimals (e.g. `-8`, not `8`
   for an `i4`).
 

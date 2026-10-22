@@ -83,10 +83,11 @@ pub fn compile_project_faults(
     root: &std::path::Path,
     faults: FaultMode,
 ) -> Result<Design, CompileError> {
-    let tree = sinter_syntax::load_project(root)?;
-    let program = resolve::resolve_project(&tree)?;
+    let (tree, files) = sinter_syntax::load_project_sources(root)?;
+    let located = |e: CompileError| e.with_sources(&files);
+    let program = resolve::resolve_project(&tree).map_err(located)?;
     // `include_hex!` paths resolve against the root source file's directory.
-    compile_program(program, root.parent(), faults)
+    compile_program(program, root.parent(), faults).map_err(located)
 }
 
 /// Check and lower an already-resolved [`Design`] from a flat program. `base` is

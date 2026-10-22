@@ -42,8 +42,13 @@ Close the gaps that force workarounds today.
       `tests/interface.rs`.
 - [ ] **Q-format port comments**: CLAUDE.md requires fixed-point ports to be
       documented with Q-notation in the emitted Verilog. It isn't yet.
-- [ ] **Diagnostics**: errors point at source spans with a caret, and one run
-      reports more than one error.
+- [x] **Diagnostics: file + caret**: semantic errors name the file, quote the
+      line, and put a caret under the position.
+- [ ] **Diagnostics: expression positions**: carets point at the offending
+      expression rather than the enclosing statement or block. Expressions
+      carry no `Pos` today.
+- [ ] **Diagnostics: multiple errors**: one run reports more than the first
+      error.
 
 ## v0.3 — dogfood
 

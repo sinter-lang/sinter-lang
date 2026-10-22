@@ -738,5 +738,13 @@ fn lower(s: &str) -> String {
 }
 
 fn sem(src: &str, line: usize, msg: String) -> CompileError {
-    CompileError::semantic(src, Pos { line, col: 1 }, msg)
+    CompileError::semantic(
+        src,
+        Pos {
+            line,
+            col: 1,
+            file: 0,
+        },
+        msg,
+    )
 }

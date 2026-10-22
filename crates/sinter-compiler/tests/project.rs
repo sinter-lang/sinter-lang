@@ -52,3 +52,23 @@ fn split_go_board_elaborates_bit_for_bit_identical() {
         "the split project must produce an identical simulation trace"
     );
 }
+
+/// A semantic error in a submodule names that file, quotes the offending line,
+/// and puts a caret under the position (a tab in the line keeps its width).
+#[test]
+fn semantic_errors_name_the_file_and_quote_the_line() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/located_error/main.snt");
+    let err = compile_project(&root)
+        .expect_err("the submodule has a type error")
+        .to_string();
+    let counter = root.with_file_name("counter.snt");
+    let expected = format!(
+        "{}:7:13: type mismatch: expected `u8`, found `u9`\n  \
+         |\n\
+         7 | \tif en == 1 {{\n  \
+         | \t           ^\n  \
+         = in `bump`",
+        counter.display()
+    );
+    assert_eq!(err, expected);
+}

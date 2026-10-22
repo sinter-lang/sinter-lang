@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use crate::ast::{Item, ModItem, Module, Pos, Program, Visibility};
-use crate::parser::{parse_program, ParseError};
+use crate::parser::{parse_program_in, ParseError};
 
 /// An error from loading a multi-file project.
 #[derive(Debug, thiserror::Error)]
@@ -71,13 +71,42 @@ pub struct ModuleTree {
     pub pos: Pos,
 }
 
+/// One source file of a loaded project, for rendering diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceFile {
+    /// The file's path, as displayed in diagnostics.
+    pub path: String,
+    /// The file's full text.
+    pub text: String,
+}
+
 /// Load a multi-file project rooted at `root`, resolving external `mod`s.
 ///
 /// # Errors
 /// Returns a [`LoadError`] on a read / parse failure, a missing `mod foo;` file,
 /// or a duplicate submodule name.
 pub fn load_project(root: &Path) -> Result<ModuleTree, LoadError> {
-    let program = parse_file(root)?;
+    load_project_sources(root).map(|(tree, _)| tree)
+}
+
+/// Like [`load_project`], but also returns every source file read. The file at
+/// index `i` is the one whose AST positions carry [`Pos::file`] `== i`; the
+/// root is index 0.
+///
+/// # Errors
+/// As [`load_project`].
+pub fn load_project_sources(root: &Path) -> Result<(ModuleTree, Vec<SourceFile>), LoadError> {
+    let mut files = Vec::new();
+    let tree = load_root(root, &mut files)?;
+    Ok((tree, files))
+}
+
+fn load_root(root: &Path, files: &mut Vec<SourceFile>) -> Result<ModuleTree, LoadError> {
+    let text = std::fs::read_to_string(root).map_err(|e| LoadError::Io {
+        path: root.display().to_string(),
+        source: e,
+    })?;
+    let program = parse_source(&root.display().to_string(), text, files)?;
     let name = root
         .file_stem()
         .and_then(|s| s.to_str())
@@ -91,18 +120,27 @@ pub fn load_project(root: &Path) -> Result<ModuleTree, LoadError> {
         &root.display().to_string(),
         child_dir,
         Pos::default(),
+        files,
     )
 }
 
-fn parse_file(path: &Path) -> Result<Program, LoadError> {
-    let text = std::fs::read_to_string(path).map_err(|e| LoadError::Io {
-        path: path.display().to_string(),
+/// Parse `text` as the next file of the project, recording it in `files` so
+/// its positions' [`Pos::file`] index resolves back to `path`.
+fn parse_source(
+    path: &str,
+    text: String,
+    files: &mut Vec<SourceFile>,
+) -> Result<Program, LoadError> {
+    let index = u32::try_from(files.len()).unwrap_or(u32::MAX);
+    let program = parse_program_in(&text, index).map_err(|e| LoadError::Parse {
+        path: path.to_string(),
         source: e,
     })?;
-    parse_program(&text).map_err(|e| LoadError::Parse {
-        path: path.display().to_string(),
-        source: e,
-    })
+    files.push(SourceFile {
+        path: path.to_string(),
+        text,
+    });
+    Ok(program)
 }
 
 /// Turn a parsed `program` into a [`ModuleTree`], resolving its `mod` items.
@@ -114,6 +152,7 @@ fn build_tree(
     source: &str,
     child_dir: &Path,
     pos: Pos,
+    files: &mut Vec<SourceFile>,
 ) -> Result<ModuleTree, LoadError> {
     let Program { modules, items } = program;
     let mut tree_items = Vec::new();
@@ -127,7 +166,7 @@ fn build_tree(
                         decl: source.to_string(),
                     });
                 }
-                children.push(load_mod(m, source, child_dir)?);
+                children.push(load_mod(m, source, child_dir, files)?);
             }
             other => tree_items.push(other),
         }
@@ -149,6 +188,7 @@ fn load_mod(
     m: ModItem,
     decl_source: &str,
     parent_child_dir: &Path,
+    files: &mut Vec<SourceFile>,
 ) -> Result<ModuleTree, LoadError> {
     let ModItem {
         vis,
@@ -165,16 +205,13 @@ fn load_mod(
                 modules: Vec::new(),
                 items,
             };
-            build_tree(name, vis, program, decl_source, &child_dir, pos)
+            build_tree(name, vis, program, decl_source, &child_dir, pos, files)
         }
         None => {
             // External module: read `<parent_child_dir>/<name>.snt`.
             let file = parent_child_dir.join(format!("{name}.snt"));
             let program = match std::fs::read_to_string(&file) {
-                Ok(text) => parse_program(&text).map_err(|e| LoadError::Parse {
-                    path: file.display().to_string(),
-                    source: e,
-                })?,
+                Ok(text) => parse_source(&file.display().to_string(), text, files)?,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Err(LoadError::MissingModule {
                         name,
@@ -196,6 +233,7 @@ fn load_mod(
                 &file.display().to_string(),
                 &child_dir,
                 pos,
+                files,
             )
         }
     }

@@ -6,12 +6,25 @@
 //! statements so later passes can produce located diagnostics.
 
 /// A source position (1-based line and column) for diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Pos {
     /// 1-based line number.
     pub line: usize,
     /// 1-based column number.
     pub col: usize,
+    /// Which source file: an index into the project's file list (see
+    /// [`crate::loader::load_project_sources`]); `0` for a single file.
+    pub file: u32,
+}
+
+/// `file` is omitted so the parser's `.ast` goldens stay file-independent.
+impl core::fmt::Debug for Pos {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Pos")
+            .field("line", &self.line)
+            .field("col", &self.col)
+            .finish()
+    }
 }
 
 /// Item / field visibility (DESIGN §10). Private unless written `pub`.

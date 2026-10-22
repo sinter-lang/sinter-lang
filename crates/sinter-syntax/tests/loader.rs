@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use sinter_syntax::{load_project, LoadError, ModuleTree};
+use sinter_syntax::{load_project, load_project_sources, Item, LoadError, ModuleTree};
 
 fn fixture(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -76,5 +76,63 @@ fn duplicate_submodule_is_an_error() {
     match err {
         LoadError::DuplicateModule { name, .. } => assert_eq!(name, "a"),
         other => panic!("expected DuplicateModule, got: {other}"),
+    }
+}
+
+/// Every file read gets an index, and each module's item positions carry the
+/// index of the file they were parsed from (inline modules share their
+/// parent's), so diagnostics can name the right file.
+#[test]
+fn positions_carry_their_source_file_index() {
+    let (root, files) = load_project_sources(&fixture("proj/main.snt")).expect("load project");
+    let paths: Vec<String> = files
+        .iter()
+        .map(|f| {
+            Path::new(&f.path)
+                .strip_prefix(fixture("proj"))
+                .expect("fixture-relative path")
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        ["main.snt", "alpha.snt", "alpha/gamma.snt", "beta.snt"]
+    );
+
+    fn item_files(tree: &ModuleTree) -> Vec<u32> {
+        tree.items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Struct(s) => Some(s.pos.file),
+                Item::Func(f) => Some(f.pos.file),
+                Item::Enum(e) => Some(e.pos.file),
+                _ => None,
+            })
+            .collect()
+    }
+    for (tree, file) in [
+        (&root, 0),
+        (child(&root, "alpha"), 1),
+        (child(child(&root, "alpha"), "gamma"), 2),
+        (child(&root, "beta"), 3),
+        (child(&root, "inline"), 0),
+    ] {
+        let found = item_files(tree);
+        assert!(
+            !found.is_empty(),
+            "`{}` has no struct / fn items",
+            tree.name
+        );
+        assert!(
+            found.iter().all(|&f| f == file),
+            "`{}` items carry files {found:?}, expected {file}",
+            tree.name
+        );
+        assert_eq!(
+            files[file as usize].path, tree.source,
+            "`{}` source",
+            tree.name
+        );
     }
 }

@@ -1,0 +1,15 @@
+// A semantic error in a submodule must be reported against that file.
+mod counter;
+
+use root::counter::Counter;
+
+struct Top {
+    c: Counter,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, en: u1) -> Top {
+        Top { c: self.c.bump(en) }
+    }
+}
