@@ -40,8 +40,8 @@ Close the gaps that force workarounds today.
       nested structs and arrays, and reset behaviour, written down
       ([docs/generated-verilog.md](docs/generated-verilog.md)) and pinned by
       `tests/interface.rs`.
-- [ ] **Q-format port comments**: CLAUDE.md requires fixed-point ports to be
-      documented with Q-notation in the emitted Verilog. It isn't yet.
+- [x] **Q-format port comments**: fixed-point ports and registers are
+      commented with their Q-notation in the emitted Verilog.
 - [x] **Diagnostics: file + caret**: semantic errors name the file, quote the
       line, and put a caret under the position.
 - [ ] **Diagnostics: expression positions**: carets point at the offending

@@ -117,6 +117,7 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
         regs.push(ir::Reg {
             name: r.name.clone(),
             ty: r.ty,
+            frac_bits: 0,
             reset,
         });
     }
@@ -160,6 +161,7 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
             dir: p.dir,
             name: p.name.clone(),
             ty: p.ty,
+            frac_bits: 0,
         })
         .collect();
 

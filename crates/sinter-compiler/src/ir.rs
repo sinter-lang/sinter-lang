@@ -73,6 +73,9 @@ pub struct Port {
     pub name: String,
     /// Type.
     pub ty: Type,
+    /// Fractional bits if the port carries a fixed-point value (DESIGN §6.1),
+    /// else 0. Documentation only: backends treat the port as its raw `ty`.
+    pub frac_bits: u32,
 }
 
 /// A checked register with a constant-evaluated reset value.
@@ -82,6 +85,9 @@ pub struct Reg {
     pub name: String,
     /// Type.
     pub ty: Type,
+    /// Fractional bits if the register holds a fixed-point value (DESIGN §6.1),
+    /// else 0. Documentation only: backends treat the register as its raw `ty`.
+    pub frac_bits: u32,
     /// Reset value (already constant-folded to a masked bit pattern).
     pub reset: u64,
 }

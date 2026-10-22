@@ -60,6 +60,18 @@ fn net_type(ty: Type) -> String {
     }
 }
 
+/// The Q-notation comment for a fixed-point net (CLAUDE.md: "document
+/// fixed-point with Q-notation"), or `""` for an integer. `I` counts the sign
+/// bit, matching Sinter's `iI.F` spelling; the formula makes that explicit.
+fn q_comment(ty: Type, frac_bits: u32) -> String {
+    if frac_bits == 0 {
+        return String::new();
+    }
+    let int_bits = ty.width() - frac_bits;
+    let sign = if ty.is_signed() { "signed" } else { "unsigned" };
+    format!("  // Q{int_bits}.{frac_bits} {sign} fixed-point: value = raw / 2^{frac_bits}")
+}
+
 fn emit_ports(out: &mut String, m: &Module) {
     let _ = writeln!(out, "module {} (", m.name);
     let _ = writeln!(
@@ -71,18 +83,21 @@ fn emit_ports(out: &mut String, m: &Module) {
         out,
         "    input  wire         rst_n,  // active-low asynchronous reset"
     );
-    let ports: Vec<String> = m
-        .ports
-        .iter()
-        .map(|p| {
-            let (dir, kw) = match p.dir {
-                sinter_syntax::ast::Dir::In => ("input", "wire"),
-                sinter_syntax::ast::Dir::Out => ("output", "logic"),
-            };
-            format!("    {dir:6} {kw:5} {} {}", net_type(p.ty), p.name)
-        })
-        .collect();
-    let _ = writeln!(out, "{}", ports.join(",\n"));
+    for (i, p) in m.ports.iter().enumerate() {
+        let (dir, kw) = match p.dir {
+            sinter_syntax::ast::Dir::In => ("input", "wire"),
+            sinter_syntax::ast::Dir::Out => ("output", "logic"),
+        };
+        // The separating comma goes before any trailing comment.
+        let comma = if i + 1 < m.ports.len() { "," } else { "" };
+        let _ = writeln!(
+            out,
+            "    {dir:6} {kw:5} {} {}{comma}{}",
+            net_type(p.ty),
+            p.name,
+            q_comment(p.ty, p.frac_bits)
+        );
+    }
     let _ = writeln!(out, ");");
 }
 
@@ -90,7 +105,13 @@ fn emit_decls(out: &mut String, m: &Module) {
     if !m.regs.is_empty() {
         let _ = writeln!(out, "    // Registers");
         for r in &m.regs {
-            let _ = writeln!(out, "    logic {} {};", net_type(r.ty), r.name);
+            let _ = writeln!(
+                out,
+                "    logic {} {};{}",
+                net_type(r.ty),
+                r.name,
+                q_comment(r.ty, r.frac_bits)
+            );
             let _ = writeln!(out, "    logic {} {}_next;", net_type(r.ty), r.name);
         }
     }

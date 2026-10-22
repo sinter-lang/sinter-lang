@@ -18,6 +18,8 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 - **Interface documentation**: `docs/generated-verilog.md` specifies the
   generated module's port names, ordering, reset, and timing, and
   `tests/interface.rs` pins those rules.
+- Emitted Verilog comments each fixed-point port and register with its
+  Q-format (`// Q4.4 signed fixed-point: value = raw / 2^4`).
 
 ### Changed
 

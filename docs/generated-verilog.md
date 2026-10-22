@@ -72,8 +72,10 @@ tuple is `out_0`, `out_1`, …, and a struct is `out_<field>`.
   unless `#[encoding(onehot | gray | johnson)]` says otherwise. The encoding
   sets the port width (3 variants → 2 bits binary, 3 bits one-hot).
 - Fixed-point ports carry the raw bits (two's complement if signed): an
-  `iI.F` value `v` appears as the integer `v × 2^F`. The emitted Verilog does
-  not yet comment ports with their Q-format, so take it from the source.
+  `iI.F` value `v` appears as the integer `v × 2^F`. Each fixed-point port
+  and register is commented with its format, e.g.
+  `// Q2.2 signed fixed-point: value = raw / 2^2`. As in Sinter's own
+  spelling, the integer-bit count includes the sign bit.
 - An `Option` payload is meaningful only while its `_is_some` bit is 1.
 
 **Collisions are errors.** All ports and internal signals share one

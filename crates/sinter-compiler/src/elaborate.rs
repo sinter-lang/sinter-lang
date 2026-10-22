@@ -290,7 +290,7 @@ impl Elaborator<'_> {
         let resets = self.state_resets(state_ty, tick.pos)?;
         let mut regs = Vec::new();
         let mut seen = HashMap::new();
-        for (name, ty) in &leaves {
+        for (name, ty, frac_bits) in &leaves {
             if seen.insert(name.clone(), ()).is_some() {
                 return Err(err(
                     &self.ctx,
@@ -304,6 +304,7 @@ impl Elaborator<'_> {
             regs.push(ir::Reg {
                 name: name.clone(),
                 ty: *ty,
+                frac_bits: *frac_bits,
                 reset,
             });
         }
@@ -332,6 +333,7 @@ impl Elaborator<'_> {
             regs.push(ir::Reg {
                 name,
                 ty: mem.elem_ty,
+                frac_bits: 0,
                 reset: 0,
             });
         }
@@ -345,7 +347,7 @@ impl Elaborator<'_> {
                 let pty = self.resolve(ty, *pos)?;
                 let mut pleaves = Vec::new();
                 self.flatten_ty(&pty, name, &mut pleaves);
-                for (pname, pty) in pleaves {
+                for (pname, pty, frac_bits) in pleaves {
                     // `clk`/`rst_n` are the module's reserved clock/reset ports
                     // (emitted by the Verilog backend); an input flattening to
                     // either would duplicate-declare a port.
@@ -379,6 +381,7 @@ impl Elaborator<'_> {
                         dir: sinter_syntax::ast::Dir::In,
                         name: pname,
                         ty: pty,
+                        frac_bits,
                     });
                 }
                 env.insert(name.clone(), self.idents_val(&pty, name));
@@ -507,13 +510,14 @@ impl Elaborator<'_> {
                 dir: sinter_syntax::ast::Dir::Out,
                 name: name.clone(),
                 ty: r.ty,
+                frac_bits: r.frac_bits,
             });
             out_drives.push((name, typed(ir::ExprKind::Ident(r.name.clone()), r.ty)));
         }
         if let Some(out) = extra_out {
             let mut outs = Vec::new();
-            flatten_val(&out, "out", &mut outs);
-            for (name, value) in outs {
+            flatten_leaves(&out, "out", &mut outs);
+            for (name, value, frac_bits) in outs {
                 if seen.insert(name.clone(), ()).is_some() {
                     return Err(err(
                         &self.ctx,
@@ -525,6 +529,7 @@ impl Elaborator<'_> {
                     dir: sinter_syntax::ast::Dir::Out,
                     name: name.clone(),
                     ty: value.ty,
+                    frac_bits,
                 });
                 out_drives.push((name, value));
             }
@@ -2012,15 +2017,17 @@ impl Elaborator<'_> {
     // --- structured-value builders ----------------------------------------
 
     /// Flatten a type to its leaf scalar registers (mirrors `idents_val`).
-    fn flatten_ty(&self, ty: &Ty, path: &str, out: &mut Vec<(String, Type)>) {
+    /// Flatten `ty` to its scalar leaves as `(path, type, fractional bits)`;
+    /// the fractional-bit count is non-zero only for a fixed-point leaf.
+    fn flatten_ty(&self, ty: &Ty, path: &str, out: &mut Vec<(String, Type, u32)>) {
         match ty {
-            Ty::Scalar(t) => out.push((path.to_string(), *t)),
+            Ty::Scalar(t) => out.push((path.to_string(), *t, 0)),
             Ty::Fixed {
                 signed,
                 ibits,
                 fbits,
-            } => out.push((path.to_string(), int_ty(*signed, ibits + fbits))),
-            Ty::Enum(_, w) => out.push((path.to_string(), Type::Uint(*w))),
+            } => out.push((path.to_string(), int_ty(*signed, ibits + fbits), *fbits)),
+            Ty::Enum(_, w) => out.push((path.to_string(), Type::Uint(*w), 0)),
             Ty::Struct(name) => {
                 if let Ok(fields) = self.struct_fields(name, Pos::default()) {
                     for (f, fty) in fields {
@@ -2044,7 +2051,7 @@ impl Elaborator<'_> {
             Ty::Mem { .. } => {}
             // An `Option<T>` flattens to a validity leaf + the payload leaves.
             Ty::Option(inner) => {
-                out.push((join(path, "is_some"), Type::Uint(1)));
+                out.push((join(path, "is_some"), Type::Uint(1), 0));
                 self.flatten_ty(inner, &join(path, "payload"), out);
             }
         }
@@ -2201,29 +2208,38 @@ impl Elaborator<'_> {
 // --- free helpers ----------------------------------------------------------
 
 fn flatten_val(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr)>) {
+    let mut leaves = Vec::new();
+    flatten_leaves(v, path, &mut leaves);
+    out.extend(leaves.into_iter().map(|(name, e, _)| (name, e)));
+}
+
+/// [`flatten_val`], also keeping each leaf's fractional-bit count (non-zero
+/// only for a fixed-point leaf).
+fn flatten_leaves(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr, u32)>) {
     match v {
-        Val::Scalar(e, _) | Val::Enum(_, e) => out.push((path.to_string(), e.clone())),
+        Val::Scalar(e, f) => out.push((path.to_string(), e.clone(), *f)),
+        Val::Enum(_, e) => out.push((path.to_string(), e.clone(), 0)),
         Val::Struct(_, fields) => {
             for (f, val) in fields {
-                flatten_val(val, &join(path, f), out);
+                flatten_leaves(val, &join(path, f), out);
             }
         }
         Val::Array(items) => {
             for (i, val) in items.iter().enumerate() {
-                flatten_val(val, &join(path, &i.to_string()), out);
+                flatten_leaves(val, &join(path, &i.to_string()), out);
             }
         }
         Val::Tuple(items) => {
             for (i, val) in items.iter().enumerate() {
-                flatten_val(val, &join(path, &i.to_string()), out);
+                flatten_leaves(val, &join(path, &i.to_string()), out);
             }
         }
         // A memory is opaque: its next-state is its `MemWrite`, not a scalar
         // register update, so it contributes no leaf.
         Val::Mem { .. } => {}
         Val::Option { is_some, payload } => {
-            out.push((join(path, "is_some"), is_some.clone()));
-            flatten_val(payload, &join(path, "payload"), out);
+            out.push((join(path, "is_some"), is_some.clone(), 0));
+            flatten_leaves(payload, &join(path, "payload"), out);
         }
     }
 }

@@ -231,3 +231,15 @@ fn reserved_and_colliding_names_are_rejected() {
         "collides with another port",
     );
 }
+
+#[test]
+fn fixed_point_ports_and_registers_carry_their_q_format() {
+    let sv = verilog::emit_module(&module(ALL_RULES));
+    let q22 = "// Q2.2 signed fixed-point: value = raw / 2^2";
+    assert!(sv.contains(&format!("input  wire  signed [3:0] g,  {q22}")));
+    assert!(sv.contains(&format!("output logic signed [3:0] gain_q,  {q22}")));
+    assert!(sv.contains(&format!("logic signed [3:0] gain;  {q22}")));
+    // Integer ports carry no comment, and the last port has no comma.
+    assert!(sv.contains("input  wire  [3:0] p_lo,\n"));
+    assert!(sv.contains("output logic [0:0] out_1\n);"));
+}

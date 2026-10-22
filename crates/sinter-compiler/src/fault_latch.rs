@@ -197,6 +197,7 @@ pub fn apply(module: &mut ir::Module) -> Result<(), CompileError> {
     module.regs.push(ir::Reg {
         name: BITS.to_string(),
         ty: bits_ty,
+        frac_bits: 0,
         reset: 0,
     });
     module.reg_updates.push((BITS.to_string(), next));
@@ -223,6 +224,7 @@ pub fn apply(module: &mut ir::Module) -> Result<(), CompileError> {
         dir: sinter_syntax::ast::Dir::Out,
         name: CODE.to_string(),
         ty: code_ty,
+        frac_bits: 0,
     });
     module.out_drives.push((CODE.to_string(), code));
 
