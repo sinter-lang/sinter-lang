@@ -16,6 +16,7 @@ pub mod elaborate;
 pub mod error;
 pub mod eval;
 pub mod fault_latch;
+pub mod foreign;
 pub mod functional;
 pub mod include_expand;
 pub mod ir;
@@ -139,6 +140,34 @@ fn compile_program(
     functional::check_functional(&program)?;
     let mut design = check::check_program(&program)?;
     if let Some(mut module) = elaborate::elaborate(&program)? {
+        if has_multiplex && !module.instances.is_empty() {
+            // The multiply-CSE pass hoists shared wires ahead of every other
+            // wire, which would put one before an instance output it reads.
+            return Err(CompileError::semantic(
+                &module.name,
+                sinter_syntax::ast::Pos::default(),
+                "a `multiplex fn` cannot yet be combined with `#[verilog]` instances (EXT1)",
+            ));
+        }
+        // `#[verilog(src = "...")]` paths resolve against the source directory,
+        // like `include_hex!` (DESIGN §6.15).
+        for inst in &mut module.instances {
+            if let (Some(src), Some(base)) = (&inst.src, base) {
+                let path = base.join(src);
+                if !path.is_file() {
+                    return Err(CompileError::semantic(
+                        &inst.model,
+                        sinter_syntax::ast::Pos::default(),
+                        format!(
+                            "`#[verilog]` source `{}` not found (resolved to `{}`)",
+                            src.display(),
+                            path.display()
+                        ),
+                    ));
+                }
+                inst.src = Some(path);
+            }
+        }
         if has_multiplex {
             // Collapse the desugar's shared (then SROA-duplicated) multiply into
             // one physical multiplier (DESIGN §3.2).

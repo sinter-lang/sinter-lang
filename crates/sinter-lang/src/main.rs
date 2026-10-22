@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use log::{error, info};
+use log::{error, info, warn};
 
 use sinter_compiler::ir::Module;
 use sinter_compiler::pinmap::PinMap;
@@ -194,8 +194,46 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
         }
     }
 
+    copy_verilog_sources(&modules, out)?;
     if let Some(pins) = pins {
         emit_board(&modules, pins, out)?;
+    }
+    Ok(())
+}
+
+/// Copy each `#[verilog(src = "...")]` source beside the emitted SystemVerilog,
+/// so the output directory is a complete file list for synthesis and simulation
+/// (DESIGN §6.15). Warn about instances with no `src`.
+fn copy_verilog_sources(modules: &[Module], out: &Path) -> Result<()> {
+    let mut copied: HashMap<String, PathBuf> = HashMap::new();
+    for inst in modules.iter().flat_map(|m| &m.instances) {
+        let Some(src) = &inst.src else {
+            warn!(
+                "`#[verilog]` instance `{}` of `{}` has no `src`; add the module's Verilog \
+                 to your synthesis / simulation file list yourself",
+                inst.name, inst.module
+            );
+            continue;
+        };
+        let name = src
+            .file_name()
+            .and_then(|n| n.to_str())
+            .with_context(|| format!("`#[verilog]` source `{}` has no file name", src.display()))?
+            .to_string();
+        match copied.get(&name) {
+            Some(prev) if prev == src => continue,
+            Some(prev) => bail!(
+                "two `#[verilog]` sources share the file name `{name}`: `{}` and `{}`",
+                prev.display(),
+                src.display()
+            ),
+            None => {}
+        }
+        let dest = out.join(&name);
+        fs::copy(src, &dest)
+            .with_context(|| format!("copying `{}` to `{}`", src.display(), dest.display()))?;
+        info!("wrote {}", dest.display());
+        copied.insert(name, src.clone());
     }
     Ok(())
 }

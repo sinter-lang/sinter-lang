@@ -197,6 +197,7 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
         mem_writes: Vec::new(),
         // The legacy `module` surface has no `assert!` (functional surface only).
         asserts: Vec::new(),
+        instances: Vec::new(),
     })
 }
 

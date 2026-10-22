@@ -1,0 +1,70 @@
+Program {
+    modules: [],
+    items: [
+        Struct(
+            StructItem {
+                attrs: [
+                    Attr {
+                        name: "verilog",
+                        args: [
+                            AttrArg {
+                                key: "module",
+                                value: Some(
+                                    Str(
+                                        "uart_tx",
+                                    ),
+                                ),
+                            },
+                            AttrArg {
+                                key: "src",
+                                value: Some(
+                                    Str(
+                                        "rtl/uart_tx.v",
+                                    ),
+                                ),
+                            },
+                            AttrArg {
+                                key: "rst_n",
+                                value: Some(
+                                    Ident(
+                                        "none",
+                                    ),
+                                ),
+                            },
+                        ],
+                        pos: Pos {
+                            line: 3,
+                            col: 1,
+                        },
+                    },
+                ],
+                vis: Private,
+                name: "UartTx",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "busy",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

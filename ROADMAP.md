@@ -34,8 +34,9 @@ Close the gaps that force workarounds today.
 - [x] **Directed stimulus**: `sinter sim --stimulus` reads CSV input vectors
       with optional expected outputs, replayed through the oracle too.
 - [x] **Waveforms**: `sinter sim --vcd` writes VCD.
-- [ ] **Verilog interop**: declare an external Verilog module (PLL, vendor
-      primitive, IP) and instantiate it from Sinter.
+- [x] **Verilog interop** (EXT1, DESIGN §6.15 / §9.13): instantiate an
+      existing Verilog module through a `#[verilog]` binding whose Sinter
+      reference model the oracle checks against the real Verilog.
 - [x] **Documented module interface**: clock / reset naming, port naming for
       nested structs and arrays, and reset behaviour, written down
       ([docs/generated-verilog.md](docs/generated-verilog.md)) and pinned by
@@ -44,11 +45,6 @@ Close the gaps that force workarounds today.
       commented with their Q-notation in the emitted Verilog.
 - [x] **Diagnostics: file + caret**: semantic errors name the file, quote the
       line, and put a caret under the position.
-- [ ] **Diagnostics: expression positions**: carets point at the offending
-      expression rather than the enclosing statement or block. Expressions
-      carry no `Pos` today.
-- [ ] **Diagnostics: multiple errors**: one run reports more than the first
-      error.
 
 ## v0.3 — dogfood
 
@@ -93,6 +89,11 @@ Implement what 1.0 needs, and explicitly defer the rest.
       DESIGN.md.
 - [ ] tree-sitter grammar + VS Code syntax highlighting (a full LSP can follow
       1.0).
+- [ ] **Diagnostics: expression positions**: carets point at the offending
+      expression rather than the enclosing statement or block (expressions
+      carry no `Pos` today). Do this with the §7.1 parser-strategy decision.
+- [ ] **Diagnostics: multiple errors**: one run reports more than the first
+      error.
 - [ ] Program fuzzer: generate random valid `.snt` programs and run each
       through the sim-vs-Verilog oracle.
 - [ ] CI against more than one Yosys / Verilator version.

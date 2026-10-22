@@ -279,14 +279,7 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::f_array => parse_array(pair),
         Rule::f_include_hex => {
             let s = first_inner(pair, "include_hex path")?;
-            // Strip the surrounding double quotes.
-            let text = s.as_str();
-            let path = text
-                .strip_prefix('"')
-                .and_then(|t| t.strip_suffix('"'))
-                .unwrap_or(text)
-                .to_string();
-            Ok(Expr::IncludeHex(path))
+            Ok(Expr::IncludeHex(unquote(s.as_str())))
         }
         other => Err(unexpected(other, "expression")),
     }
@@ -444,6 +437,15 @@ fn next_pair<'a>(
     inner
         .next()
         .ok_or_else(|| ParseError::Syntax(format!("missing {ctx}")))
+}
+
+/// The text of a `string` token without its surrounding double quotes. No
+/// escape processing in the MVP (a file path or message rarely needs one).
+fn unquote(text: &str) -> String {
+    text.strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(text)
+        .to_string()
 }
 
 fn next_ident(
@@ -777,6 +779,7 @@ fn parse_attr_arg(pair: Pair<Rule>) -> Result<AttrArg, ParseError> {
             Some(match v.as_rule() {
                 Rule::ident => AttrValue::Ident(v.as_str().to_string()),
                 Rule::literal => AttrValue::Literal(literal_value(&v)?),
+                Rule::string => AttrValue::Str(unquote(v.as_str())),
                 other => return Err(unexpected(other, "attribute value")),
             })
         }
@@ -830,15 +833,7 @@ fn parse_fassert(pair: Pair<Rule>) -> Result<Stmt, ParseError> {
     let kw = next_pair(&mut inner, "assert keyword")?;
     let debug = kw.as_str().starts_with("debug_");
     let cond = parse_expr(next_pair(&mut inner, "assert condition")?)?;
-    // The message is a `string`; strip the surrounding double quotes (as in
-    // `include_hex!`). No escape processing in the MVP.
-    let s = next_pair(&mut inner, "assert message")?;
-    let text = s.as_str();
-    let msg = text
-        .strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .unwrap_or(text)
-        .to_string();
+    let msg = unquote(next_pair(&mut inner, "assert message")?.as_str());
     Ok(Stmt::Assert {
         debug,
         cond,

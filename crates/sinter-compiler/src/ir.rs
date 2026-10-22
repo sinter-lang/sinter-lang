@@ -50,6 +50,11 @@ pub struct Module {
     /// The Verilog backend **ignores** this vector entirely, so it emits zero bits
     /// — the compile-out guarantee that keeps the two lowerings byte-identical.
     pub asserts: Vec<Assert>,
+    /// Foreign Verilog module instances (DESIGN §6.15, EXT1). Each one's Sinter
+    /// reference model is ordinary IR in `regs` / `lets` / `reg_updates`, which
+    /// the simulator evaluates as usual. The Verilog backend leaves the model
+    /// out and emits an instance of the real module in its place.
+    pub instances: Vec<Instance>,
 }
 
 impl Module {
@@ -159,6 +164,58 @@ pub struct Assert {
     /// call-site line of that frame. With no inlining it is just
     /// `"<root type> (line N)"`.
     pub loc: String,
+}
+
+/// An instance of a foreign Verilog module (DESIGN §6.15, EXT1).
+///
+/// The instance's ports are ordinary wires in [`Module::lets`]: each input
+/// wire is driven by the parent's logic, and each output wire is driven, in the
+/// simulator, by the reference model's logic and, in Verilog, by the instance.
+/// Everything in `model_regs` / `model_lets` exists only in the simulator.
+#[derive(Debug, Clone)]
+pub struct Instance {
+    /// The Verilog instance name, e.g. `u_uart`.
+    pub name: String,
+    /// The Verilog module to instantiate, e.g. `uart_tx`.
+    pub module: String,
+    /// The Sinter struct that models it, e.g. `UartTx`.
+    pub model: String,
+    /// The module's clock port, connected to `clk` (`None` for a combinational
+    /// model).
+    pub clk: Option<String>,
+    /// The module's active-low reset port, connected to `rst_n` (`None` for a
+    /// combinational model or `rst_n = none`).
+    pub rst_n: Option<String>,
+    /// Input connections: `(Verilog port, wire in lets)`.
+    pub inputs: Vec<(String, String)>,
+    /// Output connections: `(Verilog port, wire in lets)`.
+    pub outputs: Vec<(String, String)>,
+    /// The model's state registers (simulator only).
+    pub model_regs: Vec<String>,
+    /// The model's next-state wires (simulator only).
+    pub model_lets: Vec<String>,
+    /// The module's Verilog source file, if given (`src = "..."`), resolved
+    /// against the `.snt` file's directory.
+    pub src: Option<std::path::PathBuf>,
+}
+
+impl Module {
+    /// Whether register or wire `name` exists only in a foreign module's
+    /// reference model (and so is absent from the emitted Verilog).
+    #[must_use]
+    pub fn is_model_only(&self, name: &str) -> bool {
+        self.instances.iter().any(|i| {
+            i.model_regs.iter().any(|n| n == name) || i.model_lets.iter().any(|n| n == name)
+        })
+    }
+
+    /// The instance driving wire `name` in Verilog, if it is an instance output.
+    #[must_use]
+    pub fn instance_output(&self, name: &str) -> Option<&Instance> {
+        self.instances
+            .iter()
+            .find(|i| i.outputs.iter().any(|(_, w)| w == name))
+    }
 }
 
 /// A checked combinational wire binding.

@@ -36,6 +36,7 @@ use sinter_syntax::ast::{
 };
 
 use crate::error::{mask, CompileError};
+use crate::foreign::{self, Binding};
 use crate::ir;
 
 /// Guards against accidental unbounded inlining (recursion is not synthesizable).
@@ -188,6 +189,9 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         // it is never popped, so an assert at the root body reproduces the FLT0
         // `"<ctx> (line N)"` loc exactly, and inlined bodies stack on top.
         frames: RefCell::new(vec![state_ty.to_string()]),
+        wires: RefCell::new(Vec::new()),
+        instances: RefCell::new(Vec::new()),
+        in_model: Cell::new(false),
     };
     el.build(state_ty, tick, &domain).map(Some)
 }
@@ -277,6 +281,15 @@ struct Elaborator<'p> {
     /// root frame is never popped (the elaborator is single-use), so it is never
     /// empty.
     frames: RefCell<Vec<String>>,
+    /// Named wires created while lowering `#[verilog]` instances (DESIGN §6.15):
+    /// their port connections and the model's next state. In creation order,
+    /// which is topological; they become `ir::Module::lets`.
+    wires: RefCell<Vec<ir::Let>>,
+    /// The `#[verilog]` instances stepped so far.
+    instances: RefCell<Vec<ir::Instance>>,
+    /// Set while lowering a `#[verilog]` reference model, whose body may not
+    /// step another binding (that instance would exist only in simulation).
+    in_model: Cell<bool>,
 }
 
 impl Elaborator<'_> {
@@ -460,6 +473,63 @@ impl Elaborator<'_> {
             reg_updates.push((r.name.clone(), value));
         }
 
+        // `#[verilog]` instances (DESIGN §6.15): the real module is clocked every
+        // cycle, so each model register's next state must be exactly what its
+        // one `step` produced. A hold, a mux, or another instance's state would
+        // make the simulator diverge from the Verilog.
+        let lets = self.wires.take();
+        let instances = self.instances.take();
+        let mut bound = Vec::new();
+        self.binding_fields(&state, "", &mut bound, tick.body.pos)?;
+        for (path, model) in bound {
+            if !instances.iter().any(|i| i.name == format!("u_{path}")) {
+                return Err(err(
+                    &self.ctx,
+                    tick.body.pos,
+                    format!(
+                        "`#[verilog]` instance `self.{}` (`{model}`) is never stepped; the real \
+                         module runs every cycle, so call its `step` once per cycle",
+                        path.replace('_', ".")
+                    ),
+                ));
+            }
+        }
+        for inst in &instances {
+            for (reg, wire) in inst.model_regs.iter().zip(&inst.model_lets) {
+                let threaded = reg_updates.iter().any(|(r, e)| {
+                    r == reg && matches!(&e.kind, ir::ExprKind::Ident(n) if n == wire)
+                });
+                if !threaded {
+                    return Err(err(
+                        &self.ctx,
+                        tick.body.pos,
+                        format!(
+                            "the state of `#[verilog]` instance `{}` (`{}`) must be the result \
+                             of its `step`, passed into the next state unchanged",
+                            inst.name, inst.model
+                        ),
+                    ));
+                }
+            }
+        }
+        for l in &lets {
+            if seen.insert(l.name.clone(), ()).is_some() {
+                return Err(err(
+                    &self.ctx,
+                    tick.body.pos,
+                    format!(
+                        "`#[verilog]` port wire `{}` collides with another name",
+                        l.name
+                    ),
+                ));
+            }
+        }
+        let model_only: std::collections::HashSet<&str> = instances
+            .iter()
+            .flat_map(|i| &i.model_regs)
+            .map(String::as_str)
+            .collect();
+
         // Memory transitions: a threaded `next()` schedules the read-data register
         // (`<m>_rdata <= mem[raddr]`, pre-write ⇒ READ_FIRST) and a `we`-gated
         // write; a memory threaded unchanged holds its read-data register.
@@ -497,7 +567,12 @@ impl Elaborator<'_> {
         // Observation outputs: every register, plus any explicit outputs. Each
         // `_q` name must be fresh in the flat namespace (`seen`).
         let mut out_drives = Vec::new();
-        for r in &regs {
+        // A `#[verilog]` model's registers exist only in simulation, so they get
+        // no `_q` port.
+        for r in regs
+            .iter()
+            .filter(|r| !model_only.contains(r.name.as_str()))
+        {
             let name = format!("{}_q", r.name);
             if seen.insert(name.clone(), ()).is_some() {
                 return Err(err(
@@ -535,12 +610,12 @@ impl Elaborator<'_> {
             }
         }
 
-        Ok(ir::Module {
+        let module = ir::Module {
             name: state_ty.to_string(),
             clock_domain: domain.to_string(),
             ports,
             regs,
-            lets: Vec::new(),
+            lets,
             out_drives,
             reg_updates,
             mems,
@@ -550,7 +625,10 @@ impl Elaborator<'_> {
             // methods (DESIGN §6.12, FLT0). Sim-only; the Verilog backend ignores
             // this vector, so the two lowerings stay byte-identical.
             asserts: self.asserts.take(),
-        })
+            instances,
+        };
+        foreign::check_isolation(&module, &self.ctx, tick.body.pos)?;
+        Ok(module)
     }
 
     /// Walk the next-state, collecting each `mem` field's `(path, pending
@@ -1257,6 +1335,11 @@ impl Elaborator<'_> {
                     format!("type `{type_name}` has no method `{method}`"),
                 )
             })?;
+        if let Some(binding) = self.binding(&type_name, pos)? {
+            return self.lower_binding_step(
+                env, receiver, recv, &type_name, &binding, m, args, depth, pos,
+            );
+        }
         let inner = self.bind_params(env, Some(recv), &m.params, args, depth, pos)?;
         // Backtrace frame for a method: `<ReceiverType>::<method>@<call-site line>`
         // (FLT1a) — the receiver's concrete type qualifies the frame, and the
@@ -1267,6 +1350,296 @@ impl Elaborator<'_> {
             format!("{type_name}::{method}@{}", pos.line),
             depth + 1,
         )
+    }
+
+    /// Every stateful `#[verilog]` binding in state type `ty`, as `(flattened
+    /// path, model struct)`. Each one must be stepped every cycle.
+    fn binding_fields(
+        &self,
+        ty: &Ty,
+        path: &str,
+        out: &mut Vec<(String, String)>,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        match ty {
+            Ty::Struct(name) => {
+                if self.binding(name, pos)?.is_some() {
+                    let mut leaves = Vec::new();
+                    self.flatten_ty(ty, "", &mut leaves);
+                    if !leaves.is_empty() {
+                        out.push((path.to_string(), name.clone()));
+                    }
+                    return Ok(());
+                }
+                for (f, fty) in self.struct_fields(name, pos)? {
+                    self.binding_fields(&fty, &join(path, &f), out, pos)?;
+                }
+                Ok(())
+            }
+            Ty::Array(et, n) => {
+                for i in 0..*n {
+                    self.binding_fields(et, &join(path, &i.to_string()), out, pos)?;
+                }
+                Ok(())
+            }
+            Ty::Tuple(ts) => {
+                for (i, t) in ts.iter().enumerate() {
+                    self.binding_fields(t, &join(path, &i.to_string()), out, pos)?;
+                }
+                Ok(())
+            }
+            Ty::Option(inner) => self.binding_fields(inner, &join(path, "payload"), out, pos),
+            Ty::Scalar(_) | Ty::Fixed { .. } | Ty::Enum(..) | Ty::Mem { .. } => Ok(()),
+        }
+    }
+
+    /// The `#[verilog]` binding on struct `name`, if any (DESIGN §6.15).
+    fn binding(&self, name: &str, pos: Pos) -> Result<Option<Binding>, CompileError> {
+        let Some(s) = self.tables.structs.get(name) else {
+            return Ok(None);
+        };
+        foreign::binding_of(s).map_err(|e| match e {
+            CompileError::Semantic { msg, .. } => err(&self.ctx, pos, msg),
+            other => other,
+        })
+    }
+
+    /// Lower `recv.step(args)` on a `#[verilog]` binding (DESIGN §6.15, EXT1).
+    ///
+    /// The model is inlined like any method, so the simulator runs it. Around
+    /// it, every port and every next-state leaf becomes a named wire, recorded
+    /// on an [`ir::Instance`], so the Verilog backend can emit the real module
+    /// in the model's place:
+    ///
+    /// - each input argument drives wire `u_<path>_<param>`, which the model
+    ///   reads;
+    /// - each field of the model's `Out` struct drives wire `u_<path>_<field>`
+    ///   (in Verilog, driven by the instance);
+    /// - each next-state leaf drives the model-only wire `u_<path>__next_<leaf>`.
+    ///
+    /// A stateful model is identified by its state field (`self.uart` →
+    /// `u_uart`) and must be stepped exactly once per cycle, outside any
+    /// `if` / `match` arm, because the real module is clocked every cycle. A
+    /// stateless (combinational) model gets a fresh instance per call.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_binding_step(
+        &self,
+        env: &Env,
+        receiver: &Expr,
+        recv: Val,
+        type_name: &str,
+        binding: &Binding,
+        m: &Func,
+        args: &[Expr],
+        depth: usize,
+        pos: Pos,
+    ) -> Result<Val, CompileError> {
+        if self.in_model.get() {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "`{type_name}` is a `#[verilog]` binding; a reference model cannot step \
+                     another binding"
+                ),
+            ));
+        }
+        // A memory is not a register leaf, so model-only memories would leak
+        // into the emitted Verilog.
+        if self
+            .struct_fields(type_name, pos)?
+            .iter()
+            .any(|(_, t)| matches!(t, Ty::Mem { .. }))
+        {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!("the `#[verilog]` model `{type_name}` cannot hold a `mem` / `rom` in EXT1"),
+            ));
+        }
+        let mut leaves = Vec::new();
+        self.flatten_ty(&Ty::Struct(type_name.to_string()), "", &mut leaves);
+        let stateful = !leaves.is_empty();
+        let path = if stateful {
+            if self.branch_depth.get() > 0 {
+                return Err(err(
+                    &self.ctx,
+                    pos,
+                    format!(
+                        "the `#[verilog]` instance `{type_name}` must be stepped every cycle, \
+                         outside any `if` / `match` arm (the real module is always clocked); \
+                         select its inputs instead"
+                    ),
+                ));
+            }
+            self_field_path(receiver).ok_or_else(|| {
+                err(
+                    &self.ctx,
+                    pos,
+                    format!(
+                        "step the `#[verilog]` instance `{type_name}` through its state field, \
+                         e.g. `self.{}.{}(..)`",
+                        type_name.to_lowercase(),
+                        m.name
+                    ),
+                )
+            })?
+        } else {
+            let k = self
+                .instances
+                .borrow()
+                .iter()
+                .filter(|i| i.module == binding.module)
+                .count();
+            format!("{}_{k}", binding.module)
+        };
+        let inst = format!("u_{path}");
+        if self.instances.borrow().iter().any(|i| i.name == inst) {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "`self.{}` is stepped more than once in one cycle",
+                    path.replace('_', ".")
+                ),
+            ));
+        }
+
+        // Inputs: route each scalar argument through a named port wire.
+        let mut inner = self.bind_params(env, Some(recv), &m.params, args, depth, pos)?;
+        let mut inputs = Vec::new();
+        for p in &m.params {
+            let Param::Typed { name, .. } = p else {
+                continue;
+            };
+            let Some(Val::Scalar(e, frac)) = inner.remove(name) else {
+                return Err(err(
+                    &self.ctx,
+                    pos,
+                    format!(
+                        "`#[verilog]` model input `{name}` must be a scalar (`uN`, `iN`, or \
+                         fixed-point) in EXT1"
+                    ),
+                ));
+            };
+            let wire = format!("{inst}_{name}");
+            let ty = e.ty;
+            self.wires.borrow_mut().push(ir::Let {
+                name: wire.clone(),
+                ty,
+                value: e,
+            });
+            inner.insert(
+                name.clone(),
+                Val::Scalar(typed(ir::ExprKind::Ident(wire.clone()), ty), frac),
+            );
+            inputs.push((name.clone(), wire));
+        }
+
+        // The model itself, inlined (and so simulated) like any method.
+        self.in_model.set(true);
+        let result = self.lower_body(
+            &inner,
+            m,
+            format!("{type_name}::{}@{}", m.name, pos.line),
+            depth + 1,
+        );
+        self.in_model.set(false);
+        let Val::Tuple(mut parts) = result? else {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "the `#[verilog]` model `{type_name}::{}` must return `(Self, Out)`",
+                    m.name
+                ),
+            ));
+        };
+        let (Some(out), Some(state), true) = (parts.pop(), parts.pop(), parts.is_empty()) else {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "the `#[verilog]` model `{type_name}::{}` must return `(Self, Out)`",
+                    m.name
+                ),
+            ));
+        };
+
+        // Outputs: one wire per scalar field of `Out`, named after the port.
+        let Val::Struct(out_ty, fields) = out else {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "the `#[verilog]` model `{type_name}`'s outputs must be a struct of scalars"
+                ),
+            ));
+        };
+        let mut outputs = Vec::new();
+        let mut out_fields = Vec::new();
+        for (port, v) in fields {
+            let Val::Scalar(e, frac) = v else {
+                return Err(err(
+                    &self.ctx,
+                    pos,
+                    format!(
+                        "`#[verilog]` model output `{out_ty}.{port}` must be a scalar (`uN`, \
+                         `iN`, or fixed-point) in EXT1"
+                    ),
+                ));
+            };
+            let wire = format!("{inst}_{port}");
+            let ty = e.ty;
+            self.wires.borrow_mut().push(ir::Let {
+                name: wire.clone(),
+                ty,
+                value: e,
+            });
+            out_fields.push((
+                port.clone(),
+                Val::Scalar(typed(ir::ExprKind::Ident(wire.clone()), ty), frac),
+            ));
+            outputs.push((port, wire));
+        }
+
+        // Next state: model-only wires, so `build` can check the parent threads
+        // them into the state field unchanged.
+        let mut next = Vec::new();
+        flatten_leaves(&state, "", &mut next);
+        let mut model_regs = Vec::new();
+        let mut model_lets = Vec::new();
+        let mut renamed = HashMap::new();
+        for (leaf, e, _) in next {
+            let wire = format!("{inst}__next_{leaf}");
+            renamed.insert(leaf.clone(), wire.clone());
+            self.wires.borrow_mut().push(ir::Let {
+                name: wire.clone(),
+                ty: e.ty,
+                value: e,
+            });
+            model_regs.push(join(&path, &leaf));
+            model_lets.push(wire);
+        }
+        let state = rename_leaves(&state, "", &renamed);
+
+        self.instances.borrow_mut().push(ir::Instance {
+            name: inst,
+            module: binding.module.clone(),
+            model: type_name.to_string(),
+            clk: stateful.then(|| binding.clk.clone()),
+            rst_n: if stateful {
+                binding.rst_n.clone()
+            } else {
+                None
+            },
+            inputs,
+            outputs,
+            model_regs,
+            model_lets,
+            src: binding.src.clone(),
+        });
+        Ok(Val::Tuple(vec![state, Val::Struct(out_ty, out_fields)]))
     }
 
     /// Lower a built-in memory method (DESIGN §6.6/§9.6). `value()` returns the
@@ -2241,6 +2614,59 @@ fn flatten_leaves(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr, u32)>) {
             out.push((join(path, "is_some"), is_some.clone(), 0));
             flatten_leaves(payload, &join(path, "payload"), out);
         }
+    }
+}
+
+/// `self.a.b` → `Some("a_b")` (the flattened state path); anything else → `None`.
+fn self_field_path(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Field { base, field } => match base.as_ref() {
+            Expr::Ident(s) if s == "self" => Some(field.clone()),
+            inner => self_field_path(inner).map(|p| join(&p, field)),
+        },
+        _ => None,
+    }
+}
+
+/// `v` with each scalar leaf at flattened path `p` replaced by
+/// `Ident(renamed[p])` (leaves not in `renamed` are kept).
+fn rename_leaves(v: &Val, path: &str, renamed: &HashMap<String, String>) -> Val {
+    let leaf = |e: &ir::Expr| match renamed.get(path) {
+        Some(w) => typed(ir::ExprKind::Ident(w.clone()), e.ty),
+        None => e.clone(),
+    };
+    match v {
+        Val::Scalar(e, f) => Val::Scalar(leaf(e), *f),
+        Val::Enum(n, e) => Val::Enum(n.clone(), leaf(e)),
+        Val::Struct(n, fields) => Val::Struct(
+            n.clone(),
+            fields
+                .iter()
+                .map(|(f, fv)| (f.clone(), rename_leaves(fv, &join(path, f), renamed)))
+                .collect(),
+        ),
+        Val::Tuple(items) => Val::Tuple(
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| rename_leaves(it, &join(path, &i.to_string()), renamed))
+                .collect(),
+        ),
+        Val::Array(items) => Val::Array(
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| rename_leaves(it, &join(path, &i.to_string()), renamed))
+                .collect(),
+        ),
+        Val::Option { is_some, payload } => Val::Option {
+            is_some: match renamed.get(&join(path, "is_some")) {
+                Some(w) => typed(ir::ExprKind::Ident(w.clone()), is_some.ty),
+                None => is_some.clone(),
+            },
+            payload: Box::new(rename_leaves(payload, &join(path, "payload"), renamed)),
+        },
+        Val::Mem { .. } => v.clone(),
     }
 }
 

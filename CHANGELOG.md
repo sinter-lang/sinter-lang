@@ -18,6 +18,13 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 - **Interface documentation**: `docs/generated-verilog.md` specifies the
   generated module's port names, ordering, reset, and timing, and
   `tests/interface.rs` pins those rules.
+- **Foreign Verilog modules** (EXT1, DESIGN §6.15): a
+  `#[verilog(module = "...", src = "...")]` attribute on a state struct binds
+  it to an existing Verilog module, and the struct's `step` method is its
+  Sinter reference model. `sinter sim` runs the model, `sinter build` emits an
+  instance of the real module and copies its source, and the conformance
+  oracle checks the model against the Verilog (`examples/verilog_acc/`).
+  Attribute values may now be strings, and attribute keys may be keywords.
 - Emitted Verilog comments each fixed-point port and register with its
   Q-format (`// Q4.4 signed fixed-point: value = raw / 2^4`).
 

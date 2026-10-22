@@ -14,7 +14,9 @@ Before 1.0 they may still change, and any change will be listed in the
   `<Module>.sv` in the `--out` directory (default `build/`).
 - The file starts with `` `default_nettype none `` and ends by restoring
   `` `default_nettype wire ``.
-- The module is self-contained: no submodules, includes, or packages.
+- The module needs no includes or packages. It instantiates other modules
+  only for `#[verilog]` bindings (see
+  [Foreign module instances](#foreign-module-instances)).
 
 ## Clock and reset
 
@@ -123,6 +125,23 @@ Add the emitted `.sv` to your Yosys / Verilator / vendor project like any
 other source. For a board top level that maps ports to physical pins, see the
 `.pins` flow (`sinter build --pins`, DESIGN §7.6), which emits a wrapper
 module and a nextpnr PCF.
+
+## Foreign module instances
+
+A `#[verilog(module = "...")]` binding (DESIGN §6.15) becomes an instance of
+that module, named `u_<field>` after the state field that holds it
+(`self.uart` becomes `u_uart`). A stateless binding gets `u_<module>_<n>`
+instead, one per call. Each port connects to a wire named
+`u_<instance>_<port>`. A stateful binding's `clk` and `rst_n` ports connect
+to the parent's, unless the attribute renames them (`clk = "clk_i"`) or drops
+the reset (`rst_n = none`).
+
+The binding's Sinter reference model runs only in simulation. Its registers
+don't appear in the emitted Verilog, and they get no `_q` ports.
+
+`sinter build` copies each binding's `src = "..."` file into the output
+directory beside the emitted module. Add both to your synthesis and simulation
+file lists.
 
 ## The legacy `module` surface
 

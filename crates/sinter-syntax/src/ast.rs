@@ -593,6 +593,8 @@ pub enum AttrValue {
     Ident(String),
     /// An integer literal value.
     Literal(u128),
+    /// A string value (quotes stripped), e.g. a Verilog source path.
+    Str(String),
 }
 
 /// A type reference in the functional surface.

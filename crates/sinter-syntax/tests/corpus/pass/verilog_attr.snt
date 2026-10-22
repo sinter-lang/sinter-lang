@@ -1,0 +1,6 @@
+// A `#[verilog]` binding (DESIGN §6.15): string attribute values, and an
+// attribute key that is also a keyword (`module`).
+#[verilog(module = "uart_tx", src = "rtl/uart_tx.v", rst_n = none)]
+struct UartTx {
+    busy: u1 = 0,
+}

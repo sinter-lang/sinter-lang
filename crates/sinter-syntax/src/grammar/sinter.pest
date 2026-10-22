@@ -168,8 +168,11 @@ typed_param = { ident ~ ":" ~ f_typeref }
 // Attributes: `#[name]` or `#[name(arg, key = value, ...)]`.
 attr      = { "#[" ~ ident ~ attr_args? ~ "]" }
 attr_args = { "(" ~ attr_arg ~ ("," ~ attr_arg)* ~ ")" }
-attr_arg  = { ident ~ ("=" ~ attr_val)? }
-attr_val  = { ident | literal }
+attr_arg  = { attr_key ~ ("=" ~ attr_val)? }
+// Attribute keys are their own namespace, so keywords are allowed
+// (`#[verilog(module = "uart_tx")]`).
+attr_key  = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+attr_val  = { ident | literal | string }
 
 // A block is a sequence of statements then a tail expression (its value). A
 // `pipeline fn` body additionally uses `yield` statements as stage boundaries

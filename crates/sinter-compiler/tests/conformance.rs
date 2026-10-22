@@ -241,6 +241,17 @@ const PROJECTS: &[Project] = &[
             "/../../examples/rom_hex/main.snt"
         ),
     },
+    // EXT1: a `#[verilog]` binding to the hand-written `rtl/acc16.v`. The sim
+    // runs the Sinter reference model; Verilator runs the real module. Both
+    // must agree bit-for-bit, so this checks the model against the IP
+    // (DESIGN §6.15 / §9.13 / §7.4).
+    Project {
+        name: "verilog_acc",
+        root: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/verilog_acc/main.snt"
+        ),
+    },
 ];
 
 fn tool_available(tool: &str) -> bool {
@@ -309,12 +320,26 @@ fn all_cases() -> Vec<(String, Module)> {
     cases
 }
 
+/// The Verilog sources of a module's `#[verilog]` instances (DESIGN §6.15),
+/// which every tool below reads alongside the emitted SV.
+fn foreign_sources(module: &Module) -> Vec<PathBuf> {
+    let mut srcs: Vec<PathBuf> = module
+        .instances
+        .iter()
+        .filter_map(|i| i.src.clone())
+        .collect();
+    srcs.sort();
+    srcs.dedup();
+    srcs
+}
+
 /// Synthesize with Yosys to confirm the emitted SV is synthesizable.
-fn run_yosys(sv: &Path, top: &str) {
-    let script = format!(
-        "read_verilog -sv {}; hierarchy -check -top {top}; proc; opt; synth -top {top}",
-        sv.display()
-    );
+fn run_yosys(sv: &Path, extra: &[PathBuf], top: &str) {
+    let reads: String = std::iter::once(sv)
+        .chain(extra.iter().map(PathBuf::as_path))
+        .map(|f| format!("read_verilog -sv {}; ", f.display()))
+        .collect();
+    let script = format!("{reads}hierarchy -check -top {top}; proc; opt; synth -top {top}");
     let out = Command::new("yosys")
         .args(["-q", "-p", &script])
         .output()
@@ -330,11 +355,12 @@ fn run_yosys(sv: &Path, top: &str) {
 /// `claude-skill-verilog` gate. Run alongside the pico-gs-flagged co-sim so that
 /// generated Verilog must be warning-free even though the co-sim tolerates
 /// warnings (matching pico-gs's `-Wno-fatal`).
-fn lint_verilator(sv: &Path, top: &str) {
+fn lint_verilator(sv: &Path, extra: &[PathBuf], top: &str) {
     let out = Command::new("verilator")
         .args(["--lint-only", "-Wall", "--top-module"])
         .arg(top)
         .arg(sv)
+        .args(extra)
         .output()
         .expect("spawn verilator");
     assert!(
@@ -351,6 +377,7 @@ fn lint_verilator(sv: &Path, top: &str) {
 fn run_verilator(
     dir: &Path,
     sv: &Path,
+    extra: &[PathBuf],
     harness: &Path,
     top: &str,
     stim: &Path,
@@ -366,6 +393,7 @@ fn run_verilator(
         .arg("-o")
         .arg("sim")
         .arg(sv)
+        .args(extra)
         .arg(harness)
         .output()
         .expect("spawn verilator");
@@ -435,15 +463,17 @@ fn co_simulate(tools: &Tools, name: &str, module: &Module, stimulus: &[Vec<u64>]
     std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
     let reference = run_reference(module, stimulus);
 
+    let extra = foreign_sources(module);
     if tools.yosys {
-        run_yosys(&sv, &module.name);
+        run_yosys(&sv, &extra, &module.name);
     }
     if tools.verilator {
         // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
-        lint_verilator(&sv, &module.name);
+        lint_verilator(&sv, &extra, &module.name);
         let dut = run_verilator(
             &dir,
             &sv,
+            &extra,
             &harness,
             &module.name,
             &stim_path,
@@ -538,4 +568,47 @@ fn directed_examples_pass_the_oracle() {
             &stim.inputs,
         );
     }
+}
+
+/// EXT1 (DESIGN §6.15): the oracle checks a `#[verilog]` reference model
+/// against the real module. A model that reports `sum` one cycle early must
+/// produce a different trace from the Verilated `acc16`.
+#[test]
+fn wrong_verilog_model_fails_the_oracle() {
+    let tools = tools();
+    if !tools.verilator {
+        return;
+    }
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/verilog_acc");
+    let dir = workdir("verilog_acc-wrong-model");
+    std::fs::create_dir_all(dir.join("rtl")).expect("create rtl dir");
+    std::fs::copy(example.join("rtl/acc16.v"), dir.join("rtl/acc16.v")).expect("copy acc16.v");
+    let main = std::fs::read_to_string(example.join("main.snt")).expect("read main.snt");
+    let wrong = main.replace("sum: self.acc", "sum: next");
+    assert_ne!(main, wrong, "the mutation must apply");
+    std::fs::write(dir.join("main.snt"), wrong).expect("write main.snt");
+
+    let module = compile_project_one(dir.join("main.snt").to_str().expect("utf-8 path"));
+    let sv = dir.join(format!("{}.sv", module.name));
+    std::fs::write(&sv, verilog::emit_module(&module)).expect("write sv");
+    let harness = dir.join(format!("{}_tb.cpp", module.name));
+    std::fs::write(&harness, verilator::emit_cpp_harness(&module)).expect("write harness");
+    let stimulus = gen_stimulus(&module, CYCLES, 0xDEAD_BEEF);
+    let stim_path = dir.join("stimulus.bin");
+    std::fs::write(&stim_path, stimulus_to_bytes(&stimulus)).expect("write stimulus");
+
+    let reference = run_reference(&module, &stimulus);
+    let dut = run_verilator(
+        &dir,
+        &sv,
+        &foreign_sources(&module),
+        &harness,
+        &module.name,
+        &stim_path,
+        CYCLES,
+    );
+    assert_ne!(
+        reference, dut,
+        "a wrong `#[verilog]` model must disagree with the real module"
+    );
 }

@@ -37,6 +37,7 @@ pub fn emit_module(m: &Module) -> String {
     emit_decls(&mut out, m);
     emit_mem_init(&mut out, m);
     emit_comb(&mut out, m);
+    emit_instances(&mut out, m);
     emit_seq(&mut out, m);
     emit_mem_writes(&mut out, m);
     // `m.asserts` (DESIGN §6.12, FLT0) are sim-only and deliberately emit no
@@ -101,10 +102,17 @@ fn emit_ports(out: &mut String, m: &Module) {
     let _ = writeln!(out, ");");
 }
 
+/// The registers that exist in the emitted Verilog: all but the reference-model
+/// registers of `#[verilog]` instances (DESIGN §6.15), which the real module
+/// replaces.
+fn hw_regs(m: &Module) -> impl Iterator<Item = &crate::ir::Reg> {
+    m.regs.iter().filter(|r| !m.is_model_only(&r.name))
+}
+
 fn emit_decls(out: &mut String, m: &Module) {
-    if !m.regs.is_empty() {
+    if hw_regs(m).next().is_some() {
         let _ = writeln!(out, "    // Registers");
-        for r in &m.regs {
+        for r in hw_regs(m) {
             let _ = writeln!(
                 out,
                 "    logic {} {};{}",
@@ -115,9 +123,9 @@ fn emit_decls(out: &mut String, m: &Module) {
             let _ = writeln!(out, "    logic {} {}_next;", net_type(r.ty), r.name);
         }
     }
-    if !m.lets.is_empty() {
+    if m.lets.iter().any(|l| !m.is_model_only(&l.name)) {
         let _ = writeln!(out, "    // Combinational wires");
-        for l in &m.lets {
+        for l in m.lets.iter().filter(|l| !m.is_model_only(&l.name)) {
             let _ = writeln!(out, "    logic {} {};", net_type(l.ty), l.name);
         }
     }
@@ -182,11 +190,17 @@ fn emit_mem_init(out: &mut String, m: &Module) {
 fn emit_comb(out: &mut String, m: &Module) {
     let _ = writeln!(out, "    // Combinational logic");
     let _ = writeln!(out, "    always_comb begin");
+    // Model-only wires don't exist in Verilog, and an instance output is driven
+    // by its instance rather than by its model's logic.
     for l in &m.lets {
-        let _ = writeln!(out, "        {} = {};", l.name, expr(&l.value));
+        if !m.is_model_only(&l.name) && m.instance_output(&l.name).is_none() {
+            let _ = writeln!(out, "        {} = {};", l.name, expr(&l.value));
+        }
     }
     for (name, e) in &m.reg_updates {
-        let _ = writeln!(out, "        {name}_next = {};", expr(e));
+        if !m.is_model_only(name) {
+            let _ = writeln!(out, "        {name}_next = {};", expr(e));
+        }
     }
     // Memory read ports: the read-data register's next value is the combinational
     // array read; flopping it (in the sequential block) makes it the registered,
@@ -233,14 +247,43 @@ fn emit_mem_writes(out: &mut String, m: &Module) {
     }
 }
 
+/// Emit each foreign Verilog module instance (DESIGN §6.15) with named port
+/// connections: the clock and reset (for a stateful model), then its inputs and
+/// outputs, each wired to its port wire.
+fn emit_instances(out: &mut String, m: &Module) {
+    for inst in &m.instances {
+        let _ = writeln!(
+            out,
+            "    // Foreign Verilog module `{}`, modelled in simulation by `{}`",
+            inst.module, inst.model
+        );
+        let mut conns: Vec<(&str, &str)> = Vec::new();
+        if let Some(clk) = &inst.clk {
+            conns.push((clk, "clk"));
+        }
+        if let Some(rst_n) = &inst.rst_n {
+            conns.push((rst_n, "rst_n"));
+        }
+        conns.extend(inst.inputs.iter().map(|(p, w)| (p.as_str(), w.as_str())));
+        conns.extend(inst.outputs.iter().map(|(p, w)| (p.as_str(), w.as_str())));
+        let width = conns.iter().map(|(p, _)| p.len()).max().unwrap_or(0);
+        let _ = writeln!(out, "    {} {} (", inst.module, inst.name);
+        for (i, (port, wire)) in conns.iter().enumerate() {
+            let comma = if i + 1 < conns.len() { "," } else { "" };
+            let _ = writeln!(out, "        .{port:width$} ({wire}){comma}");
+        }
+        let _ = writeln!(out, "    );");
+    }
+}
+
 fn emit_seq(out: &mut String, m: &Module) {
-    if m.regs.is_empty() {
+    if hw_regs(m).next().is_none() {
         return;
     }
     let _ = writeln!(out, "    // Sequential state ({} domain)", m.clock_domain);
     let _ = writeln!(out, "    always_ff @(posedge clk or negedge rst_n) begin");
     let _ = writeln!(out, "        if (!rst_n) begin");
-    for r in &m.regs {
+    for r in hw_regs(m) {
         let _ = writeln!(
             out,
             "            {} <= {}'h{:x};",
@@ -250,7 +293,7 @@ fn emit_seq(out: &mut String, m: &Module) {
         );
     }
     let _ = writeln!(out, "        end else begin");
-    for r in &m.regs {
+    for r in hw_regs(m) {
         let _ = writeln!(out, "            {} <= {}_next;", r.name, r.name);
     }
     let _ = writeln!(out, "        end");

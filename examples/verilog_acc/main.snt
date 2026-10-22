@@ -1,0 +1,42 @@
+// Foreign Verilog module (DESIGN §6.15 / §9.13, EXT1).
+//
+// `Acc16` binds the hand-written `acc16` module in rtl/acc16.v. Its `step`
+// method is a Sinter reference model of that module: `sinter sim` runs the
+// model, while `sinter build` emits an instance of the real `acc16` in its
+// place. The conformance oracle co-simulates the real Verilog, so the model
+// and the IP must agree bit-for-bit.
+
+#[verilog(module = "acc16", src = "rtl/acc16.v")]
+struct Acc16 {
+    acc: u16 = 0,
+}
+
+// The module's outputs; field names are its output port names.
+struct Acc16Out {
+    sum: u16,
+    ovf: u1,
+}
+
+impl Acc16 {
+    // One clock cycle of `acc16`. Parameter names are its input port names.
+    fn step(self, din: u8, clear: u1) -> (Acc16, Acc16Out) {
+        let wide = self.acc + din;
+        let next: u16 = if clear == 1 { 0 } else { wide as u16 wrap };
+        (Acc16 { acc: next }, Acc16Out { sum: self.acc, ovf: wide[16:16] })
+    }
+}
+
+struct Top {
+    acc: Acc16,
+    overflows: u8 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, din: u8, clear: u1) -> (Top, u16) {
+        let (acc, o) = self.acc.step(din, clear);
+        // `ovf` is combinational in `din`, so this counts in the same cycle.
+        let overflows: u8 = if o.ovf == 1 { (self.overflows + 1) as u8 wrap } else { self.overflows };
+        (Top { acc: acc, overflows: overflows }, o.sum)
+    }
+}

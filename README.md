@@ -33,13 +33,18 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 - **Faults**: sim-only `assert!` / `debug_assert!` with a static inlined
   backtrace, and an opt-in silicon fault latch (`sinter build --faults`).
 - **Boards**: a `.pins` pin map that emits a board-top wrapper + nextpnr PCF.
+- **Foreign Verilog**: a `#[verilog(module = "...", src = "...")]` binding
+  instantiates existing Verilog IP. Its Sinter reference model runs in
+  simulation, and the oracle checks it against the real module
+  (`examples/verilog_acc/`).
 
 **Known limitations** (designed in `DESIGN.md`, not yet implemented):
 
 - Values are at most 64 bits wide (`u65` and wider are rejected).
 - One clock domain per design (no clock-domain types / CDC primitives).
-- No way to instantiate external Verilog (PLLs, vendor primitives, IP) from
-  Sinter; instead, instantiate the emitted module from a Verilog top.
+- Foreign Verilog bindings (EXT1) take scalar ports and default parameters
+  only. Clock-generating modules (PLLs) still belong in a hand-written Verilog
+  top level.
 - No BRAM-backed deep FIFOs, byte-enable / multi-port memories, elastic
   ready/valid `Stream<T>`, or `Sender` / `Receiver` channel views.
 - No editor support (LSP / syntax highlighting) and no package / dependency

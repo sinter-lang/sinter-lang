@@ -196,6 +196,15 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
     `--faults on|off` (`compile_str_faults` / CLI `build --faults`). `off` is
     byte-identical to the assert-free module; `on` co-simulates the sideband
     bit-for-bit (`fn_fault`).
+- **Foreign Verilog modules** (EXT1, §6.15 / §9.13) — a
+  `#[verilog(module, src, clk, rst_n)]` attribute on a state struct binds it to
+  an existing Verilog module; its one `step(self, ..) -> (Self, Out)` method is
+  the Sinter **reference model**. `elaborate` inlines the model (so the sim runs
+  it) but routes its ports through named wires and records an `ir::Instance`; the
+  Verilog backend skips the model-only regs/wires and emits the instance.
+  `foreign.rs` parses the binding and rejects any non-model logic that reads
+  model state. The oracle adds `src` to the Yosys / Verilator runs, so it checks
+  the model against the real module (`examples/verilog_acc/`).
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
