@@ -205,6 +205,13 @@ const EXAMPLES: &[Example] = &[
         name: "fn_dot3_multiplex",
         source: include_str!("../../../examples/fn_dot3_multiplex.snt"),
     },
+    // Sign-changing casts (DESIGN §6.3): `uN` <-> `iN` in `wrap` and `sat`
+    // modes at narrower / equal / wider widths. The random `u`/`s` stimulus hits
+    // both clamp branches; co-simulated sim vs Verilog bit-for-bit.
+    Example {
+        name: "fn_signcast",
+        source: include_str!("../../../examples/fn_signcast.snt"),
+    },
     // Functional surface F3 headline: the full Go Board (debounce, edge-detect,
     // BCD up/down, 7-seg decode, nested structs, enum/match, methods, arrays).
     Example {
@@ -521,6 +528,11 @@ const DIRECTED: &[Directed] = &[
         name: "fn_counter",
         source: include_str!("../../../examples/fn_counter.snt"),
         csv: include_str!("../../../examples/fn_counter.csv"),
+    },
+    Directed {
+        name: "fn_signcast",
+        source: include_str!("../../../examples/fn_signcast.snt"),
+        csv: include_str!("../../../examples/fn_signcast.csv"),
     },
     Directed {
         name: "fn_signed",

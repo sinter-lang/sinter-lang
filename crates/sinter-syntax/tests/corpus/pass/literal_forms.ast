@@ -64,9 +64,17 @@ Program {
                         7,
                     ),
                 ),
-                value: Literal(
-                    63,
-                ),
+                value: Cast {
+                    expr: Literal(
+                        63,
+                    ),
+                    ty: Scalar(
+                        Uint(
+                            7,
+                        ),
+                    ),
+                    mode: Wrap,
+                },
                 pos: Pos {
                     line: 7,
                     col: 1,

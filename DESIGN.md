@@ -455,8 +455,18 @@ saturated int is two casts.) The fixed-point representation **erases to a plain
 front-end. Widening the fraction first builds an `xi + tf`-bit intermediate (old
 integer bits, new fraction bits) before the integer step narrows it; that
 intermediate must fit the 64-bit width limit (§6.2), else the cast is rejected.
-*Deferred:* `+`/`-` require matching fractional bits (no implicit alignment yet);
-sign-changing casts.
+*Deferred:* `+`/`-` require matching fractional bits (no implicit alignment yet).
+
+**Sign-changing casts (SETTLED, v0.3).** A cast may change signedness (`uN` ↔
+`iN`); the integer step then applies the same value rules. `wrap` is modular:
+it extends by the *source's* signedness and truncates, so
+`0xFFFF_FFFF_u32 as i32 wrap` is `-1`, `-1_i4 as u8 wrap` is `255`, and an
+equal-width cast reinterprets the bits. `sat` clamps the *value* into the
+target range, so `-5 as u8 sat` is `0` and `200 as i8 sat` is `127`. Sign
+extension of an `N`-bit field is therefore two casts:
+`(x as iN wrap) as i32 wrap`. A **bare literal** under a cast takes the
+target type if it fits, else the narrowest unsigned type that holds it
+(`300 as u8 wrap` is `44`).
 
 ### 6.4 `?` is for Option/valid propagation only
 
@@ -550,6 +560,10 @@ width suffix** — `0b0111111_u7`, `42_i16` — which asserts its type and makes
 width mismatch with context a compile error (useful for bit-pattern constants,
 where an off-by-one-bit typo is otherwise easy to miss). Supported forms:
 decimal, `0x` hex, and `0b` binary, with `_` permitted as a digit separator.
+A suffixed literal desugars to a `wrap` cast of the bare literal to its suffix
+type. Decimal values must lie in that type's range, while `0x` / `0b` values
+are bit patterns that need only fit its width (`0x80_i8` is `-128`). An
+out-of-range suffixed literal is a parse error.
 
 ### 6.11 Fixed-capacity channels and FIFOs (RESOLVED shape)
 

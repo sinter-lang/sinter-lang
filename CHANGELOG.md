@@ -5,6 +5,23 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Sign-changing casts** (DESIGN §6.3): `uN` ↔ `iN` in `wrap` (modular)
+  and `sat` (clamping) modes. Signed compare, arithmetic shift, and sign
+  extension of unsigned fields now work, which an RV32 datapath needs.
+- A bare literal under a cast takes the cast's type (`0 as u18 wrap`).
+
+### Fixed
+
+- Width-suffixed literals (`0b0111111_u7`) now carry their type and are
+  range-checked, as DESIGN §6.10 specifies. Previously the suffix was
+  silently dropped, so `0_u18` could not be typed, and inside a concat it
+  took the width of its context. A suffixed literal in a legacy `module`
+  body is now rejected rather than ignored.
+
 ## [0.2.0] — unreleased
 
 ### Added

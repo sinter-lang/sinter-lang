@@ -1156,13 +1156,28 @@ impl Elaborator<'_> {
         let target = self.resolve(ty, pos)?;
         let (ts, ti, tf) =
             target_fx(&target).ok_or_else(|| err(&self.ctx, pos, "cast to a non-numeric type"))?;
-        let val = self.lower(env, inner, None, depth, pos)?;
+        // A bare literal is typed as the target when it fits, else as the
+        // narrowest unsigned type holding it (mirrors `functional`'s check).
+        let hint = match inner {
+            Expr::Literal(v) => {
+                let w = ti + tf;
+                let fits = if ts {
+                    w >= 1 && (w > 127 || *v < (1u128 << (w - 1)))
+                } else {
+                    w >= 128 || *v < (1u128 << w)
+                };
+                Some(if fits {
+                    target.clone()
+                } else {
+                    Ty::Scalar(Type::Uint(crate::functional::literal_bits(*v)))
+                })
+            }
+            _ => None,
+        };
+        let val = self.lower(env, inner, hint.as_ref(), depth, pos)?;
         let (mut e, xf) = scalar_parts(&val, &self.ctx, pos)?;
         let xs = e.ty.is_signed();
         let xi = e.ty.width() - xf;
-        if xs != ts {
-            return Err(unsupported(&self.ctx, pos, "sign-changing casts (F4+)"));
-        }
         // Widening the fraction (xf -> tf) builds an `xi + tf`-bit intermediate
         // before the integer step narrows it. `eval` is `u64`-bounded, so reject
         // a cast whose intermediate would overflow 64 bits (it would silently
@@ -1212,6 +1227,12 @@ impl Elaborator<'_> {
 
         // Step 2: integer width xi -> ti (at fractional bits tf).
         let target_ty = int_ty(ts, ti + tf);
+        if xs != ts {
+            return Ok(Val::Scalar(
+                sign_change(e, target_ty, mode == CastMode::Sat),
+                tf,
+            ));
+        }
         if ti != xi {
             let cm = if ti < xi && mode == CastMode::Sat {
                 CastMode::Sat
@@ -2614,6 +2635,70 @@ fn flatten_leaves(v: &Val, path: &str, out: &mut Vec<(String, ir::Expr, u32)>) {
             out.push((join(path, "is_some"), is_some.clone(), 0));
             flatten_leaves(payload, &join(path, "payload"), out);
         }
+    }
+}
+
+/// Convert `e` to `to`, whose signedness differs from `e`'s (DESIGN §6.3).
+///
+/// `wrap` is modular: extend by the *source* signedness when widening,
+/// truncate when narrowing, so `u32 0xFFFF_FFFF as i32 wrap` is `-1` and
+/// `i4 -1 as u8 wrap` is `255`. One IR resize does exactly that in both
+/// backends. `sat` clamps the value into `to`'s range: an unsigned source
+/// clamps to `to`'s maximum (only needed when `to` can't hold every source
+/// value); a signed source first maps negatives to 0, then is reinterpreted as
+/// unsigned at the same width and resized (saturating when narrowing).
+fn sign_change(e: ir::Expr, to: Type, sat: bool) -> ir::Expr {
+    let resize = |e: ir::Expr, to: Type, mode: CastMode| {
+        typed(
+            ir::ExprKind::Cast {
+                expr: Box::new(e),
+                mode,
+            },
+            to,
+        )
+    };
+    let lit = |v: u64, ty: Type| typed(ir::ExprKind::Literal(mask(v, ty.width())), ty);
+    let (sw, tw) = (e.ty.width(), to.width());
+    if !sat {
+        return resize(e, to, CastMode::Wrap);
+    }
+    if !e.ty.is_signed() {
+        // Unsigned -> signed: values above `to`'s maximum clamp to it.
+        if tw > sw {
+            return resize(e, to, CastMode::Wrap);
+        }
+        let hi = (1u64 << (tw - 1)) - 1;
+        let src = e.ty;
+        let over = typed(binary(BinOp::Gt, e.clone(), lit(hi, src)), Type::Uint(1));
+        let clamped = typed(
+            ir::ExprKind::If {
+                cond: Box::new(over),
+                then: Box::new(lit(hi, src)),
+                els: Box::new(e),
+            },
+            src,
+        );
+        return resize(clamped, to, CastMode::Wrap);
+    }
+    // Signed -> unsigned: negatives clamp to 0; the rest are non-negative, so
+    // reinterpreting at the same width keeps their value.
+    let src = e.ty;
+    let neg = typed(binary(BinOp::Lt, e.clone(), lit(0, src)), Type::Uint(1));
+    let nonneg = typed(
+        ir::ExprKind::If {
+            cond: Box::new(neg),
+            then: Box::new(lit(0, src)),
+            els: Box::new(e),
+        },
+        src,
+    );
+    let unsigned = resize(nonneg, Type::Uint(sw), CastMode::Wrap);
+    if tw == sw {
+        unsigned
+    } else if tw > sw {
+        resize(unsigned, to, CastMode::Wrap)
+    } else {
+        resize(unsigned, to, CastMode::Sat)
     }
 }
 

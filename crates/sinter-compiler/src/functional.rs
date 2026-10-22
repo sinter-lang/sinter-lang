@@ -1109,7 +1109,22 @@ impl Checker<'_> {
                 ty,
                 mode,
             } => {
-                let from = self.check_expr(inner, env, None, ctx, pos)?;
+                // A bare literal takes the cast's target type when it fits, and
+                // otherwise the narrowest unsigned type that holds it, so the
+                // cast's mode then wraps or saturates it (`0 as u18 wrap`, and
+                // the `0_u18` suffix form, which the parser desugars to a cast).
+                let hint = match inner.as_ref() {
+                    Expr::Literal(v) => {
+                        let target = resolve_type(&self.known(), ty, ctx, pos)?;
+                        Some(if literal_fits(*v, &target) {
+                            target
+                        } else {
+                            FType::Uint(literal_bits(*v))
+                        })
+                    }
+                    _ => None,
+                };
+                let from = self.check_expr(inner, env, hint.as_ref(), ctx, pos)?;
                 self.check_cast(&from, ty, *mode, ctx, pos)?
             }
             Expr::Block(block) => self.check_block(block, env, expected, ctx)?,
@@ -2168,6 +2183,11 @@ fn literal_fits(v: u128, ty: &FType) -> bool {
         }
         None => false,
     }
+}
+
+/// The bit width of the narrowest unsigned type holding `v` (at least 1).
+pub(crate) fn literal_bits(v: u128) -> u32 {
+    (128 - v.leading_zeros()).max(1)
 }
 
 fn sem(ctx: &str, pos: Pos, msg: impl Into<String>) -> CompileError {

@@ -40,6 +40,9 @@ pub enum ParseError {
     /// An integer literal could not be represented.
     #[error("invalid integer literal `{0}` at line {1}")]
     InvalidLiteral(String, usize),
+    /// A width-suffixed literal does not fit its suffix type (DESIGN §6.10).
+    #[error("literal `{0}` does not fit in `{1}` at line {2}")]
+    LiteralRange(String, Type, usize),
 }
 
 thread_local! {
@@ -346,8 +349,42 @@ fn parse_block(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     parse_expr(first_inner(pair, "block")?)
 }
 
+/// A literal expression. A width-suffixed literal (`63_u7`, `0x80_i8`) asserts
+/// its type (DESIGN §6.10): it must fit, and it desugars to a `wrap` cast of the
+/// bare literal to that type, so it carries the type into any context.
+/// Decimal values must lie in the type's range; `0x` / `0b` values are bit
+/// patterns and need only fit its width (`0x80_i8` is -128).
 fn parse_literal(pair: &Pair<Rule>) -> Result<Expr, ParseError> {
-    Ok(Expr::Literal(literal_value(pair)?))
+    let value = literal_value(pair)?;
+    let lit = Expr::Literal(value);
+    let raw = pair.as_str();
+    let Some(ty) = width_suffix(raw) else {
+        return Ok(lit);
+    };
+    let w = ty.width();
+    let pattern = raw.starts_with("0x") || raw.starts_with("0b");
+    let limit_bits = if ty.is_signed() && !pattern { w - 1 } else { w };
+    if w == 0 || (limit_bits < 128 && value >> limit_bits != 0) {
+        let (line, _) = pair.line_col();
+        return Err(ParseError::LiteralRange(raw.to_string(), ty, line));
+    }
+    Ok(Expr::Cast {
+        expr: Box::new(lit),
+        ty: TypeRef::Scalar(ty),
+        mode: CastMode::Wrap,
+    })
+}
+
+/// The type named by a literal's `_uN` / `_iN` width suffix, if it has one.
+fn width_suffix(raw: &str) -> Option<Type> {
+    let body = strip_width_suffix(raw);
+    let suffix = raw.get(body.len() + 1..)?;
+    let width: u32 = suffix.get(1..)?.parse().ok()?;
+    match suffix.as_bytes().first()? {
+        b'u' => Some(Type::Uint(width)),
+        b'i' => Some(Type::Int(width)),
+        _ => None,
+    }
 }
 
 /// Decode a `literal` pair's text to its integer value. Strips an optional

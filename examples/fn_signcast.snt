@@ -1,0 +1,38 @@
+// Sign-changing casts (DESIGN §6.3): `uN` <-> `iN` in `wrap` and `sat` modes,
+// at narrower, equal, and wider target widths. `wrap` is modular (extend by the
+// source's signedness, then truncate); `sat` clamps the value into the target
+// range. The random stimulus covers both signs, so the oracle checks every
+// branch of the clamps sim vs Verilog.
+struct Casts {
+    // Unsigned source `u`.
+    u_i8_wrap: i8 = 0,
+    u_i8_sat: i8 = 0,
+    u_i4_sat: i4 = 0,
+    u_i12_sat: i12 = 0,
+    // Signed source `s`.
+    s_u8_wrap: u8 = 0,
+    s_u8_sat: u8 = 0,
+    s_u4_sat: u4 = 0,
+    s_u12_wrap: u12 = 0,
+    s_u12_sat: u12 = 0,
+    // RV32-style sign extension of a 12-bit immediate.
+    sext: u32 = 0,
+}
+
+impl Casts {
+    #[clock(domain = sys)]
+    fn tick(self, u: u8, s: i8, imm: u12) -> Casts {
+        Casts {
+            u_i8_wrap: u as i8 wrap,
+            u_i8_sat: u as i8 sat,
+            u_i4_sat: u as i4 sat,
+            u_i12_sat: u as i12 sat,
+            s_u8_wrap: s as u8 wrap,
+            s_u8_sat: s as u8 sat,
+            s_u4_sat: s as u4 sat,
+            s_u12_wrap: s as u12 wrap,
+            s_u12_sat: s as u12 sat,
+            sext: ((imm as i12 wrap) as i32 wrap) as u32 wrap,
+        }
+    }
+}

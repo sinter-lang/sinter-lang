@@ -1,0 +1,7 @@
+# Directed checks for fn_signcast.snt. Each row's expectations show the casts
+# of the row above (registered outputs lag one cycle).
+u,    s,    imm,   expect.u_i8_wrap_q, expect.u_i8_sat_q, expect.u_i4_sat_q, expect.u_i12_sat_q, expect.s_u8_wrap_q, expect.s_u8_sat_q, expect.s_u4_sat_q, expect.s_u12_wrap_q, expect.s_u12_sat_q, expect.sext_q
+200,  -1,   0xFFF, 0,    0,   0, 0,   0,   0,   0,  0,    0,   0
+5,    100,  0x7FF, -56,  127, 7, 200, 255, 0,   0,  4095, 0,   0xFFFFFFFF
+0,    -128, 0x800, 5,    5,   5, 5,   100, 100, 15, 100,  100, 0x7FF
+0,    0,    0,     0,    0,   0, 0,   128, 0,   0,  3968, 0,   0xFFFFF800

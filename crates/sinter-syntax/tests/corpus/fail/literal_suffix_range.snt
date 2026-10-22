@@ -1,0 +1,4 @@
+// A width-suffixed literal must fit its suffix type (DESIGN §6.10): decimal
+// 128 is out of range for `i8` (use `0x80_i8` for the bit pattern).
+//~ ERROR does not fit in `i8`
+const X: i8 = 128_i8;
