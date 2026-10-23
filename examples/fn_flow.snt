@@ -10,7 +10,7 @@
 // The use for it is sampling a fast signal from slower logic, where only the
 // current value matters and stale samples are meant to be dropped.
 struct Sampler {
-    latest: flow<u8>,
+    pub latest: flow<u8>,
 }
 
 impl Sampler {

@@ -3,7 +3,7 @@
 // on signed operand extension and signed narrowing casts through the oracle
 // (the legacy accumulator only exercises same-width signed arithmetic).
 struct Acc {
-    acc: i4 = 0,
+    pub acc: i4 = 0,
 }
 
 impl Acc {

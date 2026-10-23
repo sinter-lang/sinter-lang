@@ -7,7 +7,7 @@
 // milestone's worked example — it elaborates to an `ir::Module` and runs through
 // the sim<->Verilog conformance oracle.
 struct Counter {
-    value: u8 = 0,
+    pub value: u8 = 0,
 }
 
 impl Counter {

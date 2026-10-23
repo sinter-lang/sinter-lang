@@ -11,7 +11,7 @@
 // A same-address read+write in one cycle returns the OLD value (READ_FIRST).
 // Addresses are `u4` to match the 4-bit depth exactly.
 struct Ram {
-    data: mem<u8, 16> = 0,
+    pub data: mem<u8, 16> = 0,
 }
 
 impl Ram {

@@ -17,7 +17,7 @@
 // This lowers by a source-to-source desugar (`fifo_desugar`) into a plain
 // `struct` + `impl` shift register, so no new IR or backend code is involved.
 struct Queue {
-    q: fifo<u8, 4>,
+    pub q: fifo<u8, 4>,
 }
 
 impl Queue {

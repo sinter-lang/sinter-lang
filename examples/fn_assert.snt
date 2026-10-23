@@ -13,7 +13,7 @@
 // sim ↔ Verilog co-simulation passes bit-for-bit; a separate unit test drives a
 // design whose invariant is violated to confirm the failure is recorded.
 struct Sat {
-    count: u8 = 0,
+    pub count: u8 = 0,
 }
 
 impl Sat {

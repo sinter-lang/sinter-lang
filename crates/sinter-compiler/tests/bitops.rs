@@ -82,13 +82,13 @@ fn bit_slice_extracts_fields() {
 fn bit_slice_requires_unsigned_and_in_range() {
     // A signed operand is rejected (would need a sign-changing cast).
     compile_err(
-        "struct S { y: u4 = 0 }\n\
+        "struct S { pub y: u4 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, x: i8) -> S { S { y: x[3:0] } } }",
         "unsigned",
     );
     // hi out of range for the operand width.
     compile_err(
-        "struct S { y: u2 = 0 }\n\
+        "struct S { pub y: u2 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { y: x[9:8] } } }",
         "out of range",
     );
@@ -122,7 +122,7 @@ fn concat_joins_fields() {
 #[test]
 fn concat_operands_must_be_unsigned() {
     compile_err(
-        "struct S { y: u12 = 0 }\n\
+        "struct S { pub y: u12 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, a: i8, b: u4) -> S { S { y: a @ b } } }",
         "unsigned",
     );
@@ -181,7 +181,7 @@ fn named_const_shift_amount_is_a_same_width_barrel() {
     // pins the DESIGN §6.13 literal-vs-runtime rule.
     let design = compile_str(
         "const K: u8 = 2;\n\
-         struct S { y: u8 = 0 }\n\
+         struct S { pub y: u8 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> (S, u8) { (S { y: 0 }, x << K) } }",
     )
     .expect("compile");
@@ -198,7 +198,7 @@ fn named_const_shift_amount_is_a_same_width_barrel() {
 #[test]
 fn variable_shift_amount_must_be_unsigned() {
     compile_err(
-        "struct S { y: u8 = 0 }\n\
+        "struct S { pub y: u8 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, x: u8, sh: i4) -> S { S { y: x << sh } } }",
         "unsigned",
     );
@@ -207,7 +207,7 @@ fn variable_shift_amount_must_be_unsigned() {
 #[test]
 fn right_shift_past_width_is_rejected() {
     compile_err(
-        "struct S { y: u1 = 0 }\n\
+        "struct S { pub y: u1 = 0 }\n\
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { y: (x >> 8) as u1 wrap } } }",
         "must be less than the operand width",
     );

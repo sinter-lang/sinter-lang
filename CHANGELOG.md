@@ -27,6 +27,12 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 
 ### Changed
 
+- **Breaking: only `pub` state fields are output ports.** Previously every
+  register of the clock-root state struct became a `<reg>_q` port (the RV32
+  core had 42 ports). Now only the leaves of its `pub` fields do; private
+  fields are internal registers. Mark the fields you want exported `pub`.
+  `sinter build` warns about a module with no outputs. The examples are
+  updated; go_board_counter now exports just `seg` and `led`.
 - **Shared wires.** Each non-trivial `let` binding and call argument now
   becomes a named wire, instead of being copied into every use. On the RV32
   core this shrank the emitted Verilog from 1.2 MB to 28 KB, made Yosys

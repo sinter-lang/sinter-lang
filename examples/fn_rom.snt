@@ -9,7 +9,7 @@
 //     the tail `Self { lut }`. There is no write to drive — only the read
 //     cursor advances.
 struct Squares {
-    lut: rom<u8, 8> = [0, 1, 4, 9, 16, 25, 36, 49],
+    pub lut: rom<u8, 8> = [0, 1, 4, 9, 16, 25, 36, 49],
 }
 
 impl Squares {

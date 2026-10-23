@@ -7,10 +7,10 @@
 // sim and the emitted Verilog agree bit-for-bit. This is the instruction-decode
 // primitive: pulling `opcode` / `rd` / `funct3` fields out of a word.
 struct Top {
-    hi:  u4 = 0, // x[7:4]  (top nibble)
-    lo:  u4 = 0, // x[3:0]  (low nibble)
-    mid: u3 = 0, // x[5:3]  (a middle field, not anchored at bit 0)
-    top: u1 = 0, // x[7:7]  (a single bit)
+    pub hi:  u4 = 0, // x[7:4]  (top nibble)
+    pub lo:  u4 = 0, // x[3:0]  (low nibble)
+    pub mid: u3 = 0, // x[5:3]  (a middle field, not anchored at bit 0)
+    pub top: u1 = 0, // x[7:7]  (a single bit)
 }
 
 impl Top {

@@ -25,8 +25,8 @@ struct Top {
     dec_edge: Edge,
     tens: Digit,
     ones: Digit,
-    seg: [u7; 2] = [0, 0],
-    led: u4 = 0,
+    pub seg: [u7; 2] = [0, 0],
+    pub led: u4 = 0,
 }
 
 impl Top {

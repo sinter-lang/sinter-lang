@@ -58,7 +58,7 @@ fn board_for(src: &str, pins: &str, name: &str) -> Result<sinter_compiler::board
 /// A 2-field state whose second field `a_3` collides textually with bit 3 of the
 /// first field `a` once a path is flattened (`a[3]` folds to `a_3`).
 const COLLIDE_SNT: &str = "
-    struct St { a: u8 = 0, a_3: u1 = 0 }
+    struct St { pub a: u8 = 0, pub a_3: u1 = 0 }
     impl St {
         #[clock(domain = sys)]
         fn tick(self) -> St { self }
@@ -102,7 +102,7 @@ fn input_flattening_to_rst_n_is_rejected_at_elaboration() {
     // duplicate-declare; the elaborator must reject it.
     let src = "
         struct R { n: u1 }
-        struct St { x: u1 = 0 }
+        struct St { pub x: u1 = 0 }
         impl St {
             #[clock(domain = sys)]
             fn tick(self, rst: R) -> St { St { x: rst.n } }
@@ -120,7 +120,7 @@ fn input_flattening_to_reserved_wrapper_signal_is_rejected() {
     // `por_count` is a generated wrapper-internal net; an input pin bound to it
     // must be rejected (else the wrapper duplicate-declares).
     let src = "
-        struct St { x: u1 = 0 }
+        struct St { pub x: u1 = 0 }
         impl St {
             #[clock(domain = sys)]
             fn tick(self, por_count: u1) -> St { St { x: por_count } }
@@ -162,7 +162,7 @@ fn output_generation_is_deterministic() {
 /// State + multi-bit input, used to exercise bit-by-bit input assembly, an
 /// active-low input, and a partially-tapped output.
 const MULTIBIT_SNT: &str = "
-    struct St { acc: u2 = 0 }
+    struct St { pub acc: u2 = 0 }
     impl St {
         #[clock(domain = sys)]
         fn tick(self, data: u2) -> St { St { acc: data } }
@@ -210,8 +210,8 @@ fn go_board_wrapper_and_pcf_generate() {
     // Power-on reset (no reset pin) and the lint-clean unused sink.
     assert!(sv.contains("assign rst_n = (por_count == 4'd15);"));
     assert!(sv.contains("_unused_ok"));
-    // Untapped wide outputs are sunk, not pinned.
-    assert!(sv.contains("inc_count_q"));
+    // An unpinned output (`led`, which go_board.pins doesn't map) is sunk.
+    assert!(sv.contains("wire _unused_ok = &{1'b0, led_q};"));
 
     let pcf = &board.pcf;
     assert!(pcf.contains("set_io clk 15"));

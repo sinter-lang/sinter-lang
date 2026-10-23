@@ -60,13 +60,13 @@ fn rom_read_has_static1_latency() {
 
 #[test]
 fn rom_without_contents_is_rejected() {
-    compile_err("struct S { r: rom<u8, 4> }", "needs initial contents");
+    compile_err("struct S { pub r: rom<u8, 4> }", "needs initial contents");
 }
 
 #[test]
 fn rom_with_too_many_words_is_rejected() {
     compile_err(
-        "struct S { r: rom<u8, 4> = [1, 2, 3, 4, 5] }",
+        "struct S { pub r: rom<u8, 4> = [1, 2, 3, 4, 5] }",
         "holds 4 words, but its initializer has 5",
     );
 }
@@ -74,7 +74,7 @@ fn rom_with_too_many_words_is_rejected() {
 #[test]
 fn a_short_rom_image_is_zero_filled() {
     let design = compile_str(
-        "struct S { r: rom<u8, 4> = [7, 8] }
+        "struct S { pub r: rom<u8, 4> = [7, 8] }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, a: u2) -> (S, u8) { (S { r: self.r.next(a) }, self.r.value()) }
@@ -86,12 +86,15 @@ fn a_short_rom_image_is_zero_filled() {
 
 #[test]
 fn rom_word_out_of_range_is_rejected() {
-    compile_err("struct S { r: rom<u4, 2> = [1, 99] }", "does not fit");
+    compile_err("struct S { pub r: rom<u4, 2> = [1, 99] }", "does not fit");
 }
 
 #[test]
 fn rom_with_non_array_contents_is_rejected() {
-    compile_err("struct S { r: rom<u8, 4> = 0 }", "must be an array literal");
+    compile_err(
+        "struct S { pub r: rom<u8, 4> = 0 }",
+        "must be an array literal",
+    );
 }
 
 #[test]
@@ -99,7 +102,7 @@ fn writing_to_a_rom_is_rejected() {
     // A `rom`'s `next` takes only the read address — the 4-arg (write) form is a
     // `mem` operation.
     compile_err(
-        "struct R { r: rom<u8, 4> = [0, 0, 0, 0] } \
+        "struct R { pub r: rom<u8, 4> = [0, 0, 0, 0] } \
          impl R { #[clock(domain = sys)] fn tick(self, a: u2, v: u8) -> (R, u8) { \
             let x = self.r.value(); (R { r: self.r.next(a, 1, a, v) }, x) } }",
         "expects 1 argument",
@@ -110,7 +113,7 @@ fn writing_to_a_rom_is_rejected() {
 fn mem_with_array_contents_is_rejected() {
     // The inverse: a writable `mem` must be zero-initialized, not given contents.
     compile_err(
-        "struct S { m: mem<u8, 4> = [1, 2, 3, 4] }",
+        "struct S { pub m: mem<u8, 4> = [1, 2, 3, 4] }",
         "must be zero-initialized",
     );
 }
@@ -136,7 +139,7 @@ fn compile_with_hex(snt: &str, hex: &str) -> Result<sinter_compiler::Design, Str
 }
 
 const HEX_SNT: &str = "
-    struct Rom { data: rom<u8, 8> = include_hex!(\"table.hex\") }
+    struct Rom { pub data: rom<u8, 8> = include_hex!(\"table.hex\") }
     impl Rom {
         #[clock(domain = sys)]
         fn tick(self, addr: u3) -> (Rom, u8) {
@@ -168,7 +171,7 @@ fn include_hex_loads_the_rom_contents() {
 fn include_hex_without_a_file_project_is_rejected() {
     // `compile_str` has no source directory to resolve against.
     compile_err(
-        "struct S { r: rom<u8, 2> = include_hex!(\"x.hex\") }",
+        "struct S { pub r: rom<u8, 2> = include_hex!(\"x.hex\") }",
         "file-based project",
     );
 }

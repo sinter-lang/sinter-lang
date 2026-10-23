@@ -172,6 +172,13 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
     fs::create_dir_all(out).with_context(|| format!("creating output dir `{}`", out.display()))?;
 
     for m in &modules {
+        if m.outputs().next().is_none() {
+            warn!(
+                "module `{}` has no output ports, so synthesis will remove all of its \
+                 logic; mark the state fields to export as `pub`",
+                m.name
+            );
+        }
         if matches!(emit, Emit::Verilog | Emit::All) {
             let path = out.join(format!("{}.sv", m.name));
             fs::write(&path, verilog::emit_module(m))

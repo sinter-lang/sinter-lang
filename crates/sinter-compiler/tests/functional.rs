@@ -62,7 +62,7 @@ fn tuple_returning_substep_destructured() {
         impl D {
             fn step(self) -> (D, u1) { (self, 0) }
         }
-        struct Top { d: D }
+        struct Top { pub d: D }
         impl Top {
             #[clock(domain = sys)]
             fn tick(self) -> Top {
@@ -76,13 +76,13 @@ fn tuple_returning_substep_destructured() {
 
 #[test]
 fn unknown_type_is_rejected() {
-    reject("struct S { a: Nope = 0 }", "unknown type `Nope`");
+    reject("struct S { pub a: Nope = 0 }", "unknown type `Nope`");
 }
 
 #[test]
 fn unknown_field_is_rejected() {
     reject(
-        "struct S { a: u8 = 0 } fn f(s: S) -> u8 { s.b }",
+        "struct S { pub a: u8 = 0 } fn f(s: S) -> u8 { s.b }",
         "no field `b`",
     );
 }
@@ -90,7 +90,7 @@ fn unknown_field_is_rejected() {
 #[test]
 fn missing_struct_field_is_rejected() {
     reject(
-        "struct S { a: u8, b: u8 } fn f() -> S { S { a: 0 } }",
+        "struct S { pub a: u8, pub b: u8 } fn f() -> S { S { a: 0 } }",
         "missing field",
     );
 }
@@ -98,7 +98,7 @@ fn missing_struct_field_is_rejected() {
 #[test]
 fn field_type_mismatch_is_rejected() {
     reject(
-        "enum E { X } struct S { a: u8 = 0 } fn f() -> S { S { a: E::X } }",
+        "enum E { X } struct S { pub a: u8 = 0 } fn f() -> S { S { a: E::X } }",
         "type mismatch",
     );
 }
@@ -108,7 +108,7 @@ fn unnarrowed_arithmetic_requires_a_cast() {
     // `s.a + 1` widens u8 -> u9; assigning it back to the u8 field must be a
     // type error until an explicit narrowing cast is written (DESIGN §6.2/6.3).
     reject(
-        "struct S { a: u8 = 0 } fn f(s: S) -> S { S { a: s.a + 1 } }",
+        "struct S { pub a: u8 = 0 } fn f(s: S) -> S { S { a: s.a + 1 } }",
         "expected `u8`, found `u9`",
     );
 }
@@ -130,7 +130,7 @@ fn out_of_range_field_default_is_rejected() {
     // out-of-range initializer is a compile error rather than a silently-masked
     // reset (DESIGN §6.10).
     reject(
-        "struct S { a: u4 = 99 }",
+        "struct S { pub a: u4 = 99 }",
         "literal `99` does not fit in `u4`",
     );
 }
@@ -141,7 +141,7 @@ fn out_of_range_fixed_field_default_is_rejected() {
     // 999 does not fit. (Regression: `literal_fits` once returned true for any
     // fixed-point type, masking out-of-range fixed defaults.)
     reject(
-        "struct S { a: u4.4 = 999 }",
+        "struct S { pub a: u4.4 = 999 }",
         "literal `999` does not fit in `u4.4`",
     );
 }
@@ -165,7 +165,7 @@ fn scalar_match_without_wildcard_is_rejected() {
 #[test]
 fn unknown_method_is_rejected() {
     reject(
-        "struct S { a: u8 = 0 } fn f(s: S) -> u8 { s.bump() }",
+        "struct S { pub a: u8 = 0 } fn f(s: S) -> u8 { s.bump() }",
         "no method `bump`",
     );
 }
@@ -173,8 +173,8 @@ fn unknown_method_is_rejected() {
 #[test]
 fn multiple_clock_roots_are_rejected() {
     let src = "
-        struct A { x: u1 = 0 }
-        struct B { y: u1 = 0 }
+        struct A { pub x: u1 = 0 }
+        struct B { pub y: u1 = 0 }
         impl A { #[clock(domain = sys)] fn tick(self) -> A { self } }
         impl B { #[clock(domain = sys)] fn tick(self) -> B { self } }
     ";
@@ -248,7 +248,7 @@ fn pipeline_yield_tap_is_not_yet_supported() {
 #[test]
 fn pipeline_fn_cannot_be_a_method() {
     reject(
-        "struct S { x: u1 = 0 } impl S { pipeline fn p(self) -> u1 { yield; self.x } }",
+        "struct S { pub x: u1 = 0 } impl S { pipeline fn p(self) -> u1 { yield; self.x } }",
         "cannot be a method",
     );
 }
@@ -264,7 +264,7 @@ fn multiplex_fn_definition_type_checks() {
 #[test]
 fn multiplex_fn_cannot_be_a_method() {
     reject(
-        "struct S { x: u1 = 0 } impl S { multiplex fn m(self) -> u1 { yield; self.x } }",
+        "struct S { pub x: u1 = 0 } impl S { multiplex fn m(self) -> u1 { yield; self.x } }",
         "cannot be a method",
     );
 }
@@ -289,7 +289,7 @@ fn yield_outside_a_pipeline_is_rejected() {
 #[test]
 fn clock_root_must_return_self() {
     reject(
-        "struct A { x: u1 = 0 } impl A { #[clock(domain = sys)] fn tick(self) -> u1 { self.x } }",
+        "struct A { pub x: u1 = 0 } impl A { #[clock(domain = sys)] fn tick(self) -> u1 { self.x } }",
         "must return",
     );
 }
@@ -313,7 +313,7 @@ fn match_on_option_type_checks() {
 
 #[test]
 fn option_typed_struct_field_resolves() {
-    check("struct S { last: Option<u9> } fn f(s: S) -> Option<u9> { s.last }")
+    check("struct S { pub last: Option<u9> } fn f(s: S) -> Option<u9> { s.last }")
         .expect("an Option-typed field should resolve");
 }
 
@@ -409,7 +409,7 @@ fn try_feeding_a_register_write_is_rejected() {
     // a register has no "skip" (DESIGN §6.4 — use a guarded hold instead).
     reject(
         "fn maybe(x: u8) -> Option<u8> { Some(x) } \
-         struct S { v: u8 = 0 } \
+         struct S { pub v: u8 = 0 } \
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { v: maybe(x)? } } }",
         "only valid in an `Option`-returning function",
     );

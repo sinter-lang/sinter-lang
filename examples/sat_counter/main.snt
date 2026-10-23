@@ -9,8 +9,8 @@ mod counter;
 use root::counter::Counter;
 
 struct Top {
-    c: Counter,
-    last: u8 = 0, // mirrors the counter's value, read across the module boundary
+    pub c: Counter,
+    pub last: u8 = 0, // mirrors the counter's value, read across the module boundary
 }
 
 impl Top {

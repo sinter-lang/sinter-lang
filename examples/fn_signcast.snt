@@ -5,18 +5,18 @@
 // branch of the clamps sim vs Verilog.
 struct Casts {
     // Unsigned source `u`.
-    u_i8_wrap: i8 = 0,
-    u_i8_sat: i8 = 0,
-    u_i4_sat: i4 = 0,
-    u_i12_sat: i12 = 0,
+    pub u_i8_wrap: i8 = 0,
+    pub u_i8_sat: i8 = 0,
+    pub u_i4_sat: i4 = 0,
+    pub u_i12_sat: i12 = 0,
     // Signed source `s`.
-    s_u8_wrap: u8 = 0,
-    s_u8_sat: u8 = 0,
-    s_u4_sat: u4 = 0,
-    s_u12_wrap: u12 = 0,
-    s_u12_sat: u12 = 0,
+    pub s_u8_wrap: u8 = 0,
+    pub s_u8_sat: u8 = 0,
+    pub s_u4_sat: u4 = 0,
+    pub s_u12_wrap: u12 = 0,
+    pub s_u12_sat: u12 = 0,
     // RV32-style sign extension of a 12-bit immediate.
-    sext: u32 = 0,
+    pub sext: u32 = 0,
 }
 
 impl Casts {

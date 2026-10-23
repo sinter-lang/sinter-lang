@@ -18,7 +18,7 @@ fn classify(x: u8) -> Option<u9> {
 
 struct Top {
     // An Option-typed register; with no `= …` it resets to `None`.
-    last: Option<u9>,
+    pub last: Option<u9>,
 }
 
 impl Top {

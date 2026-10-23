@@ -46,12 +46,12 @@ struct Pair {
 }
 
 struct Top {
-    count: u8 = 0,
-    mode: Mode = Mode::Idle,
-    hist: [u4; 2] = [0, 0],
-    last: Option<u4>,
-    gain: i2.2 = 0,
-    ram: mem<u8, 4> = 0,
+    pub count: u8 = 0,
+    pub mode: Mode = Mode::Idle,
+    pub hist: [u4; 2] = [0, 0],
+    pub last: Option<u4>,
+    pub gain: i2.2 = 0,
+    pub ram: mem<u8, 4> = 0,
 }
 
 impl Top {
@@ -136,7 +136,7 @@ fn verilog_header_has_clock_and_reset_first() {
 #[test]
 fn a_single_extra_output_is_named_out() {
     let m = module(
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> (S, u8) { (S { v: x }, self.v) }
@@ -150,7 +150,7 @@ fn a_single_extra_output_is_named_out() {
 fn a_struct_extra_output_is_named_by_field() {
     let m = module(
         "struct Pair { lo: u4, hi: u4, }
-         struct S { v: u8 = 0, }
+         struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> (S, Pair) {
@@ -165,7 +165,7 @@ fn a_struct_extra_output_is_named_by_field() {
 #[test]
 fn no_extra_output_means_only_register_outputs() {
     let m = module(
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> S { S { v: x } }
@@ -180,7 +180,7 @@ fn enum_width_follows_its_encoding() {
     let m = module(
         "#[encoding(onehot)]
          enum Mode { Idle, Run, Halt }
-         struct S { mode: Mode = Mode::Idle, }
+         struct S { pub mode: Mode = Mode::Idle, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, m: Mode) -> S { S { mode: m } }
@@ -197,7 +197,7 @@ fn enum_width_follows_its_encoding() {
 
 #[test]
 fn faults_on_appends_the_fault_code_sideband() {
-    let src = "struct S { v: u8 = 0, }
+    let src = "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> S {
@@ -215,7 +215,7 @@ fn faults_on_appends_the_fault_code_sideband() {
 #[test]
 fn reserved_and_colliding_names_are_rejected() {
     compile_err(
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, clk: u1) -> S { S { v: 0 } }
@@ -223,7 +223,7 @@ fn reserved_and_colliding_names_are_rejected() {
         "collides with the reserved clock/reset port",
     );
     compile_err(
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, v_q: u8) -> S { S { v: v_q } }
@@ -242,4 +242,35 @@ fn fixed_point_ports_and_registers_carry_their_q_format() {
     // Integer ports carry no comment, and the last port has no comma.
     assert!(sv.contains("input  wire  [3:0] p_lo,\n"));
     assert!(sv.contains("output logic [0:0] out_1\n);"));
+}
+
+#[test]
+fn only_pub_state_fields_export_ports() {
+    let m = module(
+        "struct Inner { a: u4 = 0, b: u4 = 0, }
+         struct S {
+             pub shown: Inner,
+             hidden: u8 = 0,
+             pub ram: mem<u8, 4> = 0,
+             cache: mem<u8, 4> = 0,
+         }
+         impl S {
+             #[clock(domain = sys)]
+             fn tick(self, x: u8) -> S {
+                 S {
+                     shown: Inner { a: x[3:0], b: x[7:4] },
+                     hidden: x,
+                     ram: self.ram.next(x[1:0], 1, x[1:0], self.hidden),
+                     cache: self.cache.next(x[1:0], 0, 0, 0),
+                 }
+             }
+         }",
+    );
+    // A `pub` field exports all of its leaves (whatever the inner struct's
+    // field visibility) and a `pub` memory its read-data register; private
+    // fields stay internal registers.
+    let outputs: Vec<_> = m.outputs().map(|p| p.name.as_str()).collect();
+    assert_eq!(outputs, ["shown_a_q", "shown_b_q", "ram_rdata_q"]);
+    assert!(m.regs.iter().any(|r| r.name == "hidden"));
+    assert!(m.regs.iter().any(|r| r.name == "cache_rdata"));
 }

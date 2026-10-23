@@ -119,7 +119,7 @@ fn a_stateless_model_is_combinational_and_instanced_per_call() {
                  (self, AddOut { s: (a + b) as u8 wrap })
              }
          }
-         struct Top { v: u8 = 0, adder: Add, }
+         struct Top { pub v: u8 = 0, pub adder: Add, }
          impl Top {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> Top {
@@ -226,7 +226,7 @@ fn ports_are_scalars_in_ext1() {
          impl M {
              fn step(self, x: u8) -> (M, MOut) { (M { v: x }, MOut { pair: [x, x] }) }
          }
-         struct Top { m: M, }
+         struct Top { pub m: M, }
          impl Top {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> Top { let (m, o) = self.m.step(x); Top { m: m } }
@@ -246,7 +246,7 @@ fn a_model_cannot_hold_a_memory() {
                  (M { data: self.data.next(a, 0, a, 0) }, MOut { q: self.data.value() })
              }
          }
-         struct Top { m: M, }
+         struct Top { pub m: M, }
          impl Top {
              #[clock(domain = sys)]
              fn tick(self, a: u2) -> Top { let (m, o) = self.m.step(a); Top { m: m } }
@@ -310,7 +310,7 @@ fn multiplex_and_foreign_instances_combine() {
                  (self, IncOut { y: (x + 1) as u17 wrap })
              }
          }
-         struct Top { inst: dot2, inc: Inc, }
+         struct Top { pub inst: dot2, pub inc: Inc, }
          impl Top {
              #[clock(domain = sys)]
              fn tick(self, a: u8, b: u8) -> (Top, u17) {

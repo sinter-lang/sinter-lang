@@ -4,7 +4,7 @@
 // embedded inline — the generated SystemVerilog is self-contained (no runtime
 // `$readmemh`).
 struct Rom {
-    data: rom<u8, 8> = include_hex!("table.hex"),
+    pub data: rom<u8, 8> = include_hex!("table.hex"),
 }
 
 impl Rom {

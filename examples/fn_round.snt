@@ -1,7 +1,7 @@
 // Fixed-point rounding: round a Q4.8 input to Q4.4 (drop 4 fractional bits,
 // round half up) with the `round` cast. Exercises fractional narrowing.
 struct Round {
-    y: i4.4 = 0,
+    pub y: i4.4 = 0,
 }
 
 impl Round {

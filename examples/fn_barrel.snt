@@ -9,9 +9,9 @@
 // stimulus also exercises shifts past the 8-bit width. Lowers to a native
 // Verilog barrel shift (`<<` / `>>` / `>>>`), co-simulated bit-for-bit.
 struct Top {
-    sll: u8 = 0, // x << sh  (logical left)
-    srl: u8 = 0, // x >> sh  (logical right, unsigned)
-    sra: i8 = 0, // s >> sh  (arithmetic right, signed)
+    pub sll: u8 = 0, // x << sh  (logical left)
+    pub srl: u8 = 0, // x >> sh  (logical right, unsigned)
+    pub sra: i8 = 0, // s >> sh  (arithmetic right, signed)
 }
 
 impl Top {

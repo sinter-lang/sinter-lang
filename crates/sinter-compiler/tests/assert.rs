@@ -43,7 +43,7 @@ fn a_violated_invariant_records_a_failure() {
     // its message, every cycle it is false.
     let src = "\
 struct Bad {
-    v: u8 = 5,
+    pub v: u8 = 5,
 }
 impl Bad {
     #[clock(domain = sys)]
@@ -77,7 +77,7 @@ fn assert_emits_zero_bits_sv_is_byte_identical() {
     // change dead-code elimination.
     let with = "\
 struct M {
-    v: u8 = 0,
+    pub v: u8 = 0,
 }
 impl M {
     #[clock(domain = sys)]
@@ -89,7 +89,7 @@ impl M {
 ";
     let without = "\
 struct M {
-    v: u8 = 0,
+    pub v: u8 = 0,
 }
 impl M {
     #[clock(domain = sys)]
@@ -122,7 +122,7 @@ impl Inner {
     }
 }
 struct Outer {
-    inner: Inner,
+    pub inner: Inner,
 }
 impl Outer {
     #[clock(domain = sys)]
@@ -180,8 +180,8 @@ impl Inner {
     }
 }
 struct Outer {
-    a: Inner,
-    b: Inner,
+    pub a: Inner,
+    pub b: Inner,
 }
 impl Outer {
     #[clock(domain = sys)]
@@ -222,7 +222,7 @@ fn compile_err(src: &str, needle: &str) {
 #[test]
 fn assert_condition_must_be_one_bit() {
     compile_err(
-        "struct M { v: u8 = 0 }\n\
+        "struct M { pub v: u8 = 0 }\n\
          impl M { #[clock(domain = sys)] fn tick(self) -> (M, u8) \
          { assert!(self.v, \"not a bool\"); (M { v: self.v }, self.v) } }",
         "expected `u1`",
@@ -235,7 +235,7 @@ fn assert_is_rejected_inside_a_branch() {
     // evaluates the flat list unconditionally — so it is rejected (fold the branch
     // condition into the predicate instead).
     compile_err(
-        "struct M { v: u8 = 0 }\n\
+        "struct M { pub v: u8 = 0 }\n\
          impl M { #[clock(domain = sys)] fn tick(self, c: u1) -> (M, u8) {\n\
              let n: u8 = if c == 1 { assert!(self.v == 0, \"x\"); 1 } else { 0 };\n\
              (M { v: n }, self.v) } }",

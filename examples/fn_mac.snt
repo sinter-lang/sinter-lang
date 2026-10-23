@@ -7,7 +7,7 @@
 // it without hinting non-literal operands with a sibling's width, and the sim
 // and Verilog must agree bit-for-bit on the sign-extended products and sum.
 struct Mac {
-    acc: i16 = 0,
+    pub acc: i16 = 0,
 }
 
 impl Mac {

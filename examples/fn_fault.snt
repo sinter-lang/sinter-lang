@@ -13,7 +13,7 @@
 // which is the FLT1b property. `fault_code` reaches only the sideband, never the
 // datapath, so `--faults=off` is provably functional-neutral.
 struct Mon {
-    last: u8 = 0,
+    pub last: u8 = 0,
 }
 
 impl Mon {

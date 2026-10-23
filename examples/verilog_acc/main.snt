@@ -27,8 +27,8 @@ impl Acc16 {
 }
 
 struct Top {
-    acc: Acc16,
-    overflows: u8 = 0,
+    pub acc: Acc16,
+    pub overflows: u8 = 0,
 }
 
 impl Top {

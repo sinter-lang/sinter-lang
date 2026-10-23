@@ -15,7 +15,7 @@ fn module(src: &str) -> Module {
 #[test]
 fn a_let_used_several_times_is_one_wire() {
     let m = module(
-        "struct S { regs: [u8; 4] = [0, 0, 0, 0], a: u8 = 0, b: u8 = 0, }
+        "struct S { pub regs: [u8; 4] = [0, 0, 0, 0], pub a: u8 = 0, pub b: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, i: u2) -> S {
@@ -41,7 +41,7 @@ fn a_let_used_several_times_is_one_wire() {
 #[test]
 fn wire_names_avoid_keywords_and_generated_names() {
     let m = module(
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> S {
@@ -59,7 +59,7 @@ fn wire_names_avoid_keywords_and_generated_names() {
 #[test]
 fn a_wire_read_only_by_an_assert_is_simulated_but_not_emitted() {
     let m = module(
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> S {
@@ -81,9 +81,9 @@ fn a_wire_read_only_by_an_assert_is_simulated_but_not_emitted() {
 #[test]
 fn registers_and_ports_cannot_be_named_after_verilog_keywords() {
     for src in [
-        "struct S { end: u8 = 0, }
+        "struct S { pub end: u8 = 0, }
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { end: x } } }",
-        "struct S { v: u8 = 0, }
+        "struct S { pub v: u8 = 0, }
          impl S { #[clock(domain = sys)] fn tick(self, begin: u8) -> S { S { v: begin } } }",
     ] {
         let err = compile_str(src).expect_err("keyword name").to_string();

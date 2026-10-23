@@ -107,6 +107,10 @@ sub-step uses the §2.3 `(new_state, outputs)` form, e.g.
 function is the design's synthesizable top, and is what the physical pin map
 (§7.6) resolves against. The Verilog-style `module { in/out/reg }` construct in
 the current grammar is the legacy MVP surface, slated to migrate onto this form.
+**Which state is an output (SETTLED, v0.3):** the `pub` fields of the clock-root
+state struct are the module's register outputs (`<field>_q` ports); private
+fields are internal registers. So `pub` means "visible outside" both across
+source modules (§10) and at the hardware boundary.
 Its keywords (`module`, `in`, `out`, `reg`) are **contextual**: reserved only
 inside the legacy rules, ordinary identifiers on the functional surface.
 

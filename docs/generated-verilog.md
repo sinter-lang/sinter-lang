@@ -41,9 +41,11 @@ After `clk` and `rst_n`, ports appear in this order:
 
 1. **Inputs**: one per scalar leaf of each `tick` parameter, in parameter
    order.
-2. **Register outputs** (`<register>_q`): the current value of every state
-   register, in field order. A memory contributes its read-data register
-   (`<mem>_rdata_q`).
+2. **Register outputs** (`<register>_q`): the current value of each register
+   under a **`pub`** field of the state struct, in field order. A `pub`
+   memory field contributes its read-data register (`<mem>_rdata_q`).
+   Private fields are internal: they are registers in the module but not
+   ports (they still appear in `sinter sim --vcd` waveforms).
 3. **Extra outputs** (`out`, `out_*`): the leaves of the second element when
    `tick` returns `(Self, T)`. They are absent when `tick` returns `Self`.
 4. **`fault_code`**: only with `sinter build --faults`. It is the
@@ -98,7 +100,7 @@ compile time.
 
 ## Instantiating the module
 
-`examples/fn_counter.snt` defines `struct Counter { value: u8 = 0 }` with
+`examples/fn_counter.snt` defines `struct Counter { pub value: u8 = 0 }` with
 `fn tick(self, en: u1) -> Counter`, which emits:
 
 ```systemverilog

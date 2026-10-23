@@ -285,7 +285,7 @@ fn flow_is_newest_wins_and_holds_without_a_push() {
 #[test]
 fn fifo_capacity_must_be_a_power_of_two() {
     compile_err(
-        "struct Q { q: fifo<u8, 3> }\n\
+        "struct Q { pub q: fifo<u8, 3> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { q: self.q.next(None, 0) } } }",
         "power of two",
     );
@@ -294,7 +294,7 @@ fn fifo_capacity_must_be_a_power_of_two() {
 #[test]
 fn fifo_field_takes_no_initializer() {
     compile_err(
-        "struct Q { q: fifo<u8, 4> = 0 }\n\
+        "struct Q { pub q: fifo<u8, 4> = 0 }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { q: self.q.next(None, 0) } } }",
         "no initializer",
     );
@@ -303,7 +303,7 @@ fn fifo_field_takes_no_initializer() {
 #[test]
 fn ring_capacity_must_be_a_power_of_two() {
     compile_err(
-        "struct Q { r: ring<u8, 3> }\n\
+        "struct Q { pub r: ring<u8, 3> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { r: self.r.next(None, 0) } } }",
         "power of two",
     );
@@ -312,7 +312,7 @@ fn ring_capacity_must_be_a_power_of_two() {
 #[test]
 fn ring_field_takes_no_initializer() {
     compile_err(
-        "struct Q { r: ring<u8, 4> = 0 }\n\
+        "struct Q { pub r: ring<u8, 4> = 0 }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { r: self.r.next(None, 0) } } }",
         "no initializer",
     );
@@ -321,7 +321,7 @@ fn ring_field_takes_no_initializer() {
 #[test]
 fn flow_field_takes_no_initializer() {
     compile_err(
-        "struct Q { f: flow<u8> = 0 }\n\
+        "struct Q { pub f: flow<u8> = 0 }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { f: self.f.next(None) } } }",
         "no initializer",
     );
@@ -333,13 +333,13 @@ fn flow_field_takes_no_initializer() {
 #[test]
 fn flow_has_no_pop_or_front() {
     compile_err(
-        "struct Q { f: flow<u8> }\n\
+        "struct Q { pub f: flow<u8> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> (Q, Option<u8>) \
          { (Q { f: self.f.next(None) }, self.f.front()) } }",
         "front",
     );
     compile_err(
-        "struct Q { f: flow<u8> }\n\
+        "struct Q { pub f: flow<u8> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { f: self.f.next(None, 0) } } }",
         "next",
     );
@@ -350,12 +350,12 @@ fn flow_has_no_pop_or_front() {
 #[test]
 fn errors_name_the_channel_kind() {
     compile_err(
-        "struct Q { r: ring<(u8, u8), 4> }\n\
+        "struct Q { pub r: ring<(u8, u8), 4> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { r: self.r.next(None, 0) } } }",
         "a `ring` element must be a scalar",
     );
     compile_err(
-        "struct Q { f: flow<(u8, u8)> }\n\
+        "struct Q { pub f: flow<(u8, u8)> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { f: self.f.next(None) } } }",
         "a `flow` element must be a scalar",
     );

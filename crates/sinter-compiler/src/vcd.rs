@@ -208,7 +208,7 @@ mod tests {
     use crate::compile_str;
 
     const COUNTER: &str = "
-        struct C { value: u4 = 0, }
+        struct C { pub value: u4 = 0, }
         impl C {
             #[clock(domain = sys)]
             fn tick(self, en: u1) -> C {

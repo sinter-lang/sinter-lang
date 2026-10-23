@@ -10,7 +10,7 @@
 // Register 0 is hardwired to zero, RISC-V style: it resets to 0 and the write
 // enable excludes it (`rd != 0`), so it reads 0 forever.
 struct RegFile {
-    regs: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0],
+    pub regs: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0],
 }
 
 impl RegFile {

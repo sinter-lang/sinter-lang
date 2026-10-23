@@ -164,7 +164,7 @@ fn literal_match_free_fn_decodes() {
                 _ => 8,
             }
         }
-        struct S { code: u4 = 0 }
+        struct S { pub code: u4 = 0 }
         impl S {
             #[clock(domain = sys)]
             fn tick(self, d: u2) -> S { S { code: decode(d) } }
@@ -238,7 +238,7 @@ fn fn_round_rounds_half_up() {
 #[test]
 fn widening_cast_sign_extends() {
     // An i4 -> i8 widening `wrap` cast sign-extends (value-preserving).
-    let src = "struct S { wide: i8 = 0 }
+    let src = "struct S { pub wide: i8 = 0 }
         impl S { #[clock(domain = sys)] fn tick(self, x: i4) -> S { S { wide: x as i8 wrap } } }";
     let design = compile_str(src).expect("compile");
     let mut sim = Simulator::new(&design.modules[0]);
@@ -365,9 +365,11 @@ fn go_board_example_elaborates() {
     let m = &design.modules[0];
     assert_eq!(m.name, "Top");
     assert_eq!(m.regs.len(), 11);
-    // Two button inputs, eleven observation outputs.
+    // Two button inputs. Only the `pub` fields `seg` and `led` are outputs;
+    // the debouncers, edge detectors, and digits are internal.
     assert_eq!(m.inputs().count(), 2);
-    assert_eq!(m.outputs().count(), 11);
+    let outputs: Vec<_> = m.outputs().map(|p| p.name.as_str()).collect();
+    assert_eq!(outputs, ["seg_0_q", "seg_1_q", "led_q"]);
 }
 
 // --- O1: Option<T> elaboration (DESIGN §6.5 / §9.4) ------------------------
@@ -423,7 +425,7 @@ fn option_leaf_colliding_with_a_sibling_input_field_is_rejected() {
     // (which Verilator rejects), so the elaborator rejects it up front.
     let src = "
         struct In { a: Option<u8>, a_is_some: u1 }
-        struct Top { x: u8 = 0 }
+        struct Top { pub x: u8 = 0 }
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, i: In) -> Top { Top { x: 0 } }

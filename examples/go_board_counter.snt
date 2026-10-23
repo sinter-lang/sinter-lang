@@ -162,8 +162,8 @@ struct Top {
     dec_edge: Edge,
     tens: Digit,
     ones: Digit,
-    seg: [u7; 2] = [0, 0], // registered, active-high; seg[0]=ones, seg[1]=tens
-    led: u4 = 0,
+    pub seg: [u7; 2] = [0, 0], // registered, active-high; seg[0]=ones, seg[1]=tens
+    pub led: u4 = 0,
 }
 
 impl Top {

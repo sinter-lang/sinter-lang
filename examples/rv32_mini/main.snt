@@ -16,6 +16,8 @@
 //                               increments `port_count`; loads read the RAM.
 //
 // Input `run` gates the clock enable: while it is 0 the core holds still.
+// The `pub` fields (pc, halted, and the output port) are the module's output
+// ports; the register file and the rest are internal.
 
 mod alu;
 mod decode;
@@ -30,16 +32,16 @@ enum Phase {
 }
 
 struct Core {
-    pc: u32 = 0,
+    pub pc: u32 = 0,
     regs: [u32; 32] = [0; 32],
     phase: Phase = Phase::Boot,
     // A load in flight: its destination register and RAM word index.
     load_rd: u5 = 0,
     load_word: u8 = 0,
-    halted: u1 = 0,
+    pub halted: u1 = 0,
     // The output port.
-    port: u32 = 0,
-    port_count: u8 = 0,
+    pub port: u32 = 0,
+    pub port_count: u8 = 0,
     imem: rom<u32, 256> = include_hex!("prog.hex"),
     dmem: mem<u32, 256> = 0,
 }

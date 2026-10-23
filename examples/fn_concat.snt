@@ -6,8 +6,8 @@
 // Verilog agree bit-for-bit. Together with bit-slice it is the immediate-
 // assembly primitive: scatter/gather instruction fields into a value.
 struct Top {
-    swap: u8  = 0, // nibble swap: x[3:0] @ x[7:4]  (slice + concat)
-    wide: u12 = 0, // widening join: x @ b  (u8 @ u4 -> u12)
+    pub swap: u8  = 0, // nibble swap: x[3:0] @ x[7:4]  (slice + concat)
+    pub wide: u12 = 0, // widening join: x @ b  (u8 @ u4 -> u12)
 }
 
 impl Top {

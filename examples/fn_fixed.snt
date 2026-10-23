@@ -2,7 +2,7 @@
 // `*` operator and fixed-point erasure to a plain integer in the IR. The result
 // type matches the product width exactly, so no cast is needed.
 struct Prod {
-    p: i8.8 = 0,
+    pub p: i8.8 = 0,
 }
 
 impl Prod {

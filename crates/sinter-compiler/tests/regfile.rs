@@ -83,7 +83,7 @@ fn register_zero_is_hardwired() {
 #[test]
 fn array_has_only_the_set_method() {
     compile_err(
-        "struct S { a: [u8; 4] = [0, 0, 0, 0] }\n\
+        "struct S { pub a: [u8; 4] = [0, 0, 0, 0] }\n\
          impl S { #[clock(domain = sys)] fn tick(self, i: u2) -> (S, u8) { (self, self.a.get(i)) } }",
         "no method `get`",
     );

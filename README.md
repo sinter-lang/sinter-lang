@@ -240,7 +240,7 @@ SINTER_REQUIRE_TOOLS=1 cargo test -p sinter-compiler --test conformance
 // An 8-bit counter with a synchronous enable. The state is a struct; one call
 // of the `#[clock]` method is one clock cycle.
 struct Counter {
-    value: u8 = 0,
+    pub value: u8 = 0, // `pub`: exported as the output port `value_q`
 }
 
 impl Counter {

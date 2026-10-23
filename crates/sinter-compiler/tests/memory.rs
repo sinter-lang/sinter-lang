@@ -95,7 +95,7 @@ fn read_has_static1_latency_and_read_first() {
 fn wider_address_is_masked_to_the_depth() {
     // A `u8` address into a depth-4 memory is masked to 2 bits: 6 -> 2, 10 -> 2.
     let src = "
-        struct M { d: mem<u8, 4> = 0 }
+        struct M { pub d: mem<u8, 4> = 0 }
         impl M {
             #[clock(domain = sys)]
             fn tick(self, we: u1, waddr: u8, wdata: u8, raddr: u8) -> (M, u8) {
@@ -133,7 +133,7 @@ fn discarded_next_commits_no_effect() {
     // A `next()` whose result is dropped (here `self.d` is threaded unchanged)
     // commits no write and schedules no read — the threading is load-bearing.
     let design = compile_str(
-        "struct M { d: mem<u8, 4> = 0 } \
+        "struct M { pub d: mem<u8, 4> = 0 } \
          impl M { #[clock(domain = sys)] fn tick(self, a: u2, v: u8) -> M { \
             let _drop = self.d.next(a, 1, a, v); M { d: self.d } } }",
     )
@@ -154,7 +154,7 @@ fn value_is_a_pure_read_usable_more_than_once() {
     // `value()` is a pure accessor (it does not consume the single read port), so
     // it may be read any number of times.
     let src = "
-        struct M { d: mem<u8, 4> = 0 }
+        struct M { pub d: mem<u8, 4> = 0 }
         impl M {
             #[clock(domain = sys)]
             fn tick(self, a: u2) -> (M, u9) {
@@ -213,7 +213,7 @@ fn conditional_next_is_rejected() {
     // `next()` returns a handle that is threaded into the next-state, so it cannot
     // be selected by an `if`/`match` — gate the write with `we` instead.
     compile_err(
-        "struct R { d: mem<u8, 4> = 0 } \
+        "struct R { pub d: mem<u8, 4> = 0 } \
          impl R { #[clock(domain = sys)] fn tick(self, c: u1, a: u2, v: u8) -> R { \
             let d = if c == 1 { self.d.next(a, 1, a, v) } else { self.d }; R { d: d } } }",
         "must be unconditional",
@@ -224,7 +224,7 @@ fn conditional_next_is_rejected() {
 fn read_data_register_colliding_with_an_input_is_rejected() {
     // The synthesized `<mem>_rdata` register must not clash with an input port.
     compile_err(
-        "struct R { data: mem<u8, 4> = 0 } \
+        "struct R { pub data: mem<u8, 4> = 0 } \
          impl R { #[clock(domain = sys)] fn tick(self, data_rdata: u8, a: u2) -> (R, u8) { \
             let rd = self.data.value(); (R { data: self.data.next(a, 0, 0, 0) }, rd) } }",
         "collides",
@@ -236,7 +236,7 @@ fn the_same_memory_through_both_if_branches_compiles() {
     // Selecting the *same* memory in both arms is a no-op (the `mux` mem arm
     // returns the handle), so a conditional pass-through type-checks and lowers.
     let src = "
-        struct R { d: mem<u8, 4> = 0 }
+        struct R { pub d: mem<u8, 4> = 0 }
         impl R {
             #[clock(domain = sys)]
             fn tick(self, c: u1, a: u2) -> (R, u8) {
@@ -256,7 +256,7 @@ fn nested_struct_memory_with_explicit_zero_default_compiles() {
     // memory flattens with the nested path.
     let src = "
         struct Inner { data: mem<u8, 4> = 0 }
-        struct Outer { inner: Inner = Inner { data: 0 } }
+        struct Outer { pub inner: Inner = Inner { data: 0 } }
         impl Outer {
             #[clock(domain = sys)]
             fn tick(self, a: u2) -> (Outer, u8) {

@@ -14,7 +14,7 @@
 // This producer deliberately ignores `is_full()` (it pushes unconditionally) —
 // legal here precisely because the type accepts loss.
 struct Trace {
-    r: ring<u8, 4>,
+    pub r: ring<u8, 4>,
 }
 
 impl Trace {

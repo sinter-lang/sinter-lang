@@ -32,7 +32,7 @@ use std::collections::HashMap;
 
 use sinter_syntax::ast::{
     AttrValue, BinOp, CastMode, EnumItem, Expr, Func, Item, Param, Pattern, Pos, Program, Stmt,
-    StructItem, Type, TypeRef, UnaryOp,
+    StructItem, Type, TypeRef, UnaryOp, Visibility,
 };
 
 use crate::error::{mask, CompileError};
@@ -606,14 +606,16 @@ impl Elaborator<'_> {
             }
         }
 
-        // Observation outputs: every register, plus any explicit outputs. Each
-        // `_q` name must be fresh in the flat namespace (`seen`).
+        // Observation outputs: the registers of the state struct's `pub`
+        // fields, plus any explicit outputs. Each `_q` name must be fresh in the
+        // flat namespace (`seen`).
+        let exported = self.exported_regs(state_ty, tick.pos)?;
         let mut out_drives = Vec::new();
         // A `#[verilog]` model's registers exist only in simulation, so they get
         // no `_q` port.
         for r in regs
             .iter()
-            .filter(|r| !model_only.contains(r.name.as_str()))
+            .filter(|r| exported.contains(r.name.as_str()) && !model_only.contains(r.name.as_str()))
         {
             let name = format!("{}_q", r.name);
             if seen.insert(name.clone(), ()).is_some() {
@@ -2295,6 +2297,33 @@ impl Elaborator<'_> {
         } else {
             Err(err(&self.ctx, pos, format!("unknown type `{name}`")))
         }
+    }
+
+    /// The registers exported as `<reg>_q` ports: every register leaf (and a
+    /// memory's read-data register) under a `pub` field of the state struct
+    /// `state_ty`. Private fields are internal state.
+    fn exported_regs(
+        &self,
+        state_ty: &str,
+        pos: Pos,
+    ) -> Result<std::collections::HashSet<String>, CompileError> {
+        let s = *self
+            .tables
+            .structs
+            .get(state_ty)
+            .ok_or_else(|| err(&self.ctx, pos, format!("unknown struct `{state_ty}`")))?;
+        let mut out = std::collections::HashSet::new();
+        for f in s.fields.iter().filter(|f| f.vis == Visibility::Public) {
+            let ty = self.resolve(&f.ty, f.pos)?;
+            let mut leaves = Vec::new();
+            self.flatten_ty(&ty, &f.name, &mut leaves);
+            out.extend(leaves.into_iter().map(|(name, _, _)| name));
+            let default = self.default_val(&ty, f.default.as_ref(), f.pos)?;
+            let mut mems = Vec::new();
+            self.collect_mem_decls(&default, &f.name, &mut mems, f.pos)?;
+            out.extend(mems.into_iter().map(|m| format!("{}_rdata", m.name)));
+        }
+        Ok(out)
     }
 
     fn struct_fields(&self, name: &str, pos: Pos) -> Result<Vec<(String, Ty)>, CompileError> {

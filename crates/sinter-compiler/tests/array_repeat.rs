@@ -11,8 +11,8 @@ fn repeat_resets_and_builds_arrays() {
     let design = compile_str(
         "const N: u32 = 4;
          struct S {
-             regs: [u8; 32] = [0; 32],
-             hist: [u4; N] = [0b1010_u4; N],
+             pub regs: [u8; 32] = [0; 32],
+             pub hist: [u4; N] = [0b1010_u4; N],
          }
          impl S {
              #[clock(domain = sys)]
@@ -37,7 +37,7 @@ fn repeat_resets_and_builds_arrays() {
 #[test]
 fn the_length_must_be_a_literal_or_const() {
     let err = compile_str(
-        "struct S { v: [u8; 2] = [0; 2], }
+        "struct S { pub v: [u8; 2] = [0; 2], }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> S { S { v: [x; M] } }
@@ -61,7 +61,7 @@ fn a_const_length_resolves_across_modules() {
         dir.join("main.snt"),
         "mod sizes;
          use root::sizes::WIDTH;
-         struct S { v: [u8; WIDTH] = [9; WIDTH], }
+         struct S { pub v: [u8; WIDTH] = [9; WIDTH], }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u8) -> S { S { v: self.v } }
@@ -79,7 +79,7 @@ fn a_const_length_resolves_across_modules() {
 fn suffixed_literals_fold_in_consts_and_resets() {
     let design = compile_str(
         "const D: u7 = 0b0111111_u7;
-         struct S { v: u4 = 0b1010_u4, w: u7 = D, }
+         struct S { pub v: u4 = 0b1010_u4, pub w: u7 = D, }
          impl S {
              #[clock(domain = sys)]
              fn tick(self, x: u4) -> S { S { v: x, w: self.w } }

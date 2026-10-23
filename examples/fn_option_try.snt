@@ -21,8 +21,8 @@ fn band(x: u8) -> Option<u8> {
 }
 
 struct Top {
-    y: u8 = 0,
-    valid: u1 = 0,
+    pub y: u8 = 0,
+    pub valid: u1 = 0,
 }
 
 impl Top {

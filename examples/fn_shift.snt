@@ -7,9 +7,9 @@
 // unsigned one). Both lower to the IR const-shift nodes already used by
 // fixed-point, so the Rust sim and the emitted Verilog agree bit-for-bit.
 struct Top {
-    hi:   u4  = 0, // top nibble of x       : x >> 4  (u8 >> 4 = u4)
-    quad: u10 = 0, // x * 4                 : x << 2  (u8 << 2 = u10)
-    sar:  i5  = 0, // arithmetic (signed) shift: s >> 3 (i8 >> 3 = i5)
+    pub hi:   u4  = 0, // top nibble of x       : x >> 4  (u8 >> 4 = u4)
+    pub quad: u10 = 0, // x * 4                 : x << 2  (u8 << 2 = u10)
+    pub sar:  i5  = 0, // arithmetic (signed) shift: s >> 3 (i8 >> 3 = i5)
 }
 
 impl Top {

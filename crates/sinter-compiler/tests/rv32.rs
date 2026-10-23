@@ -77,10 +77,12 @@ fn run_core(m: &Module, limit: usize, enable: impl Fn(usize) -> bool) -> (Outcom
             break;
         }
     }
+    // The register file is internal (not `pub`), so read it from the simulator:
+    // the values held during the last cycle, as a `_q` output would show.
     let outcome = Outcome {
         port,
         regs: (0..32)
-            .map(|i| out[&format!("regs_{i}_q")] as u32)
+            .map(|i| sim.signal(&format!("regs_{i}")).unwrap_or(0) as u32)
             .collect(),
         pc: out["pc_q"] as u32,
         halted: out["halted_q"] == 1,

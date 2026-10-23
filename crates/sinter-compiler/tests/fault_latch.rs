@@ -46,7 +46,7 @@ fn off_mode_is_byte_identical_to_the_assert_free_module() {
     let off = verilog::emit_module(&compile_str(SRC).expect("compile off").modules[0]);
     let bare = "\
 struct Mon {
-    last: u8 = 0,
+    pub last: u8 = 0,
 }
 impl Mon {
     #[clock(domain = sys)]
@@ -100,7 +100,7 @@ fn a_multiply_in_a_fault_condition_is_rejected_on_mode() {
     // fine sim-only (`--faults=off`), so the rejection is on-mode only.
     let src = "\
 struct M {
-    v: u8 = 0,
+    pub v: u8 = 0,
 }
 impl M {
     #[clock(domain = sys)]

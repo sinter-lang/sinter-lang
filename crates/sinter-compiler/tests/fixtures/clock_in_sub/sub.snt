@@ -1,4 +1,4 @@
-pub struct Top { x: u1 = 0 }
+pub struct Top { pub x: u1 = 0 }
 impl Top {
     #[clock(domain = sys)]
     fn tick(self) -> Top { self }
