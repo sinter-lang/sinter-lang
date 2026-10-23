@@ -127,6 +127,7 @@ fn parse_module(pair: Pair<Rule>) -> Result<Module, ParseError> {
                     .ok_or_else(|| ParseError::Syntax("malformed clock attribute".into()))?;
                 clock_domain = dom.as_str().to_string();
             }
+            Rule::kw_module => {}
             Rule::ident => name = inner.as_str().to_string(),
             Rule::port_decl => ports.push(parse_port(inner)?),
             Rule::reg_decl => regs.push(parse_reg(inner)?),
@@ -163,6 +164,8 @@ fn parse_port(pair: Pair<Rule>) -> Result<Port, ParseError> {
 fn parse_reg(pair: Pair<Rule>) -> Result<Reg, ParseError> {
     let pos = pos_of(&pair);
     let mut inner = pair.into_inner();
+    // Skip the leading `reg` keyword token.
+    next_pair(&mut inner, "`reg` keyword")?;
     let name = next_ident(&mut inner, "register name")?;
     let ty = parse_type(&next_pair(&mut inner, "register type")?)?;
     let init = parse_expr(next_pair(&mut inner, "register init")?)?;

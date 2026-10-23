@@ -38,6 +38,10 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   silently dropped, so `0_u18` could not be typed, and inside a concat it
   took the width of its context. A suffixed literal in a legacy `module`
   body is now rejected rather than ignored.
+- The legacy surface's keywords `module`, `in`, `out`, and `reg` are now
+  contextual, so a functional-surface field or parameter may be called `out`
+  or `in`. (`reg` is still rejected as a name, because it is a SystemVerilog
+  keyword.)
 - A register or port named after a SystemVerilog keyword (`end`, `begin`,
   …) produced invalid Verilog. It is now a compile error.
 

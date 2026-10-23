@@ -57,6 +57,15 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
     // --- Collect declarations, checking widths and duplicate names. --------
     let mut declared: HashSet<String> = HashSet::new();
     let declare = |chk: &Checker, declared: &mut HashSet<String>, n: &str, pos: Pos| {
+        // Legacy names are emitted verbatim, so a SystemVerilog keyword (now
+        // that `reg` etc. are contextual Sinter keywords) would be invalid.
+        if crate::verilog::is_keyword(n) {
+            return Err(CompileError::semantic(
+                chk.module,
+                pos,
+                format!("`{n}` is a SystemVerilog keyword, so it can't name a signal"),
+            ));
+        }
         if !declared.insert(n.to_string()) {
             return Err(CompileError::semantic(
                 chk.module,

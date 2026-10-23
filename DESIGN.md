@@ -107,6 +107,8 @@ sub-step uses the §2.3 `(new_state, outputs)` form, e.g.
 function is the design's synthesizable top, and is what the physical pin map
 (§7.6) resolves against. The Verilog-style `module { in/out/reg }` construct in
 the current grammar is the legacy MVP surface, slated to migrate onto this form.
+Its keywords (`module`, `in`, `out`, `reg`) are **contextual**: reserved only
+inside the legacy rules, ordinary identifiers on the functional surface.
 
 ### 2.2 Two function colors at the base level
 

@@ -26,16 +26,24 @@ program = { SOI ~ (module | item)* ~ EOI }
 
 // A module optionally declares the clock domain it belongs to. Default: `sys`.
 clock_attr = { "#[" ~ "clock" ~ "(" ~ "domain" ~ "=" ~ ident ~ ")" ~ "]" }
-module     = { clock_attr? ~ "module" ~ ident ~ "{" ~ body_item* ~ "}" }
+module     = { clock_attr? ~ kw_module ~ ident ~ "{" ~ body_item* ~ "}" }
+
+// The legacy surface's own keywords. They are contextual: reserved only where
+// these rules use them, and ordinary identifiers everywhere else (so a
+// functional-surface field may be called `out`).
+kw_module = @{ "module" ~ !(ASCII_ALPHANUMERIC | "_") }
+kw_in     = @{ "in" ~ !(ASCII_ALPHANUMERIC | "_") }
+kw_out    = @{ "out" ~ !(ASCII_ALPHANUMERIC | "_") }
+kw_reg    = @{ "reg" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 body_item = _{ port_decl | reg_decl | let_decl | assign_stmt }
 
 // Interface ports. `in` feeds the cycle; `out` is driven combinationally.
 port_decl = { dir ~ ident ~ ":" ~ ty ~ ";" }
-dir       = { "in" | "out" }
+dir       = { kw_in | kw_out }
 
 // A register: persistent state with a declared width and a reset value.
-reg_decl = { "reg" ~ ident ~ ":" ~ ty ~ "=" ~ expr ~ ";" }
+reg_decl = { kw_reg ~ ident ~ ":" ~ ty ~ "=" ~ expr ~ ";" }
 
 // A combinational wire (single-assignment by construction).
 let_decl = { "let" ~ ident ~ (":" ~ ty)? ~ "=" ~ expr ~ ";" }
@@ -109,7 +117,7 @@ literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 // both surfaces share `ident`. No shipped/legacy program uses them as
 // identifiers, so the goldens and the conformance oracle are unaffected.
 keyword = @{
-    ("module" | "in" | "out" | "reg" | "let" | "if" | "else"
+    ("let" | "if" | "else"
    | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as"
    | "mod" | "use" | "pub" | "pipeline" | "multiplex" | "yield"
    | "Option" | "Some" | "None")
