@@ -736,6 +736,12 @@ impl Elaborator<'_> {
                 pos,
                 "`include_hex!` is only valid as a `rom` field initializer",
             )),
+            // Expanded to an array by `include_expand` before elaboration.
+            Expr::ArrayRepeat { .. } => Err(err(
+                &self.ctx,
+                pos,
+                "internal error: `[value; N]` was not expanded",
+            )),
             Expr::Literal(v) => {
                 let ty = expected
                     .ok_or_else(|| err(&self.ctx, pos, format!("cannot infer type of `{v}`")))?;
@@ -2541,11 +2547,15 @@ impl Elaborator<'_> {
                 .get(name)
                 .map(|(v, _)| mask(*v, ty.width()))
                 .ok_or_else(|| err(&self.ctx, pos, format!("`{name}` is not a constant"))),
-            _ => Err(unsupported(
-                &self.ctx,
-                pos,
-                "reset values beyond literals, arrays, struct/enum defaults, and `const`s",
-            )),
+            other => literal_cast(other)
+                .map(|v| mask(v, ty.width()))
+                .ok_or_else(|| {
+                    unsupported(
+                        &self.ctx,
+                        pos,
+                        "reset values beyond literals, arrays, struct/enum defaults, and `const`s",
+                    )
+                }),
         }
     }
 
@@ -3016,18 +3026,34 @@ fn const_values(program: &Program) -> Result<HashMap<String, (u64, Type)>, Compi
                 Expr::Ident(name) => consts.get(name).map(|(v, _)| *v).ok_or_else(|| {
                     err(&c.name, c.pos, format!("`{name}` is not a known constant"))
                 })?,
-                _ => {
-                    return Err(unsupported(
-                        &c.name,
-                        c.pos,
-                        "const values beyond literals/refs",
-                    ))
-                }
+                other => literal_cast(other).ok_or_else(|| {
+                    unsupported(&c.name, c.pos, "const values beyond literals/refs")
+                })?,
             };
             consts.insert(c.name.clone(), (mask(v, ty.width()), ty));
         }
     }
     Ok(consts)
+}
+
+/// The bit pattern of a cast of a bare literal to a scalar type, such as a
+/// width-suffixed literal (`0b1010_u4`, which the parser desugars to
+/// `0b1010 as u4 wrap`), evaluated with the IR cast semantics.
+fn literal_cast(e: &Expr) -> Option<u64> {
+    let Expr::Cast {
+        expr,
+        ty: TypeRef::Scalar(to),
+        mode,
+    } = e
+    else {
+        return None;
+    };
+    let Expr::Literal(v) = expr.as_ref() else {
+        return None;
+    };
+    let v = u64::try_from(*v).ok()?;
+    let from = Type::Uint(crate::functional::literal_bits(u128::from(v)));
+    Some(crate::eval::apply_cast(v, from, *to, *mode))
 }
 
 fn err(ctx: &str, pos: Pos, msg: impl Into<String>) -> CompileError {

@@ -1,0 +1,7 @@
+// The array repeat `[value; N]` (DESIGN §6.6): N is a literal or a `const`.
+const DEPTH: u32 = 4;
+
+struct S {
+    regs: [u8; 32] = [0; 32],
+    hist: [u4; DEPTH] = [0b1010_u4; DEPTH],
+}

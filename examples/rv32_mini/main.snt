@@ -31,10 +31,7 @@ enum Phase {
 
 struct Core {
     pc: u32 = 0,
-    regs: [u32; 32] = [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
+    regs: [u32; 32] = [0; 32],
     phase: Phase = Phase::Boot,
     // A load in flight: its destination register and RAM word index.
     load_rd: u5 = 0,

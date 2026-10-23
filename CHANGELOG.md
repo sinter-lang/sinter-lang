@@ -13,6 +13,9 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   and `sat` (clamping) modes. Signed compare, arithmetic shift, and sign
   extension of unsigned fields now work, which an RV32 datapath needs.
 - A bare literal under a cast takes the cast's type (`0 as u18 wrap`).
+- **Array repeat** `[value; N]` (DESIGN §6.6), e.g. `[0; 32]`.
+- Array lengths, repeat counts, and memory depths may name a literal-valued
+  `const` (`[u8; DEPTH]`, `mem<u8, DEPTH>`), not only a literal.
 - A `rom` initializer (inline array or `include_hex!`) may hold fewer words
   than the ROM's depth; the rest are zero-filled.
 - **`examples/rv32_mini`**: an RV32I core (DESIGN §9.12 step 5): Harvard,
@@ -38,8 +41,9 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 - Width-suffixed literals (`0b0111111_u7`) now carry their type and are
   range-checked, as DESIGN §6.10 specifies. Previously the suffix was
   silently dropped, so `0_u18` could not be typed, and inside a concat it
-  took the width of its context. A suffixed literal in a legacy `module`
-  body is now rejected rather than ignored.
+  took the width of its context. They also fold as `const` values and
+  register resets. A suffixed literal in a legacy `module` body is now
+  rejected rather than ignored.
 - The legacy surface's keywords `module`, `in`, `out`, and `reg` are now
   contextual, so a functional-surface field or parameter may be called `out`
   or `in`. (`reg` is still rejected as a name, because it is a SystemVerilog

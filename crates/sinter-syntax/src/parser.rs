@@ -283,6 +283,15 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::f_path => parse_fpath(pair),
         Rule::f_group_or_tuple => parse_group_or_tuple(pair),
         Rule::f_array => parse_array(pair),
+        Rule::f_array_repeat => {
+            let mut inner = pair.into_inner();
+            let value = parse_expr(next_pair(&mut inner, "repeated value")?)?;
+            let len = parse_mem_depth(next_pair(&mut inner, "repeat length")?)?;
+            Ok(Expr::ArrayRepeat {
+                value: Box::new(value),
+                len: Box::new(len),
+            })
+        }
         Rule::f_include_hex => {
             let s = first_inner(pair, "include_hex path")?;
             Ok(Expr::IncludeHex(unquote(s.as_str())))

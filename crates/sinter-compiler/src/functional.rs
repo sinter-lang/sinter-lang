@@ -179,6 +179,8 @@ struct Tables {
     methods: HashMap<(String, String), FnSig>,
     funcs: HashMap<String, FnSig>,
     consts: HashMap<String, FType>,
+    /// Literal-valued `const`s, usable as array lengths and memory depths.
+    const_lens: HashMap<String, u64>,
 }
 
 /// Resolve and type-check the functional surface of `program`. A no-op when the
@@ -262,9 +264,18 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
             return Err(sem(name, *pos, format!("duplicate type `{name}`")));
         }
     }
+    let const_lens: HashMap<String, u64> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Const(c) => literal_len(&c.value).map(|v| (c.name.clone(), v)),
+            _ => None,
+        })
+        .collect();
     let known: KnownTypes = KnownTypes {
         structs: struct_names.iter().map(|(n, _)| n.clone()).collect(),
         enums: enum_names.iter().map(|(n, _)| n.clone()).collect(),
+        const_lens: const_lens.clone(),
     };
 
     // Pass 2: resolve struct fields, enum variants, and consts.
@@ -373,6 +384,7 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
         methods,
         funcs,
         consts,
+        const_lens,
     };
     // Re-check const values and struct-field reset values against their declared
     // types now that all tables exist (a value may reference another const). This
@@ -444,6 +456,8 @@ fn mod_reaches(acc: &str, def: &str) -> bool {
 struct KnownTypes {
     structs: std::collections::HashSet<String>,
     enums: std::collections::HashSet<String>,
+    /// Literal-valued `const`s, usable as array lengths and memory depths.
+    const_lens: HashMap<String, u64>,
 }
 
 fn resolve_sig(known: &KnownTypes, f: &Func) -> Result<FnSig, CompileError> {
@@ -526,7 +540,7 @@ fn resolve_type(
         TypeRef::Option(t) => FType::Option(Box::new(resolve_type(known, t, ctx, pos)?)),
         TypeRef::Array { elem, len } => {
             let et = resolve_type(known, elem, ctx, pos)?;
-            let n = const_len(len, "array length", ctx, pos)?;
+            let n = const_len(len, &known.const_lens, "array length", ctx, pos)?;
             FType::Array(Box::new(et), n)
         }
         TypeRef::Tuple(ts) => FType::Tuple(
@@ -559,7 +573,7 @@ fn resolve_type(
                     ),
                 ));
             }
-            let n = const_len(depth, "memory depth", ctx, pos)?;
+            let n = const_len(depth, &known.const_lens, "memory depth", ctx, pos)?;
             if n < 2 || !n.is_power_of_two() {
                 return Err(sem(
                     ctx,
@@ -599,14 +613,47 @@ fn resolve_type(
     Ok(ty)
 }
 
-/// Evaluate an array length: a literal (F1 supports literals only here).
-fn const_len(expr: &Expr, noun: &str, ctx: &str, pos: Pos) -> Result<u64, CompileError> {
+/// Evaluate a constant length or index: a literal, or the name of a
+/// literal-valued `const` (from `consts`).
+fn const_len(
+    expr: &Expr,
+    consts: &HashMap<String, u64>,
+    noun: &str,
+    ctx: &str,
+    pos: Pos,
+) -> Result<u64, CompileError> {
+    if let Expr::Ident(name) = expr {
+        return consts.get(name).copied().ok_or_else(|| {
+            sem(
+                ctx,
+                pos,
+                format!("{noun} `{name}` must be a literal or a literal-valued `const`"),
+            )
+        });
+    }
     match expr {
         Expr::Literal(v) => {
             u64::try_from(*v).map_err(|_| sem(ctx, pos, format!("{noun} `{v}` is too large")))
         }
-        _ => Err(sem(ctx, pos, format!("{noun} must be a literal"))),
+        _ => Err(sem(
+            ctx,
+            pos,
+            format!("{noun} must be a literal or a literal-valued `const`"),
+        )),
     }
+}
+
+/// The value of a literal or width-suffixed literal (desugared to a cast).
+fn literal_len(e: &Expr) -> Option<u64> {
+    let v = match e {
+        Expr::Literal(v) => *v,
+        Expr::Cast { expr, .. } => match expr.as_ref() {
+            Expr::Literal(v) => *v,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    u64::try_from(v).ok()
 }
 
 fn validate_encoding(e: &sinter_syntax::ast::EnumItem) -> Result<(), CompileError> {
@@ -882,6 +929,7 @@ impl Checker<'_> {
         KnownTypes {
             structs: self.tables.structs.keys().cloned().collect(),
             enums: self.tables.enums.keys().cloned().collect(),
+            const_lens: self.tables.const_lens.clone(),
         }
     }
 
@@ -949,6 +997,14 @@ impl Checker<'_> {
                     "`include_hex!` is only valid as a `rom` field initializer",
                 ))
             }
+            // Expanded to an array by `include_expand` before checking.
+            Expr::ArrayRepeat { .. } => {
+                return Err(sem(
+                    ctx,
+                    pos,
+                    "internal error: `[value; N]` was not expanded",
+                ))
+            }
             Expr::Literal(v) => {
                 let want = expected.ok_or_else(|| {
                     sem(ctx, pos, format!("cannot infer a type for literal `{v}`"))
@@ -1008,8 +1064,14 @@ impl Checker<'_> {
                         ),
                     ));
                 };
-                let hi = const_len(hi, "bit-slice high index", ctx, pos)?;
-                let lo = const_len(lo, "bit-slice low index", ctx, pos)?;
+                let hi = const_len(
+                    hi,
+                    &self.tables.const_lens,
+                    "bit-slice high index",
+                    ctx,
+                    pos,
+                )?;
+                let lo = const_len(lo, &self.tables.const_lens, "bit-slice low index", ctx, pos)?;
                 if hi < lo {
                     return Err(sem(
                         ctx,

@@ -271,6 +271,15 @@ pub enum Expr {
     // --- Functional-surface expressions (DESIGN §2.1) ----------------------
     /// A `::`-segmented path, e.g. `Cmd::Up` (≥ 2 segments).
     Path(Vec<String>),
+    /// `[value; len]`: `len` copies of `value` (DESIGN §6.6). `len` is a literal
+    /// or a `const` name; the compiler expands it to an [`Expr::Array`] before
+    /// checking.
+    ArrayRepeat {
+        /// The repeated element.
+        value: Box<Expr>,
+        /// The number of copies.
+        len: Box<Expr>,
+    },
     /// `include_hex!("path")` — the contents of a line-delimited hex file, used to
     /// initialize a `rom` (DESIGN §9.7). Expanded to an [`Expr::Array`] at compile
     /// time (relative to the source directory) before checking/elaboration, so no

@@ -571,7 +571,11 @@ impl Plan {
             },
             Expr::Some(inner) => Expr::Some(Box::new(self.rewrite(inner, seg))),
             Expr::Try(inner) => Expr::Try(Box::new(self.rewrite(inner, seg))),
-            Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => e.clone(),
+            Expr::Literal(_)
+            | Expr::Path(_)
+            | Expr::IncludeHex(_)
+            | Expr::ArrayRepeat { .. }
+            | Expr::None => e.clone(),
             Expr::Unary { op, expr } => Expr::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite(expr, seg)),
@@ -714,7 +718,11 @@ fn collect_idents(e: &Expr, out: &mut Vec<String>) {
         Expr::Ident(x) => out.push(x.clone()),
         Expr::Some(inner) => collect_idents(inner, out),
         Expr::Try(inner) => collect_idents(inner, out),
-        Expr::Literal(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => {}
+        Expr::Literal(_)
+        | Expr::Path(_)
+        | Expr::IncludeHex(_)
+        | Expr::ArrayRepeat { .. }
+        | Expr::None => {}
         Expr::Unary { expr, .. } => collect_idents(expr, out),
         Expr::Binary { lhs, rhs, .. } => {
             collect_idents(lhs, out);
@@ -852,9 +860,12 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
         }
         Expr::Some(inner) => reject_yields_in_expr(inner, ctx),
         Expr::Try(inner) => reject_yields_in_expr(inner, ctx),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => {
-            Ok(())
-        }
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::Path(_)
+        | Expr::IncludeHex(_)
+        | Expr::ArrayRepeat { .. }
+        | Expr::None => Ok(()),
     }
 }
 
@@ -933,9 +944,12 @@ pub(crate) fn reject_shadowing(
             .try_for_each(|i| reject_shadowing(i, defs, ctx)),
         Expr::Some(inner) => reject_shadowing(inner, defs, ctx),
         Expr::Try(inner) => reject_shadowing(inner, defs, ctx),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) | Expr::IncludeHex(_) | Expr::None => {
-            Ok(())
-        }
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::Path(_)
+        | Expr::IncludeHex(_)
+        | Expr::ArrayRepeat { .. }
+        | Expr::None => Ok(()),
     }
 }
 

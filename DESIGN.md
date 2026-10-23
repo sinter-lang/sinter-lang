@@ -526,6 +526,11 @@ explicit in the semantics.
   slot) but **not** deadlock-freedom — the "genuinely hard" liveness tier is
   deferred. The `fifo` / `ring` / `flow` family and the milestone slice are §6.11
   / §9.8.
+- **Array literals** are `[a, b, c]` or the repeat form `[value; N]` (`N`
+  copies of `value`, e.g. `regs: [u32; 32] = [0; 32]`). An array length, a
+  repeat count, or a memory depth is a literal or a literal-valued `const`
+  (`[u8; DEPTH]`). The repeat is expanded to a plain array literal before
+  checking.
 - **Arbitrary integer bit widths** (`iN`/`uN` for arbitrary N).
 
 ### 6.7 Clock domain as a phantom type parameter (flagship safety win)

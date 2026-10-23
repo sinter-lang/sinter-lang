@@ -282,7 +282,7 @@ f_args  = { "(" ~ (f_expr ~ ("," ~ f_expr)* ~ ","?)? ~ ")" }
 // is a first-class expression: a `let` initializer, a match-arm body, a struct
 // field value, a call argument, etc. It starts with `{`, disjoint from every
 // other alternative, so there is no ambiguity.
-f_primary = { f_match | f_if | f_block | f_include_hex | f_some | f_none | f_struct_lit | f_path | f_group_or_tuple | f_array | literal | ident }
+f_primary = { f_match | f_if | f_block | f_include_hex | f_some | f_none | f_struct_lit | f_path | f_group_or_tuple | f_array_repeat | f_array | literal | ident }
 
 // `include_hex!("path")` — embed a file of line-delimited hex words as an array
 // literal at compile time (DESIGN §9.7); used to initialize a `rom`.
@@ -303,3 +303,5 @@ f_path       = { ident ~ ("::" ~ ident)+ }
 // A parenthesized group (one element) or a tuple (two or more).
 f_group_or_tuple = { "(" ~ f_expr ~ ("," ~ f_expr)* ~ ","? ~ ")" }
 f_array          = { "[" ~ (f_expr ~ ("," ~ f_expr)* ~ ","?)? ~ "]" }
+// `[value; N]`: N copies of `value`. N is a literal or a `const` name.
+f_array_repeat   = { "[" ~ f_expr ~ ";" ~ f_mem_depth ~ "]" }

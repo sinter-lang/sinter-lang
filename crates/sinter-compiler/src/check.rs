@@ -309,6 +309,7 @@ impl Checker<'_> {
             | AstExpr::StructLit { .. }
             | AstExpr::Tuple(_)
             | AstExpr::Array(_)
+            | AstExpr::ArrayRepeat { .. }
             | AstExpr::Some(_)
             | AstExpr::None
             | AstExpr::Try(_)
@@ -538,6 +539,7 @@ impl Checker<'_> {
             | AstExpr::StructLit { .. }
             | AstExpr::Tuple(_)
             | AstExpr::Array(_)
+            | AstExpr::ArrayRepeat { .. }
             | AstExpr::Some(_)
             | AstExpr::None
             | AstExpr::Try(_)

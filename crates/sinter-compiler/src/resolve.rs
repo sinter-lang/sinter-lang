@@ -653,6 +653,11 @@ impl Resolver {
                     self.rewrite_expr(x, cur, locals, src)?;
                 }
             }
+            // Both parts may name items (a `const` length, say).
+            Expr::ArrayRepeat { value, len } => {
+                self.rewrite_expr(value, cur, locals, src)?;
+                self.rewrite_expr(len, cur, locals, src)?;
+            }
             Expr::Cast { expr, ty, .. } => {
                 self.rewrite_expr(expr, cur, locals, src)?;
                 self.rewrite_typeref(ty, cur, src)?;

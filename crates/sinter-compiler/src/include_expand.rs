@@ -1,4 +1,5 @@
-//! Compile-time expansion of `include_hex!("path")` (DESIGN §9.7).
+//! Compile-time expansion of `include_hex!("path")` (DESIGN §9.7) and of the
+//! array repeat `[value; N]` (DESIGN §6.6).
 //!
 //! A source-to-source pass, run before checking/elaboration: each
 //! [`Expr::IncludeHex`] is read from disk (relative to the source directory) and
@@ -11,7 +12,12 @@
 //! prefix, with blank lines and `//` comments skipped (a strict subset of the
 //! `$readmemh` format). Size/width are checked later, when the resulting array is
 //! validated against the `rom`'s depth and element type.
+//!
+//! `[value; N]` becomes an array literal of `N` copies of `value`. `N` is a
+//! literal or the name of a `const` whose value is a literal (possibly
+//! width-suffixed), so later passes only ever see ordinary arrays.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use sinter_syntax::ast::{Expr, FieldInit, Item, MatchArm, Program, Stmt};
@@ -26,27 +32,39 @@ use crate::error::CompileError;
 /// Returns a [`CompileError`] if a path cannot be resolved/read or the file is not
 /// valid line-delimited hex.
 pub fn expand_includes(program: &mut Program, base: Option<&Path>) -> Result<(), CompileError> {
+    let consts: HashMap<String, u128> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Const(c) => literal_of(&c.value).map(|v| (c.name.clone(), v)),
+            _ => None,
+        })
+        .collect();
+    let x = Expander {
+        base,
+        consts: &consts,
+    };
     for item in &mut program.items {
         match item {
-            Item::Const(c) => expand_expr(&mut c.value, base, &c.name)?,
+            Item::Const(c) => x.expr(&mut c.value, &c.name)?,
             Item::Struct(s) => {
                 for f in &mut s.fields {
                     if let Some(d) = &mut f.default {
-                        expand_expr(d, base, &s.name)?;
+                        x.expr(d, &s.name)?;
                     }
                 }
             }
             Item::Enum(e) => {
                 for v in &mut e.variants {
                     if let Some(d) = &mut v.discriminant {
-                        expand_expr(d, base, &e.name)?;
+                        x.expr(d, &e.name)?;
                     }
                 }
             }
-            Item::Func(f) => expand_block(&mut f.body, base, &f.name)?,
+            Item::Func(f) => x.block(&mut f.body, &f.name)?,
             Item::Impl(im) => {
                 for m in &mut im.methods {
-                    expand_block(&mut m.body, base, &im.type_name)?;
+                    x.block(&mut m.body, &im.type_name)?;
                 }
             }
             Item::Mod(_) | Item::Use(_) => {}
@@ -55,75 +73,105 @@ pub fn expand_includes(program: &mut Program, base: Option<&Path>) -> Result<(),
     Ok(())
 }
 
-fn expand_block(
-    block: &mut sinter_syntax::ast::Block,
-    base: Option<&Path>,
-    ctx: &str,
-) -> Result<(), CompileError> {
-    for stmt in &mut block.stmts {
-        match stmt {
-            Stmt::Let { value, .. } => expand_expr(value, base, ctx)?,
-            Stmt::Yield { value, .. } => {
-                if let Some(v) = value {
-                    expand_expr(v, base, ctx)?;
-                }
-            }
-            // An `assert!` condition is an ordinary expression; expand any
-            // `include_hex!` in it (unlikely but keeps the walk uniform).
-            Stmt::Assert { cond, .. } => expand_expr(cond, base, ctx)?,
-        }
-    }
-    expand_expr(&mut block.tail, base, ctx)
+/// The expansion walk: the source directory for `include_hex!` and the
+/// literal-valued `const`s a repeat length may name.
+struct Expander<'a> {
+    base: Option<&'a Path>,
+    consts: &'a HashMap<String, u128>,
 }
 
-fn expand_expr(e: &mut Expr, base: Option<&Path>, ctx: &str) -> Result<(), CompileError> {
-    match e {
-        Expr::IncludeHex(path) => {
-            *e = load_hex_array(path, base, ctx)?;
-            Ok(())
+impl Expander<'_> {
+    fn block(&self, block: &mut sinter_syntax::ast::Block, ctx: &str) -> Result<(), CompileError> {
+        let x = self;
+        for stmt in &mut block.stmts {
+            match stmt {
+                Stmt::Let { value, .. } => x.expr(value, ctx)?,
+                Stmt::Yield { value, .. } => {
+                    if let Some(v) = value {
+                        x.expr(v, ctx)?;
+                    }
+                }
+                // An `assert!` condition is an ordinary expression; expand any
+                // `include_hex!` in it (unlikely but keeps the walk uniform).
+                Stmt::Assert { cond, .. } => x.expr(cond, ctx)?,
+            }
         }
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => expand_expr(expr, base, ctx),
-        Expr::Binary { lhs, rhs, .. } => {
-            expand_expr(lhs, base, ctx)?;
-            expand_expr(rhs, base, ctx)
+        x.expr(&mut block.tail, ctx)
+    }
+
+    fn expr(&self, e: &mut Expr, ctx: &str) -> Result<(), CompileError> {
+        let x = self;
+        match e {
+            Expr::IncludeHex(path) => {
+                *e = load_hex_array(path, self.base, ctx)?;
+                Ok(())
+            }
+            Expr::ArrayRepeat { value, len } => {
+                x.expr(value, ctx)?;
+                let n = match len.as_ref() {
+                    Expr::Ident(name) => self.consts.get(name).copied().ok_or_else(|| {
+                        err(
+                            ctx,
+                            format!("`[value; {name}]` needs a `const` with a literal value"),
+                        )
+                    })?,
+                    other => literal_of(other).ok_or_else(|| {
+                        err(
+                            ctx,
+                            "the length in `[value; N]` must be a literal or a `const`",
+                        )
+                    })?,
+                };
+                let n = usize::try_from(n)
+                    .ok()
+                    .filter(|&n| n <= MAX_REPEAT)
+                    .ok_or_else(|| err(ctx, format!("`[value; {n}]` is too long")))?;
+                *e = Expr::Array(vec![(**value).clone(); n]);
+                Ok(())
+            }
+            Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => x.expr(expr, ctx),
+            Expr::Binary { lhs, rhs, .. } => {
+                x.expr(lhs, ctx)?;
+                x.expr(rhs, ctx)
+            }
+            Expr::If { cond, then, els } => {
+                x.expr(cond, ctx)?;
+                x.expr(then, ctx)?;
+                x.expr(els, ctx)
+            }
+            Expr::Field { base: b, .. } => x.expr(b, ctx),
+            Expr::Call { func, args } => {
+                x.expr(func, ctx)?;
+                args.iter_mut().try_for_each(|a| x.expr(a, ctx))
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                x.expr(receiver, ctx)?;
+                args.iter_mut().try_for_each(|a| x.expr(a, ctx))
+            }
+            Expr::Index { base: b, index } => {
+                x.expr(b, ctx)?;
+                x.expr(index, ctx)
+            }
+            Expr::Slice { base: b, hi, lo } => {
+                x.expr(b, ctx)?;
+                x.expr(hi, ctx)?;
+                x.expr(lo, ctx)
+            }
+            Expr::StructLit { fields, .. } => fields
+                .iter_mut()
+                .try_for_each(|FieldInit { value, .. }| x.expr(value, ctx)),
+            Expr::Tuple(items) | Expr::Array(items) => {
+                items.iter_mut().try_for_each(|i| x.expr(i, ctx))
+            }
+            Expr::Match { scrutinee, arms } => {
+                x.expr(scrutinee, ctx)?;
+                arms.iter_mut()
+                    .try_for_each(|MatchArm { body, .. }| x.expr(body, ctx))
+            }
+            Expr::Block(b) => x.block(b, ctx),
+            Expr::Some(inner) | Expr::Try(inner) => x.expr(inner, ctx),
+            Expr::None | Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
         }
-        Expr::If { cond, then, els } => {
-            expand_expr(cond, base, ctx)?;
-            expand_expr(then, base, ctx)?;
-            expand_expr(els, base, ctx)
-        }
-        Expr::Field { base: b, .. } => expand_expr(b, base, ctx),
-        Expr::Call { func, args } => {
-            expand_expr(func, base, ctx)?;
-            args.iter_mut().try_for_each(|a| expand_expr(a, base, ctx))
-        }
-        Expr::MethodCall { receiver, args, .. } => {
-            expand_expr(receiver, base, ctx)?;
-            args.iter_mut().try_for_each(|a| expand_expr(a, base, ctx))
-        }
-        Expr::Index { base: b, index } => {
-            expand_expr(b, base, ctx)?;
-            expand_expr(index, base, ctx)
-        }
-        Expr::Slice { base: b, hi, lo } => {
-            expand_expr(b, base, ctx)?;
-            expand_expr(hi, base, ctx)?;
-            expand_expr(lo, base, ctx)
-        }
-        Expr::StructLit { fields, .. } => fields
-            .iter_mut()
-            .try_for_each(|FieldInit { value, .. }| expand_expr(value, base, ctx)),
-        Expr::Tuple(items) | Expr::Array(items) => {
-            items.iter_mut().try_for_each(|i| expand_expr(i, base, ctx))
-        }
-        Expr::Match { scrutinee, arms } => {
-            expand_expr(scrutinee, base, ctx)?;
-            arms.iter_mut()
-                .try_for_each(|MatchArm { body, .. }| expand_expr(body, base, ctx))
-        }
-        Expr::Block(b) => expand_block(b, base, ctx),
-        Expr::Some(inner) | Expr::Try(inner) => expand_expr(inner, base, ctx),
-        Expr::None | Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
     }
 }
 
@@ -163,6 +211,22 @@ fn load_hex_array(path: &str, base: Option<&Path>, ctx: &str) -> Result<Expr, Co
         words.push(Expr::Literal(v));
     }
     Ok(Expr::Array(words))
+}
+
+/// The longest array a repeat may expand to.
+const MAX_REPEAT: usize = 1 << 16;
+
+/// The value of a literal, or of a width-suffixed literal (which the parser
+/// desugars to a `wrap` cast of one).
+fn literal_of(e: &Expr) -> Option<u128> {
+    match e {
+        Expr::Literal(v) => Some(*v),
+        Expr::Cast { expr, .. } => match expr.as_ref() {
+            Expr::Literal(v) => Some(*v),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn err(ctx: &str, msg: impl Into<String>) -> CompileError {

@@ -1,0 +1,100 @@
+Program {
+    modules: [],
+    items: [
+        Const(
+            ConstItem {
+                vis: Private,
+                name: "DEPTH",
+                ty: Scalar(
+                    Uint(
+                        32,
+                    ),
+                ),
+                value: Literal(
+                    4,
+                ),
+                pos: Pos {
+                    line: 2,
+                    col: 1,
+                },
+            },
+        ),
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "S",
+                fields: [
+                    StructField {
+                        vis: Private,
+                        name: "regs",
+                        ty: Array {
+                            elem: Scalar(
+                                Uint(
+                                    8,
+                                ),
+                            ),
+                            len: Literal(
+                                32,
+                            ),
+                        },
+                        default: Some(
+                            ArrayRepeat {
+                                value: Literal(
+                                    0,
+                                ),
+                                len: Literal(
+                                    32,
+                                ),
+                            },
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 5,
+                        },
+                    },
+                    StructField {
+                        vis: Private,
+                        name: "hist",
+                        ty: Array {
+                            elem: Scalar(
+                                Uint(
+                                    4,
+                                ),
+                            ),
+                            len: Ident(
+                                "DEPTH",
+                            ),
+                        },
+                        default: Some(
+                            ArrayRepeat {
+                                value: Cast {
+                                    expr: Literal(
+                                        10,
+                                    ),
+                                    ty: Scalar(
+                                        Uint(
+                                            4,
+                                        ),
+                                    ),
+                                    mode: Wrap,
+                                },
+                                len: Ident(
+                                    "DEPTH",
+                                ),
+                            },
+                        ),
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}
