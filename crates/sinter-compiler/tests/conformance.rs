@@ -264,16 +264,20 @@ const PROJECTS: &[Project] = &[
         ),
         cycles: CYCLES,
     },
-    // RV32 stepping-stone core (DESIGN §9.12 step 5): three-file project, a
-    // 256-word ROM program (Fibonacci to the output port) and data RAM. The
-    // random `run` input stalls it about half the time, so 1000 cycles cover
-    // the whole program, its halt, and the halted state.
+    // RV32 cores (DESIGN §9.12), sharing examples/rv32's decoder, ALU, and
+    // program (Fibonacci to the output port). `mini` is the fetch-ahead
+    // stepping stone (step 5), `pipe` the 5-stage pipeline with forwarding and
+    // hazard detection (step 6). The random `run` input stalls them about half
+    // the time, so 1000 cycles cover the whole program, its halt, and the
+    // halted state.
     Project {
         name: "rv32_mini",
-        root: concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../examples/rv32_mini/main.snt"
-        ),
+        root: concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/rv32/mini.snt"),
+        cycles: 1000,
+    },
+    Project {
+        name: "rv32_pipe",
+        root: concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/rv32/pipe.snt"),
         cycles: 1000,
     },
 ];

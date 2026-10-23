@@ -52,11 +52,12 @@ Release: tag `v0.2.0` on the "release: v0.2.0" commit.
 
 Build real things and fix what breaks.
 
-- [x] RV32I stepping-stone core (DESIGN §9.12 step 5): `examples/rv32_mini`,
+- [x] RV32I stepping-stone core (DESIGN §9.12 step 5): `examples/rv32/mini.snt`,
       Harvard, word-only loads / stores, checked against a reference ISS
       (`tests/rv32.rs`) and through the oracle.
-- [ ] Full 5-stage RV32I core with hazard detection + forwarding (§9.12
-      step 6).
+- [x] Full 5-stage RV32I core with hazard detection + forwarding (§9.12
+      step 6): `examples/rv32/pipe.snt`, same ISS suite and oracle, 46.7 MHz
+      on ECP5 against the stepping stone's 31.5 MHz.
 - [ ] At least one design outside this repo built with `sinter`.
 - [ ] `go_board_counter` brought up on real hardware (iCE40 via nextpnr).
 - [ ] Compile time and simulator speed are acceptable on the largest design.

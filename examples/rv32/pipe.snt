@@ -1,0 +1,287 @@
+// rv32 pipe: a classic 5-stage pipelined RV32I core (DESIGN §9.12, step 6).
+//
+//   IF   issue the instruction-ROM read for the next pc
+//   ID   decode the fetched word, read the register file
+//   EX   ALU, branch / jump resolution, effective address
+//   MEM  data-RAM access (or the output port)
+//   WB   write the register file
+//
+// Each stage's inputs are explicit pipeline registers: the `id_*`, `ex`,
+// `ma` (memory access), and `wb` fields, each with its own valid bit. The
+// two synchronous RAMs fit the stages naturally: the instruction ROM's read
+// register is the IF/ID boundary, and the data RAM's is the MEM/WB boundary.
+//
+// Hazards:
+//   - results are forwarded to EX from MEM and WB, and WB also bypasses into
+//     the ID-stage register-file read;
+//   - a load followed immediately by a use stalls the pipeline one cycle;
+//   - taken branches and jumps resolve in EX and squash the one younger
+//     instruction in ID (a one-cycle penalty);
+//   - ECALL / EBREAK / an illegal instruction stops issue once it enters EX
+//     and halts the core when it retires.
+//
+// Same ISA subset, memory map, output port, and `run` clock enable as
+// mini.snt; it runs the same programs. `pc` is the pc of the most recently
+// retired instruction, so once halted it is the halting instruction's.
+
+mod alu;
+mod decode;
+
+use root::alu::*;
+use root::decode::*;
+
+// The decoded instruction, as it travels from ID into EX.
+struct ExStage {
+    pc: u32 = 0,
+    rd: u5 = 0,
+    rs1: u5 = 0,
+    rs2: u5 = 0,
+    // Register operands as read (and WB-bypassed) in ID.
+    a: u32 = 0,
+    b: u32 = 0,
+    imm: u32 = 0,
+    f3: u3 = 0,
+    alt: u1 = 0,
+    lui: u1 = 0,
+    auipc: u1 = 0,
+    jal: u1 = 0,
+    jalr: u1 = 0,
+    branch: u1 = 0,
+    load: u1 = 0,
+    store: u1 = 0,
+    reg_op: u1 = 0,
+    writes: u1 = 0,
+    halt: u1 = 0,
+    illegal: u1 = 0,
+}
+
+// An executed instruction in the memory-access stage.
+struct MaStage {
+    pc: u32 = 0,
+    rd: u5 = 0,
+    result: u32 = 0,
+    store_data: u32 = 0,
+    word: u8 = 0,
+    to_port: u1 = 0,
+    load: u1 = 0,
+    store: u1 = 0,
+    writes: u1 = 0,
+    halt: u1 = 0,
+    illegal: u1 = 0,
+}
+
+// An instruction in write-back. A load's value is the data RAM's read
+// register, so `word` is kept to re-read it while the core is stalled.
+struct WbStage {
+    pc: u32 = 0,
+    rd: u5 = 0,
+    result: u32 = 0,
+    word: u8 = 0,
+    load: u1 = 0,
+    writes: u1 = 0,
+    halt: u1 = 0,
+    illegal: u1 = 0,
+}
+
+struct Pipe {
+    pub pc: u32 = 0,
+    pub halted: u1 = 0,
+    pub port: u32 = 0,
+    pub port_count: u8 = 0,
+    regs: [u32; 32] = [0; 32],
+    // ID: the instruction ROM's read register holds the word at `id_pc`.
+    id_pc: u32 = 0,
+    id_valid: u1 = 0,
+    ex: ExStage,
+    ex_valid: u1 = 0,
+    ma: MaStage,
+    ma_valid: u1 = 0,
+    wb: WbStage,
+    wb_valid: u1 = 0,
+    // Set once a halting instruction has entered EX: issue nothing more.
+    draining: u1 = 0,
+    imem: rom<u32, 256> = include_hex!("prog.hex"),
+    dmem: mem<u32, 256> = 0,
+}
+
+impl Pipe {
+    #[clock(domain = sys)]
+    fn tick(self, run: u1) -> Pipe {
+        let go = run == 1 & self.halted == 0;
+
+        // ---- WB --------------------------------------------------------------
+        let wb = self.wb;
+        let wb_live = self.wb_valid == 1;
+        let wb_value = if wb.load == 1 { self.dmem.value() } else { wb.result };
+        // A write-back that lands this cycle (bypassed into ID and EX).
+        let wb_writes = wb_live & wb.writes == 1 & wb.rd != 0;
+        let retire = go & wb_live;
+        assert!(retire == 0 | wb.illegal == 0, "illegal instruction");
+        let regs = if go & wb_writes { self.regs.set(wb.rd, wb_value) } else { self.regs };
+
+        // ---- MEM -------------------------------------------------------------
+        let ma = self.ma;
+        let ma_live = self.ma_valid == 1;
+        let ram_we = go & ma_live & ma.store == 1 & ma.to_port == 0;
+        let to_port = go & ma_live & ma.store == 1 & ma.to_port == 1;
+        // While stalled, re-read WB's word so its load value holds.
+        let raddr = if go { ma.word } else { wb.word };
+
+        // ---- EX --------------------------------------------------------------
+        let ex = self.ex;
+        let ex_live = self.ex_valid == 1;
+        // Forward from MEM (not a load: its value isn't read yet) or WB.
+        let ma_fwd = ma_live & ma.writes == 1 & ma.load == 0 & ma.rd != 0;
+        let a = if ma_fwd & ma.rd == ex.rs1 {
+            ma.result
+        } else if wb_writes & wb.rd == ex.rs1 {
+            wb_value
+        } else {
+            ex.a
+        };
+        let b = if ma_fwd & ma.rd == ex.rs2 {
+            ma.result
+        } else if wb_writes & wb.rd == ex.rs2 {
+            wb_value
+        } else {
+            ex.b
+        };
+        let alu_out = alu(ex.f3, ex.alt, a, if ex.reg_op == 1 { b } else { ex.imm });
+        let ex_pc4 = (ex.pc + 4) as u32 wrap;
+        let ex_result = if ex.lui == 1 {
+            ex.imm
+        } else if ex.auipc == 1 {
+            (ex.pc + ex.imm) as u32 wrap
+        } else if ex.jal == 1 | ex.jalr == 1 {
+            ex_pc4
+        } else {
+            alu_out
+        };
+        let addr = (a + ex.imm) as u32 wrap;
+        let taken = ex.branch == 1 & branch_taken(ex.f3, a, b) == 1;
+        let redirect = ex_live & (ex.jal == 1 | ex.jalr == 1 | taken);
+        let target = if ex.jalr == 1 { addr & 0xFFFF_FFFE } else { (ex.pc + ex.imm) as u32 wrap };
+
+        // ---- ID --------------------------------------------------------------
+        let inst = self.imem.value();
+        let id_live = self.id_valid == 1 & self.draining == 0;
+        let opcode: u7 = inst[6:0];
+        let rd: u5 = inst[11:7];
+        let f3: u3 = inst[14:12];
+        let rs1: u5 = inst[19:15];
+        let rs2: u5 = inst[24:20];
+        let f7: u7 = inst[31:25];
+
+        let is_lui = opcode == OP_LUI;
+        let is_auipc = opcode == OP_AUIPC;
+        let is_jal = opcode == OP_JAL;
+        let is_jalr = opcode == OP_JALR & f3 == 0;
+        let is_branch = opcode == OP_BRANCH & f3 != 2 & f3 != 3;
+        let is_load = opcode == OP_LOAD & f3 == 2;
+        let is_store = opcode == OP_STORE & f3 == 2;
+        let imm_shift_ok = if f3 == 1 { f7 == 0 } else { f7 == 0 | f7 == 0b0100000 };
+        let is_imm = opcode == OP_IMM & (f3 == 0 | f3 == 2 | f3 == 3 | f3 == 4 | f3 == 6 | f3 == 7 | imm_shift_ok);
+        let is_reg = opcode == OP_REG & (f7 == 0 | (f7 == 0b0100000 & (f3 == 0 | f3 == 5)));
+        let is_fence = opcode == OP_FENCE;
+        let is_system = opcode == OP_SYSTEM;
+        let legal = is_lui | is_auipc | is_jal | is_jalr | is_branch | is_load | is_store | is_imm | is_reg | is_fence | is_system;
+
+        let imm = if is_store {
+            imm_s(inst)
+        } else if is_branch {
+            imm_b(inst)
+        } else if is_jal {
+            imm_j(inst)
+        } else if is_lui | is_auipc {
+            imm_u(inst)
+        } else {
+            imm_i(inst)
+        };
+        // Register reads, bypassing this cycle's write-back.
+        let ra = if wb_writes & wb.rd == rs1 { wb_value } else { self.regs[rs1] };
+        let rb = if wb_writes & wb.rd == rs2 { wb_value } else { self.regs[rs2] };
+
+        // Load-use: the instruction in ID reads what the load in EX will load.
+        let load_use = id_live & ex_live & ex.load == 1 & ex.rd != 0 & (ex.rd == rs1 | ex.rd == rs2);
+        let stall = load_use & redirect == 0;
+        let issue = id_live & redirect == 0 & stall == 0;
+
+        // ---- IF --------------------------------------------------------------
+        // The next word for ID: a redirect target, the same word again (stall
+        // or clock disabled), or the next sequential one.
+        let fetch = if go == 0 | stall {
+            self.id_pc
+        } else if redirect {
+            target
+        } else if self.id_valid == 1 {
+            (self.id_pc + 4) as u32 wrap
+        } else {
+            self.id_pc
+        };
+
+        let next_ex = ExStage {
+            pc: self.id_pc,
+            rd: rd,
+            rs1: rs1,
+            rs2: rs2,
+            a: ra,
+            b: rb,
+            imm: imm,
+            f3: f3,
+            alt: if is_reg | (is_imm & f3 == 5) { inst[30:30] } else { 0 },
+            lui: if is_lui { 1 } else { 0 },
+            auipc: if is_auipc { 1 } else { 0 },
+            jal: if is_jal { 1 } else { 0 },
+            jalr: if is_jalr { 1 } else { 0 },
+            branch: if is_branch { 1 } else { 0 },
+            load: if is_load { 1 } else { 0 },
+            store: if is_store { 1 } else { 0 },
+            reg_op: if is_reg { 1 } else { 0 },
+            writes: if is_lui | is_auipc | is_jal | is_jalr | is_imm | is_reg | is_load { 1 } else { 0 },
+            halt: if is_system | legal == 0 { 1 } else { 0 },
+            illegal: if legal == 0 { 1 } else { 0 },
+        };
+        let next_ma = MaStage {
+            pc: ex.pc,
+            rd: ex.rd,
+            result: ex_result,
+            store_data: b,
+            word: addr[9:2],
+            to_port: addr[31:31],
+            load: ex.load,
+            store: ex.store,
+            writes: ex.writes,
+            halt: ex.halt,
+            illegal: ex.illegal,
+        };
+        let next_wb = WbStage {
+            pc: ma.pc,
+            rd: ma.rd,
+            result: ma.result,
+            word: ma.word,
+            load: ma.load,
+            writes: ma.writes,
+            halt: ma.halt,
+            illegal: ma.illegal,
+        };
+
+        Pipe {
+            pc: if retire { wb.pc } else { self.pc },
+            halted: if retire & wb.halt == 1 { 1 } else { self.halted },
+            port: if to_port { ma.store_data } else { self.port },
+            port_count: if to_port { (self.port_count + 1) as u8 wrap } else { self.port_count },
+            regs: regs,
+            id_pc: fetch,
+            id_valid: if go & stall == 0 { 1 } else { self.id_valid },
+            ex: if go & stall == 0 { next_ex } else { self.ex },
+            ex_valid: if go { if issue { 1 } else { 0 } } else { self.ex_valid },
+            ma: if go { next_ma } else { self.ma },
+            ma_valid: if go { if ex_live { 1 } else { 0 } } else { self.ma_valid },
+            wb: if go { next_wb } else { self.wb },
+            wb_valid: if go { if ma_live { 1 } else { 0 } } else { self.wb_valid },
+            draining: if go & issue & (is_system | legal == 0) { 1 } else { self.draining },
+            imem: self.imem.next(fetch[9:2]),
+            dmem: self.dmem.next(raddr, ram_we, ma.word, ma.store_data),
+        }
+    }
+}

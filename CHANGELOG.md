@@ -18,12 +18,14 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   `const` (`[u8; DEPTH]`, `mem<u8, DEPTH>`), not only a literal.
 - A `rom` initializer (inline array or `include_hex!`) may hold fewer words
   than the ROM's depth; the rest are zero-filled.
-- **`examples/rv32_mini`**: an RV32I core (DESIGN §9.12 step 5): Harvard,
-  word-only loads and stores, fetch-ahead with one instruction per cycle.
-  `tests/rv32.rs` adds a small RV32I assembler and a reference instruction-set
-  simulator, and checks the core against it over a suite of test programs,
-  with and without clock-enable stalls. The core is also in the conformance
-  oracle.
+- **`examples/rv32`**: two RV32I cores (DESIGN §9.12) sharing a decoder,
+  ALU, and program. `mini.snt` is a fetch-ahead core (one instruction per
+  cycle). `pipe.snt` is a 5-stage pipeline with forwarding, a load-use stall,
+  and branches resolved in EX; it reaches 46.7 MHz on ECP5 against `mini`'s
+  31.5 MHz. `tests/rv32.rs` adds a small RV32I assembler and a reference
+  instruction-set simulator, and checks both cores against it over a suite
+  of test programs, with and without clock-enable stalls. Both cores are
+  also in the conformance oracle.
 
 ### Changed
 

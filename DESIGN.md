@@ -1462,12 +1462,18 @@ the next:
 5. ✅ **Stepping-stone core:** a single-cycle (or 3-stage) **RV32I subset** — Harvard
    (`rom` + `include_hex!` instruction memory, `mem<u32, N>` data memory), word-only
    `LW`/`SW`, no CSRs/traps — proving the datapath end-to-end. Realized as
-   `examples/rv32_mini`: because both memories have a one-cycle synchronous read,
+   `examples/rv32`: because both memories have a one-cycle synchronous read,
    it fetches ahead (one instruction per cycle, two for a load) rather than being
-   literally single-cycle. `tests/rv32.rs` checks it against a reference ISS over
-   a suite of test programs, and the oracle co-simulates it against its Verilog.
-6. **Capstone:** the full 5-stage core with hazard detection + forwarding (explicit
-   stage-register `struct` fields).
+   literally single-cycle. Realized as `examples/rv32/mini.snt`.
+   `tests/rv32.rs` checks it against a reference ISS over a suite of test
+   programs, and the oracle co-simulates it against its Verilog.
+6. ✅ **Capstone:** the full 5-stage core with hazard detection + forwarding (explicit
+   stage-register `struct` fields). Realized as `examples/rv32/pipe.snt`. It
+   shares the decoder and ALU with step 5, forwards from MEM and WB, stalls once
+   on a load-use pair, and resolves branches in EX. The synchronous RAMs' read
+   registers serve as the IF/ID and MEM/WB boundaries. It passes the same ISS
+   suite and the oracle, and on ECP5 it reaches 46.7 MHz against step 5's
+   31.5 MHz (`examples/rv32/README.md`).
 
 **Note — the pipeline color is the wrong tool.** A CPU pipeline touches shared
 mutable state (register file, forwarding) and reintroduces RAW/WAW/WAR hazards,

@@ -1,4 +1,4 @@
-// rv32_mini: a small RV32I core (DESIGN §9.12, step 5 — the stepping stone).
+// rv32 mini: a small RV32I core (DESIGN §9.12, step 5 — the stepping stone).
 //
 // Harvard: instructions come from a 256-word `rom` loaded from prog.hex
 // (assembled from prog.s), data from a 256-word `mem`. Both are synchronous

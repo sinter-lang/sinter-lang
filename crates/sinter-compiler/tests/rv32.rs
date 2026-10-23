@@ -1,14 +1,15 @@
-//! The RV32 example core (`examples/rv32_mini`, DESIGN §9.12) against a
-//! reference RV32I instruction-set simulator.
+//! The RV32 example cores (`examples/rv32`, DESIGN §9.12) against a reference
+//! RV32I instruction-set simulator.
 //!
 //! Each test program in `tests/rv32/programs/` (and the example's own
-//! `prog.s`) is assembled, run on the reference ISS, and run on the Sinter
-//! core's cycle-accurate simulator, with and without clock-enable stalls. The
-//! output-port writes, final registers, final pc, and halt state must match.
-//! The sim-vs-Verilog half of the check is the conformance oracle
-//! (`conformance.rs`, project `rv32_mini`).
+//! `prog.s`) is assembled, run on the reference ISS, and run on each Sinter
+//! core's cycle-accurate simulator, with and without clock-enable stalls: the
+//! fetch-ahead `mini.snt` and the 5-stage `pipe.snt`. The output-port writes,
+//! final registers, final pc, and halt state must match. The sim-vs-Verilog
+//! half of the check is the conformance oracle (`conformance.rs`, projects
+//! `rv32_mini` and `rv32_pipe`).
 //!
-//! `SINTER_BLESS=1` rewrites `examples/rv32_mini/prog.hex` from `prog.s`.
+//! `SINTER_BLESS=1` rewrites `examples/rv32/prog.hex` from `prog.s`.
 
 #[path = "rv32/asm.rs"]
 mod asm;
@@ -24,7 +25,7 @@ use sinter_compiler::{compile_project, Module};
 use iss::{Iss, WORDS};
 
 fn example_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/rv32_mini")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/rv32")
 }
 
 fn programs_dir() -> PathBuf {
@@ -36,17 +37,21 @@ fn assemble_file(path: &Path) -> Vec<u32> {
     asm::assemble(&src).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
-/// Compile the core with `program` as its instruction ROM.
-fn core_with(name: &str, program: &[u32]) -> Module {
-    let dir = std::env::temp_dir().join(format!("sinter-rv32-{name}"));
+/// The two cores: the root file of each, in `examples/rv32/`.
+const CORES: [&str; 2] = ["mini", "pipe"];
+
+/// Compile `core` (`mini` or `pipe`) with `program` as its instruction ROM.
+fn core_with(core: &str, name: &str, program: &[u32]) -> Module {
+    let dir = std::env::temp_dir().join(format!("sinter-rv32-{core}-{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create dir");
-    for f in ["main.snt", "alu.snt", "decode.snt"] {
+    let root = format!("{core}.snt");
+    for f in [root.as_str(), "alu.snt", "decode.snt"] {
         std::fs::copy(example_dir().join(f), dir.join(f)).expect("copy core source");
     }
     let hex = asm::to_hex(program, WORDS).expect("program fits");
     std::fs::write(dir.join("prog.hex"), hex).expect("write prog.hex");
-    let design = compile_project(&dir.join("main.snt")).expect("core compiles");
+    let design = compile_project(&dir.join(&root)).expect("core compiles");
     design.modules.into_iter().next().expect("one module")
 }
 
@@ -60,13 +65,16 @@ struct Outcome {
 }
 
 /// Run the core until it halts (or `limit` cycles), driving `run` from
-/// `enable(cycle)`. Returns the outcome and how many asserts failed.
-fn run_core(m: &Module, limit: usize, enable: impl Fn(usize) -> bool) -> (Outcome, usize) {
+/// `enable(cycle)`. Returns the outcome, how many asserts failed, and the
+/// cycles taken.
+fn run_core(m: &Module, limit: usize, enable: impl Fn(usize) -> bool) -> (Outcome, usize, usize) {
     let mut sim = Simulator::new(m);
     let mut port = Vec::new();
     let mut count = 0;
     let mut out = HashMap::new();
+    let mut cycles = 0;
     for k in 0..limit {
+        cycles = k + 1;
         let run = u64::from(enable(k));
         out = sim.step(&HashMap::from([("run".to_string(), run)]));
         if out["port_count_q"] != count {
@@ -87,7 +95,7 @@ fn run_core(m: &Module, limit: usize, enable: impl Fn(usize) -> bool) -> (Outcom
         pc: out["pc_q"] as u32,
         halted: out["halted_q"] == 1,
     };
-    (outcome, sim.assert_failures().len())
+    (outcome, sim.assert_failures().len(), cycles)
 }
 
 fn run_iss(program: &[u32]) -> (Outcome, usize) {
@@ -112,20 +120,28 @@ fn stalls(k: usize) -> bool {
 fn check_program(name: &str, program: &[u32]) {
     let (expected, steps) = run_iss(program);
     assert!(expected.halted, "`{name}` does not halt on the ISS");
-    let core = core_with(name, program);
-    // One instruction per cycle, two for a load, plus boot: 3x is ample, and
-    // 6x with stalls.
-    for (label, limit, enable) in [
-        (
-            "free-running",
-            3 * steps + 8,
-            (|_| true) as fn(usize) -> bool,
-        ),
-        ("with stalls", 6 * steps + 16, stalls as fn(usize) -> bool),
-    ] {
-        let (got, asserts) = run_core(&core, limit, enable);
-        assert_eq!(got, expected, "`{name}` ({label}) diverges from the ISS");
-        assert_eq!(asserts, 0, "`{name}` ({label}) failed an assert");
+    for core_name in CORES {
+        let core = core_with(core_name, name, program);
+        // At most ~2 cycles per instruction (a load, a taken branch, or a
+        // load-use stall), plus pipeline fill: 3x is ample, and 6x with stalls.
+        for (label, limit, enable) in [
+            (
+                "free-running",
+                3 * steps + 8,
+                (|_| true) as fn(usize) -> bool,
+            ),
+            ("with stalls", 6 * steps + 16, stalls as fn(usize) -> bool),
+        ] {
+            let (got, asserts, _) = run_core(&core, limit, enable);
+            assert_eq!(
+                got, expected,
+                "`{name}` on `{core_name}` ({label}) diverges from the ISS"
+            );
+            assert_eq!(
+                asserts, 0,
+                "`{name}` on `{core_name}` ({label}) failed an assert"
+            );
+        }
     }
 }
 
@@ -202,7 +218,7 @@ fn example_program_hex_is_current() {
     let current = std::fs::read_to_string(&path).expect("read prog.hex");
     assert!(
         current == hex,
-        "examples/rv32_mini/prog.hex is stale; regenerate with SINTER_BLESS=1"
+        "examples/rv32/prog.hex is stale; regenerate with SINTER_BLESS=1"
     );
 }
 
@@ -245,8 +261,33 @@ fn an_illegal_instruction_halts_and_fails_the_assert() {
     let (expected, steps) = run_iss(&program);
     assert!(expected.halted);
     assert_eq!(expected.port, [7]);
-    let core = core_with("illegal", &program);
-    let (got, asserts) = run_core(&core, 3 * steps + 8, |_| true);
-    assert_eq!(got, expected);
-    assert_eq!(asserts, 1, "the illegal-instruction assert fires once");
+    for core_name in CORES {
+        let core = core_with(core_name, "illegal", &program);
+        let (got, asserts, _) = run_core(&core, 3 * steps + 8, |_| true);
+        assert_eq!(got, expected, "`{core_name}`");
+        assert_eq!(
+            asserts, 1,
+            "`{core_name}`: the illegal-instruction assert fires once"
+        );
+    }
+}
+
+/// The cycle cost of each core on the example program, for the record: the
+/// 5-stage pipeline trades a load-use stall and a one-cycle taken-branch
+/// penalty for a much shorter critical path, so it needs more cycles than the
+/// fetch-ahead core but can be clocked faster.
+#[test]
+fn cycle_counts_are_plausible() {
+    let program = assemble_file(&example_dir().join("prog.s"));
+    let (_, steps) = run_iss(&program);
+    for core_name in CORES {
+        let core = core_with(core_name, "cycles", &program);
+        let (outcome, _, cycles) = run_core(&core, 4 * steps, |_| true);
+        assert!(outcome.halted, "`{core_name}` halts");
+        // At least one cycle per instruction, at most two plus fill.
+        assert!(
+            (steps..=2 * steps + 8).contains(&cycles),
+            "`{core_name}`: {cycles} cycles for {steps} instructions"
+        );
+    }
 }

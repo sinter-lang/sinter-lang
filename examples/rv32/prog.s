@@ -1,4 +1,4 @@
-# rv32_mini's default program: write the first 12 Fibonacci numbers to the
+# The rv32 cores' default program: write the first 12 Fibonacci numbers to the
 # output port, keeping them in RAM, then sum them back from RAM and halt.
 #
 # Assembled to prog.hex by the test suite's assembler:
