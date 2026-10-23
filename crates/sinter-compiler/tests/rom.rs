@@ -64,8 +64,24 @@ fn rom_without_contents_is_rejected() {
 }
 
 #[test]
-fn rom_with_wrong_word_count_is_rejected() {
-    compile_err("struct S { r: rom<u8, 4> = [1, 2, 3] }", "needs 4 words");
+fn rom_with_too_many_words_is_rejected() {
+    compile_err(
+        "struct S { r: rom<u8, 4> = [1, 2, 3, 4, 5] }",
+        "holds 4 words, but its initializer has 5",
+    );
+}
+
+#[test]
+fn a_short_rom_image_is_zero_filled() {
+    let design = compile_str(
+        "struct S { r: rom<u8, 4> = [7, 8] }
+         impl S {
+             #[clock(domain = sys)]
+             fn tick(self, a: u2) -> (S, u8) { (S { r: self.r.next(a) }, self.r.value()) }
+         }",
+    )
+    .expect("compile");
+    assert_eq!(design.modules[0].mems[0].reset, vec![7, 8, 0, 0]);
 }
 
 #[test]
@@ -164,8 +180,17 @@ fn include_hex_with_a_bad_word_is_rejected() {
 }
 
 #[test]
-fn include_hex_with_the_wrong_word_count_is_rejected() {
-    // Three words for a depth-8 rom -> the shared rom size check fires.
-    let err = compile_with_hex(HEX_SNT, "1\n2\n3\n").unwrap_err();
-    assert!(err.contains("needs 8 words"), "got: {err}");
+fn include_hex_with_too_many_words_is_rejected() {
+    // Nine words for a depth-8 rom -> the shared rom size check fires.
+    let err = compile_with_hex(HEX_SNT, "1\n2\n3\n4\n5\n6\n7\n8\n9\n").unwrap_err();
+    assert!(err.contains("holds 8 words"), "got: {err}");
+}
+
+#[test]
+fn a_short_include_hex_image_is_zero_filled() {
+    let design = compile_with_hex(HEX_SNT, "1\n2\n3\n").expect("compiles");
+    assert_eq!(
+        design.modules[0].mems[0].reset,
+        vec![1, 2, 3, 0, 0, 0, 0, 0]
+    );
 }

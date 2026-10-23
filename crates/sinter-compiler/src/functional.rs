@@ -1449,8 +1449,8 @@ impl Checker<'_> {
         Ok(())
     }
 
-    /// Validate `rom` contents: exactly `depth` words, each fitting the element
-    /// type.
+    /// Validate `rom` contents: at most `depth` words (the rest are zero), each
+    /// fitting the element type.
     fn check_rom_init(
         &self,
         items: &[Expr],
@@ -1460,12 +1460,12 @@ impl Checker<'_> {
         ctx: &str,
         pos: Pos,
     ) -> Result<(), CompileError> {
-        if items.len() as u64 != depth {
+        if items.len() as u64 > depth {
             return Err(sem(
                 ctx,
                 pos,
                 format!(
-                    "a `rom` of depth {depth} needs {depth} words, but its initializer has {}",
+                    "a `rom` of depth {depth} holds {depth} words, but its initializer has {}",
                     items.len()
                 ),
             ));

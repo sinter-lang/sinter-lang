@@ -45,8 +45,9 @@ pub fn assemble(src: &str) -> Result<Vec<u32>, String> {
     Ok(words)
 }
 
-/// Format `words` as a `rom` hex file of exactly `depth` lines, padding with
-/// zero words (an illegal instruction, so a runaway pc halts the core).
+/// Format `words` as a `rom` hex file. The compiler zero-fills the rest of a
+/// `depth`-word ROM, and a zero word is an illegal instruction, so a runaway
+/// pc halts the core.
 pub fn to_hex(words: &[u32], depth: usize) -> Result<String, String> {
     if words.len() > depth {
         return Err(format!(
@@ -54,11 +55,7 @@ pub fn to_hex(words: &[u32], depth: usize) -> Result<String, String> {
             words.len()
         ));
     }
-    let mut out = String::new();
-    for i in 0..depth {
-        out.push_str(&format!("{:08x}\n", words.get(i).copied().unwrap_or(0)));
-    }
-    Ok(out)
+    Ok(words.iter().map(|w| format!("{w:08x}\n")).collect())
 }
 
 fn strip_comment(line: &str) -> &str {

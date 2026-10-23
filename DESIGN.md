@@ -1332,8 +1332,8 @@ Settled ROM1 surface and semantics:
   `Static(1)` latency); `next(raddr) -> rom<T, N>` schedules a read and is threaded
   into the tail `Self { m: self.m.next(raddr) }` (the same threading-is-the-driver
   rule — but a ROM has no write to drive, only the read cursor advances).
-- **Contents** are the field's initializer (compile-time const, exactly `N`
-  words):
+- **Contents** are the field's initializer (compile-time const, at most `N`
+  words; a shorter image is zero-filled, so a program image needs no padding):
   - an **inline array literal** `rom<u8, 4> = [1, 2, 3, 4]` (reuses array const-
     folding); or
   - **`include_hex!("file.hex")`** — a file of **line-delimited hex words** (one
@@ -1348,9 +1348,9 @@ Settled ROM1 surface and semantics:
   **self-contained** — there is no runtime `$readmemh`, so synthesis needs no
   external data file or build-system path plumbing, and the §7.4 oracle holds by
   construction (both backends derive from the one parsed vector).
-- **Size / width checks.** The initializer must yield exactly `N` words (a count
-  mismatch is a compile error), and each word must fit `T` (an out-of-range value
-  is a compile error). Addresses, reads, and reset (`<m>_rdata` resets to 0) work
+- **Size / width checks.** The initializer must yield at most `N` words (more is
+  a compile error; fewer are zero-filled), and each word must fit `T` (an
+  out-of-range value is a compile error). Addresses, reads, and reset (`<m>_rdata` resets to 0) work
   exactly as `mem`.
 
 | Phase | Scope | Done when |

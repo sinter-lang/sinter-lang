@@ -2623,7 +2623,9 @@ impl Elaborator<'_> {
                     .scalar()
                     .ok_or_else(|| err(&self.ctx, pos, "memory element is not a scalar"))?;
                 let depth = 1usize << addr_bits;
-                let reset = data.clone().unwrap_or_else(|| vec![0; depth]);
+                // A `rom` image shorter than the depth is zero-filled.
+                let mut reset = data.clone().unwrap_or_default();
+                reset.resize(depth, 0);
                 out.push(ir::Mem {
                     name: path.to_string(),
                     elem_ty,
