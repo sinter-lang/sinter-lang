@@ -43,6 +43,9 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   SystemVerilog keyword). They appear in VCD dumps, and Verilog emits only
   those that hardware reads.
 - A `multiplex fn` can now be combined with `#[verilog]` instances.
+- The reference simulator resolves every signal to a slot once, instead of
+  looking names up each cycle: about 9.5× faster (the 5-stage RV32 core runs
+  ~415k cycles/s, up from ~43k).
 
 ### Fixed
 

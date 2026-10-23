@@ -60,7 +60,10 @@ Build real things and fix what breaks.
       on ECP5 against the stepping stone's 31.5 MHz.
 - [ ] At least one design outside this repo built with `sinter`.
 - [ ] `go_board_counter` brought up on real hardware (iCE40 via nextpnr).
-- [ ] Compile time and simulator speed are acceptable on the largest design.
+- [x] Compile time and simulator speed are acceptable on the largest design:
+      the 5-stage RV32 core compiles in ~5 ms and simulates at ~415k cycles/s.
+      DESIGN §7.2's generated-Rust simulator (compiled, Verilator-class speed)
+      remains future work.
 
 ## v0.4 – v0.6 — the 1.0 language scope
 
