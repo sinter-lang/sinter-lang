@@ -67,21 +67,28 @@ land in a later 0.3.x.
       DESIGN §7.2's generated-Rust simulator (compiled, Verilator-class speed)
       remains future work.
 
-## v0.4 – v0.6 — the 1.0 language scope
+## v0.4 — memories
 
-Implement what 1.0 needs, and explicitly defer the rest.
+The language features the RV32 cores showed were missing.
 
-**Planned for 1.0:**
+- [ ] Multi-read-port `mem` (§9.6), so a 2R1W register file lives in block RAM.
+- [ ] Byte-enable `mem` writes (§9.6), and RV32 byte / halfword loads and
+      stores (`LB` / `LH` / `LBU` / `LHU` / `SB` / `SH`) in both cores.
+- [ ] BRAM-backed deep FIFO (CHAN4, §9.8).
+- [ ] Directional `Sender` / `Receiver` channel views (CHAN3, §6.11).
+
+## v0.5 — clock domains
 
 - [ ] Multiple clock domains: clock-domain types + CDC primitives (§6.7).
-- [ ] Byte-enable / multi-port `mem` (§9.6). RV32 `SB` / `SH` needs it.
-- [ ] BRAM-backed deep FIFO (CHAN3–4, §9.8).
-- [ ] Directional `Sender` / `Receiver` channel views (§6.11).
+
+## v0.6 — cleanup
+
 - [ ] Settle every DESIGN §11 open question that affects syntax (generator
       signature §4.4, parser strategy §7.1).
 - [ ] Remove the legacy `module` surface.
-- [ ] Decide whether 1.0 lifts the 64-bit value limit (the IR and simulator
-      hold every value in a `u64`).
+
+**Decided for 1.0:** values stay at most 64 bits wide (the IR and simulator
+hold every value in a `u64`); wider values are post-1.0.
 
 **Deferred past 1.0** (additive, so they don't break the 1.0 promise):
 
@@ -90,6 +97,7 @@ Implement what 1.0 needs, and explicitly defer the rest.
 - FLT2: per-file fault enables, `assert_static!`, `unreachable!()` proofs.
 - External packages / dependencies (§10).
 - `include_bin!`, inferred-depth ROMs, non-scalar memory elements.
+- Values wider than 64 bits.
 - Native place-and-route (§7.5).
 
 ## v0.9 — release candidate
@@ -103,6 +111,9 @@ Implement what 1.0 needs, and explicitly defer the rest.
       carry no `Pos` today). Do this with the §7.1 parser-strategy decision.
 - [ ] **Diagnostics: multiple errors**: one run reports more than the first
       error.
+- [ ] **Generated-Rust simulator** (DESIGN §7.2): `sinter build --emit rust`
+      producing a compiled, Verilator-class model with a `step()` API for
+      Rust testbenches, cross-checked against the interpreter and the Verilog.
 - [ ] Program fuzzer: generate random valid `.snt` programs and run each
       through the sim-vs-Verilog oracle.
 - [ ] CI against more than one Yosys / Verilator version.
