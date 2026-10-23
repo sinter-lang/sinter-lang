@@ -1318,6 +1318,35 @@ LUTRAM/distributed reads (behind an explicit annotation), explicit
 and non-scalar (struct/enum/fixed-point) element types. (ROM / init-from-data is
 promoted to its own milestone — §9.7.)
 
+#### MEM2 — multiple read ports and byte enables (proposed, v0.4)
+
+Motivated by the RV32 cores (§9.12): their 2R1W register file is 32 × 32
+flip-flops with multiplexed read ports, which is most of each core's logic,
+and `SB` / `SH` need sub-word writes.
+
+- **Read ports are part of the type:** `mem<T, N, R>` and `rom<T, N, R>`,
+  where `R ≥ 1` is the number of read ports (default 1; `mem<T, N>` is
+  unchanged). There is still one write port.
+- **`R > 1` uses arrays.** `next(raddr: [uA; R], we, waddr, wdata)` schedules
+  `R` reads, and `value() -> [T; R]` returns their results (port `i` is
+  `value()[i]`). With `R = 1`, both stay scalar, so every existing design
+  compiles unchanged. Each port has its own read-data register,
+  `<m>_rdata_<i>`, with `Static(1)` latency and `READ_FIRST`.
+- **Byte enables.** `we` may be `u1` (write the whole word) or `uB` with
+  `B = width(T) / 8`, one bit per byte lane (lane `i` is bits `8i+7 .. 8i`).
+  The mask form needs `width(T)` to be a multiple of 8. The simulator and the
+  Verilog both write only the enabled lanes, so Yosys infers a byte-enable
+  block RAM.
+- **Verilog.** Each read port is its own registered array read; the write is
+  one `always_ff` with a per-lane `if`. Yosys maps multiple read ports onto
+  replicated block RAMs, so a 2R1W register file costs two BRAMs and no
+  multiplexers.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **MEM2** | `mem<T, N, R>` / `rom<T, N, R>` read ports, array `raddr` / `value()` for `R > 1`, `uB` byte-enable `we`. The RV32 cores move their register files into a `mem<u32, 32, 2>` and gain `LB` / `LH` / `LBU` / `LHU` / `SB` / `SH`. | Both cores pass the ISS suite (extended with byte / halfword programs) and the oracle, and synthesis maps their register files to block RAM |
+
+
 ### 9.7 ROM — ACTIVE milestone (ROM1)
 
 A **read-only memory** `rom<T, N>` with compile-time contents (DESIGN §6.6/§6.9):
@@ -1389,6 +1418,48 @@ emitter — so CHAN1 is a near-mechanical clone of the landed MEM1 path.
 | **CHAN2** | ✅ **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar, loss policy fixed by the type: one shared queue template parameterized by `pushf` (a `ring` always accepts) and `shiftf` (a full ring retires its oldest word), so `ring` costs no state a `fifo` does not. Plus `flow<T>` (depth-1 newest-wins): `value()` / `next(push)`, no pop, erased to an `Option<T>` register. | ✅ `fn_ring.snt` (overwrite-oldest) + `fn_flow.snt` (newest-wins) oracle-pass bit-for-bit; `fifo` goldens unchanged |
 | **CHAN3** | Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: wiring a non-backpressure-aware producer to a `Sender` is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | a cross-module producer/consumer example oracle-passes; an ungated producer is rejected at type-check |
 | **CHAN4** | Deep **BRAM-backed opaque** `fifo` IR primitive (guarded out of SROA, new side-vector + Verilog emitter + sim path); `front()` becomes a registered `Static(1)` first-word-fall-through read. Gated on depth. | a deep FIFO oracle-passes accounting for the 1-cycle read latency |
+
+#### CHAN3 / CHAN4 surface (proposed, v0.4)
+
+**CHAN4 — deep FIFOs are a storage choice, not a new type.** A `fifo<T, N>`
+whose storage would be large is held in block RAM instead of registers, and
+behaves **identically, cycle for cycle**: the same `front()` / `len()` /
+`is_full()` / `is_empty()` values every cycle and the same `next(push, pop)`
+rules, so no design changes and no new latency appears. The BRAM version
+keeps the oldest word in an output register and prefetches the next one
+through the RAM's registered read, with a bypass for a word written in the
+same cycle it is needed. It is a source-to-source desugar onto `mem<T, N>`
+(the CHAN1 mechanism), so it needs no new IR or backend code.
+
+The compiler uses BRAM when `N ≥ 64`. `#[storage(regs)]` or
+`#[storage(bram)]` on the field overrides that. `ring` and `flow` stay
+register-backed. A differential test drives a register `fifo` and a BRAM
+`fifo` with the same random pushes and pops and requires identical outputs
+every cycle.
+
+**CHAN3 — a push must come from a `Sender`.** `self.q.sender()` returns a
+`Sender<T, N>` view, which exposes `is_full()` and `len()`, and
+`self.q.receiver()` returns a `Receiver<T, N>`, which exposes `front()`,
+`is_empty()`, and `len()`. Both are plain values: they can be passed to
+functions in other modules, but they can't change the queue. The one
+`next()` on the owner still commits.
+
+`fifo::next` takes its push as a **`Push<T>` token**. The only way to make a
+`Push<T>` is `tx.try_push(v)` (a push that fires only when `!tx.is_full()`)
+or `Push::none()`. A producer therefore can't push into a full lossless
+queue; dropping is unrepresentable rather than merely detectable. A `ring`
+(overwrite-oldest) keeps taking a plain `Option<T>`, because dropping is its
+contract. This is a breaking change to `fifo::next`, which takes an
+`Option<T>` today.
+
+```
+fn produce(tx: Sender<u8, 4>, data: u8, ready: u1) -> Push<u8> {
+    if ready == 1 { tx.try_push(data) } else { Push::none() }
+}
+...
+let push = produce(self.q.sender(), data, ready);
+Top { q: self.q.next(push, pop), ... }
+```
 
 Deferred beyond CHAN4: multi-producer/-consumer arbitration (the §5
 `merge_exclusive`/`merge_priority` combinators), almost-full/almost-empty
