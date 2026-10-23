@@ -140,15 +140,6 @@ fn compile_program(
     functional::check_functional(&program)?;
     let mut design = check::check_program(&program)?;
     if let Some(mut module) = elaborate::elaborate(&program)? {
-        if has_multiplex && !module.instances.is_empty() {
-            // The multiply-CSE pass hoists shared wires ahead of every other
-            // wire, which would put one before an instance output it reads.
-            return Err(CompileError::semantic(
-                &module.name,
-                sinter_syntax::ast::Pos::default(),
-                "a `multiplex fn` cannot yet be combined with `#[verilog]` instances (EXT1)",
-            ));
-        }
         // `#[verilog(src = "...")]` paths resolve against the source directory,
         // like `include_hex!` (DESIGN §6.15).
         for inst in &mut module.instances {

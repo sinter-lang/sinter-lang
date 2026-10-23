@@ -192,7 +192,8 @@ pub struct Instance {
     pub outputs: Vec<(String, String)>,
     /// The model's state registers (simulator only).
     pub model_regs: Vec<String>,
-    /// The model's next-state wires (simulator only).
+    /// The model's wires (simulator only): first its next-state wires, one per
+    /// entry of `model_regs` in the same order, then its body's own wires.
     pub model_lets: Vec<String>,
     /// The module's Verilog source file, if given (`src = "..."`), resolved
     /// against the `.snt` file's directory.
@@ -225,6 +226,9 @@ pub struct Let {
     pub name: String,
     /// Type.
     pub ty: Type,
+    /// Fractional bits if the wire carries a fixed-point value (DESIGN §6.1),
+    /// else 0. Documentation only, as for [`Port::frac_bits`].
+    pub frac_bits: u32,
     /// Driving expression.
     pub value: Expr,
 }

@@ -66,9 +66,13 @@ backends. The stages, in order:
    `check::check_program` (legacy `module` + single-driver / acyclicity).
 5. **`elaborate`** — lower the `#[clock]` transition root to an `ir::Module` by
    symbolic inlining + SROA (scalar-replacement of aggregates). Memories/ROMs are
-   held opaque (`ir::Mem`, never SROA-flattened).
+   held opaque (`ir::Mem`, never SROA-flattened). Each non-trivial `let` / call
+   argument becomes a named `ir::Let` wire (`Elaborator::share`), so values are
+   not copied into every use; `ir::Module::lets` stays topologically ordered.
+   The Verilog backend emits only the wires hardware reads (`live_wires`).
 6. **`ir_cse::share_muls`** (multiplex only) — collapse the desugar's shared,
-   SROA-duplicated multiply into one physical multiplier.
+   SROA-duplicated multiply into one physical multiplier, inserting each shared
+   wire just before its first reader.
 
 **Gotcha when adding an AST `Expr` / `Pattern` / `TypeRef` variant:** every stage
 above matches it exhaustively, and so do `pipeline_desugar`, `multiplex_desugar`,

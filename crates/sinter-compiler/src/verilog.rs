@@ -102,6 +102,77 @@ fn emit_ports(out: &mut String, m: &Module) {
     let _ = writeln!(out, ");");
 }
 
+/// The wires the emitted Verilog needs: those reachable from an output, a
+/// register's or memory's next state, or a foreign instance's input.
+///
+/// The simulator evaluates every wire, but a `let` nothing reads (or one read
+/// only by a sim-only `assert!`) would be an unused net, which Verilator's
+/// lint rejects. Wires of a `#[verilog]` model never appear (DESIGN §6.15),
+/// and instance outputs are driven by their instance, so both are skipped.
+fn live_wires(m: &Module) -> std::collections::HashSet<&str> {
+    fn idents<'a>(e: &'a Expr, out: &mut Vec<&'a str>) {
+        match &e.kind {
+            ExprKind::Ident(n) => out.push(n),
+            ExprKind::Literal(_) => {}
+            ExprKind::Unary { expr: x, .. }
+            | ExprKind::Cast { expr: x, .. }
+            | ExprKind::Shl { expr: x, .. }
+            | ExprKind::Shr { expr: x, .. } => idents(x, out),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                idents(lhs, out);
+                idents(rhs, out);
+            }
+            ExprKind::VarShift {
+                expr: x, amount, ..
+            } => {
+                idents(x, out);
+                idents(amount, out);
+            }
+            ExprKind::If { cond, then, els } => {
+                idents(cond, out);
+                idents(then, out);
+                idents(els, out);
+            }
+        }
+    }
+    let mut refs: Vec<&str> = Vec::new();
+    for (_, e) in &m.out_drives {
+        idents(e, &mut refs);
+    }
+    for (r, e) in &m.reg_updates {
+        if !m.is_model_only(r) {
+            idents(e, &mut refs);
+        }
+    }
+    for r in &m.mem_reads {
+        idents(&r.addr, &mut refs);
+    }
+    for w in &m.mem_writes {
+        idents(&w.we, &mut refs);
+        idents(&w.addr, &mut refs);
+        idents(&w.data, &mut refs);
+    }
+    for inst in &m.instances {
+        refs.extend(inst.inputs.iter().map(|(_, w)| w.as_str()));
+        refs.extend(inst.outputs.iter().map(|(_, w)| w.as_str()));
+    }
+    let mut live: std::collections::HashSet<&str> = refs.into_iter().collect();
+    // Wires are topologically ordered, so one backward pass reaches every
+    // wire a live wire reads.
+    for l in m.lets.iter().rev() {
+        if live.contains(l.name.as_str())
+            && !m.is_model_only(&l.name)
+            && m.instance_output(&l.name).is_none()
+        {
+            let mut more = Vec::new();
+            idents(&l.value, &mut more);
+            live.extend(more);
+        }
+    }
+    live.retain(|n| !m.is_model_only(n));
+    live
+}
+
 /// The registers that exist in the emitted Verilog: all but the reference-model
 /// registers of `#[verilog]` instances (DESIGN §6.15), which the real module
 /// replaces.
@@ -123,10 +194,17 @@ fn emit_decls(out: &mut String, m: &Module) {
             let _ = writeln!(out, "    logic {} {}_next;", net_type(r.ty), r.name);
         }
     }
-    if m.lets.iter().any(|l| !m.is_model_only(&l.name)) {
+    let live = live_wires(m);
+    if m.lets.iter().any(|l| live.contains(l.name.as_str())) {
         let _ = writeln!(out, "    // Combinational wires");
-        for l in m.lets.iter().filter(|l| !m.is_model_only(&l.name)) {
-            let _ = writeln!(out, "    logic {} {};", net_type(l.ty), l.name);
+        for l in m.lets.iter().filter(|l| live.contains(l.name.as_str())) {
+            let _ = writeln!(
+                out,
+                "    logic {} {};{}",
+                net_type(l.ty),
+                l.name,
+                q_comment(l.ty, l.frac_bits)
+            );
         }
     }
     if !m.mems.is_empty() {
@@ -190,10 +268,11 @@ fn emit_mem_init(out: &mut String, m: &Module) {
 fn emit_comb(out: &mut String, m: &Module) {
     let _ = writeln!(out, "    // Combinational logic");
     let _ = writeln!(out, "    always_comb begin");
-    // Model-only wires don't exist in Verilog, and an instance output is driven
-    // by its instance rather than by its model's logic.
+    // Model-only and dead wires don't exist in Verilog, and an instance output
+    // is driven by its instance rather than by its model's logic.
+    let live = live_wires(m);
     for l in &m.lets {
-        if !m.is_model_only(&l.name) && m.instance_output(&l.name).is_none() {
+        if live.contains(l.name.as_str()) && m.instance_output(&l.name).is_none() {
             let _ = writeln!(out, "        {} = {};", l.name, expr(&l.value));
         }
     }
@@ -443,6 +522,265 @@ fn signed_lit(v: i128, w: u32) -> String {
     } else {
         format!("-{w}'sd{}", -v)
     }
+}
+
+/// SystemVerilog reserved keywords (IEEE 1800-2017 Annex B). A generated
+/// net may not use one of these as its name.
+const KEYWORDS: &[&str] = &[
+    "accept_on",
+    "alias",
+    "always",
+    "always_comb",
+    "always_ff",
+    "always_latch",
+    "and",
+    "assert",
+    "assign",
+    "assume",
+    "automatic",
+    "before",
+    "begin",
+    "bind",
+    "bins",
+    "binsof",
+    "bit",
+    "break",
+    "buf",
+    "bufif0",
+    "bufif1",
+    "byte",
+    "case",
+    "casex",
+    "casez",
+    "cell",
+    "chandle",
+    "checker",
+    "class",
+    "clocking",
+    "cmos",
+    "config",
+    "const",
+    "constraint",
+    "context",
+    "continue",
+    "cover",
+    "covergroup",
+    "coverpoint",
+    "cross",
+    "deassign",
+    "default",
+    "defparam",
+    "design",
+    "disable",
+    "dist",
+    "do",
+    "edge",
+    "else",
+    "end",
+    "endcase",
+    "endchecker",
+    "endclass",
+    "endclocking",
+    "endconfig",
+    "endfunction",
+    "endgenerate",
+    "endgroup",
+    "endinterface",
+    "endmodule",
+    "endpackage",
+    "endprimitive",
+    "endprogram",
+    "endproperty",
+    "endsequence",
+    "endspecify",
+    "endtable",
+    "endtask",
+    "enum",
+    "event",
+    "eventually",
+    "expect",
+    "export",
+    "extends",
+    "extern",
+    "final",
+    "first_match",
+    "for",
+    "force",
+    "foreach",
+    "forever",
+    "fork",
+    "forkjoin",
+    "function",
+    "generate",
+    "genvar",
+    "global",
+    "highz0",
+    "highz1",
+    "if",
+    "iff",
+    "ifnone",
+    "ignore_bins",
+    "illegal_bins",
+    "implements",
+    "implies",
+    "import",
+    "incdir",
+    "include",
+    "initial",
+    "inout",
+    "input",
+    "inside",
+    "instance",
+    "int",
+    "integer",
+    "interconnect",
+    "interface",
+    "intersect",
+    "join",
+    "join_any",
+    "join_none",
+    "large",
+    "let",
+    "liblist",
+    "library",
+    "local",
+    "localparam",
+    "logic",
+    "longint",
+    "macromodule",
+    "matches",
+    "medium",
+    "modport",
+    "module",
+    "nand",
+    "negedge",
+    "nettype",
+    "new",
+    "nexttime",
+    "nmos",
+    "nor",
+    "noshowcancelled",
+    "not",
+    "notif0",
+    "notif1",
+    "null",
+    "or",
+    "output",
+    "package",
+    "packed",
+    "parameter",
+    "pmos",
+    "posedge",
+    "primitive",
+    "priority",
+    "program",
+    "property",
+    "protected",
+    "pull0",
+    "pull1",
+    "pulldown",
+    "pullup",
+    "pulsestyle_ondetect",
+    "pulsestyle_onevent",
+    "pure",
+    "rand",
+    "randc",
+    "randcase",
+    "randsequence",
+    "rcmos",
+    "real",
+    "realtime",
+    "ref",
+    "reg",
+    "reject_on",
+    "release",
+    "repeat",
+    "restrict",
+    "return",
+    "rnmos",
+    "rpmos",
+    "rtran",
+    "rtranif0",
+    "rtranif1",
+    "s_always",
+    "s_eventually",
+    "s_nexttime",
+    "s_until",
+    "s_until_with",
+    "scalared",
+    "sequence",
+    "shortint",
+    "shortreal",
+    "showcancelled",
+    "signed",
+    "small",
+    "soft",
+    "solve",
+    "specify",
+    "specparam",
+    "static",
+    "string",
+    "strong",
+    "strong0",
+    "strong1",
+    "struct",
+    "super",
+    "supply0",
+    "supply1",
+    "sync_accept_on",
+    "sync_reject_on",
+    "table",
+    "tagged",
+    "task",
+    "this",
+    "throughout",
+    "time",
+    "timeprecision",
+    "timeunit",
+    "tran",
+    "tranif0",
+    "tranif1",
+    "tri",
+    "tri0",
+    "tri1",
+    "triand",
+    "trior",
+    "trireg",
+    "type",
+    "typedef",
+    "union",
+    "unique",
+    "unique0",
+    "unsigned",
+    "until",
+    "until_with",
+    "untyped",
+    "use",
+    "uwire",
+    "var",
+    "vectored",
+    "virtual",
+    "void",
+    "wait",
+    "wait_order",
+    "wand",
+    "weak",
+    "weak0",
+    "weak1",
+    "while",
+    "wildcard",
+    "wire",
+    "with",
+    "within",
+    "wor",
+    "xnor",
+    "xor",
+];
+
+/// Whether `name` is a SystemVerilog keyword, and so unusable as a net name.
+#[must_use]
+pub fn is_keyword(name: &str) -> bool {
+    KEYWORDS.contains(&name)
 }
 
 fn bin_sym(op: BinOp) -> &'static str {

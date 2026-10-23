@@ -105,6 +105,7 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
         lets.push(ir::Let {
             name: l.name.clone(),
             ty,
+            frac_bits: 0,
             value,
         });
     }

@@ -126,6 +126,15 @@ other source. For a board top level that maps ports to physical pins, see the
 `.pins` flow (`sinter build --pins`, DESIGN §7.6), which emits a wrapper
 module and a nextpnr PCF.
 
+## Internal wires
+
+Each non-trivial `let` binding becomes a `logic` wire named after it, so the
+emitted Verilog and VCD waveforms follow the source. A name that is already
+taken, or that is a SystemVerilog keyword, gets a `_w` suffix and, if needed,
+a number (`end_w`, `x_1`). Wire names are not part of the interface and may
+change between releases. Registers and ports must not be named after a
+SystemVerilog keyword; that is a compile error.
+
 ## Foreign module instances
 
 A `#[verilog(module = "...")]` binding (DESIGN §6.15) becomes an instance of

@@ -14,6 +14,17 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   extension of unsigned fields now work, which an RV32 datapath needs.
 - A bare literal under a cast takes the cast's type (`0 as u18 wrap`).
 
+### Changed
+
+- **Shared wires.** Each non-trivial `let` binding and call argument now
+  becomes a named wire, instead of being copied into every use. On the RV32
+  core this shrank the emitted Verilog from 1.2 MB to 28 KB, made Yosys
+  synthesis 28× faster (11.2 s to 0.4 s), and halved simulation time. Wires
+  keep their source names (suffixed with `_w` if the name is taken or is a
+  SystemVerilog keyword). They appear in VCD dumps, and Verilog emits only
+  those that hardware reads.
+- A `multiplex fn` can now be combined with `#[verilog]` instances.
+
 ### Fixed
 
 - Width-suffixed literals (`0b0111111_u7`) now carry their type and are
@@ -21,6 +32,8 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   silently dropped, so `0_u18` could not be typed, and inside a concat it
   took the width of its context. A suffixed literal in a legacy `module`
   body is now rejected rather than ignored.
+- A register or port named after a SystemVerilog keyword (`end`, `begin`,
+  …) produced invalid Verilog. It is now a compile error.
 
 ## [0.2.0] — unreleased
 

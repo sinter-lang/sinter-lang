@@ -28,23 +28,31 @@ pub fn share_muls(m: &mut ir::Module) {
         hoisted: Vec::new(),
         next: 0,
     };
-    // Visit existing combinational wires first (functional designs have none, but
-    // be safe), then register next-states and output drives.
-    for l in &mut m.lets {
-        cse.visit(&mut l.value);
+    // Visit the existing wires in order, placing each wire's newly hoisted
+    // multiplies just before it, so `m.lets` stays topologically ordered (a
+    // hoisted subtree reads only signals defined before the wire it came from).
+    // A `#[verilog]` model's wires are left alone: hoisting out of them would
+    // put model-only logic in the emitted Verilog (DESIGN §6.15).
+    let existing = std::mem::take(&mut m.lets);
+    for mut l in existing {
+        let model = m.is_model_only(&l.name) || m.instance_output(&l.name).is_some();
+        if !model {
+            cse.visit(&mut l.value);
+        }
+        m.lets.append(&mut cse.hoisted);
+        m.lets.push(l);
     }
-    for (_, e) in &mut m.reg_updates {
-        cse.visit(e);
+    for (name, e) in &mut m.reg_updates {
+        if !m.instances.iter().any(|i| i.model_regs.contains(name)) {
+            cse.visit(e);
+        }
     }
     for (_, e) in &mut m.out_drives {
         cse.visit(e);
     }
-    // Hoisted wires are created inner-first (topologically ordered among
-    // themselves) and may be referenced by a rewritten pre-existing `let`, so they
-    // must come BEFORE the existing lets. (Functional elaboration emits no lets, so
-    // today this is just `m.lets = hoisted`.)
-    let existing = std::mem::replace(&mut m.lets, cse.hoisted);
-    m.lets.extend(existing);
+    // Multiplies hoisted from next-states and outputs read only wires, so they
+    // go after every existing wire.
+    m.lets.append(&mut cse.hoisted);
 }
 
 struct Cse {
@@ -111,6 +119,7 @@ impl Cse {
             self.hoisted.push(ir::Let {
                 name: name.clone(),
                 ty: e.ty,
+                frac_bits: 0,
                 value: e.clone(),
             });
             self.seen.insert(k, name.clone());

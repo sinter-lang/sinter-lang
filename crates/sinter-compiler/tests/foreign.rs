@@ -290,3 +290,72 @@ fn a_missing_source_file_is_an_error() {
         "got: {err}"
     );
 }
+
+/// A `multiplex fn` and a `#[verilog]` instance in one design: the multiply-CSE
+/// pass must keep the wires topologically ordered (each reads only signals
+/// defined before it) and leave the model's wires alone.
+#[test]
+fn multiplex_and_foreign_instances_combine() {
+    let m = module(
+        "multiplex fn dot2(a0: u8, b0: u8, a1: u8, b1: u8) -> u17 {
+             let p = (a0 * b0) as u17 wrap;
+             yield;
+             (p + (a1 * b1)) as u17 wrap
+         }
+         #[verilog(module = \"inc17\")]
+         struct Inc {}
+         struct IncOut { y: u17, }
+         impl Inc {
+             fn step(self, x: u17) -> (Inc, IncOut) {
+                 (self, IncOut { y: (x + 1) as u17 wrap })
+             }
+         }
+         struct Top { inst: dot2, inc: Inc, }
+         impl Top {
+             #[clock(domain = sys)]
+             fn tick(self, a: u8, b: u8) -> (Top, u17) {
+                 let (inst2, result, valid) = self.inst.advance(a, b, a, b, 1);
+                 let (_i, o) = self.inc.step(result);
+                 (Top { inst: inst2, inc: self.inc }, o.y)
+             }
+         }",
+    );
+    assert_eq!(m.instances.len(), 1);
+
+    // Topological order: every wire reads only inputs, registers, or earlier wires.
+    let mut defined: std::collections::HashSet<String> = m
+        .ports
+        .iter()
+        .map(|p| p.name.clone())
+        .chain(m.regs.iter().map(|r| r.name.clone()))
+        .collect();
+    for l in &m.lets {
+        let mut stack = vec![&l.value];
+        while let Some(e) = stack.pop() {
+            use sinter_compiler::ir::ExprKind as K;
+            match &e.kind {
+                K::Ident(n) => assert!(
+                    defined.contains(n),
+                    "`{}` reads `{n}` before it is defined",
+                    l.name
+                ),
+                K::Literal(_) => {}
+                K::Unary { expr, .. }
+                | K::Cast { expr, .. }
+                | K::Shl { expr, .. }
+                | K::Shr { expr, .. } => stack.push(expr),
+                K::Binary { lhs, rhs, .. } => stack.extend([&**lhs, &**rhs]),
+                K::VarShift { expr, amount, .. } => stack.extend([&**expr, &**amount]),
+                K::If { cond, then, els } => stack.extend([&**cond, &**then, &**els]),
+            }
+        }
+        defined.insert(l.name.clone());
+    }
+
+    // dot2(3, 3, 3, 3) = 18, which the model increments to 19. The multiplex
+    // result is valid on the second cycle of each two-cycle pass.
+    let mut sim = Simulator::new(&m);
+    let inputs = HashMap::from([("a".to_string(), 3), ("b".to_string(), 3)]);
+    let outs: Vec<u64> = (0..4).map(|_| sim.step(&inputs)["out"]).collect();
+    assert!(outs.contains(&19), "outputs were {outs:?}");
+}

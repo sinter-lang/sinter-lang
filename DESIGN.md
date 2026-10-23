@@ -1477,9 +1477,7 @@ that the oracle checks against the real Verilog (§6.15).
 | **EXT2** | `#(...)` parameter overrides (`#[verilog(params(BAUD_DIV = 217))]`), port renaming, and aggregate ports flattened by the `docs/generated-verilog.md` rules. | A parameterized vendor primitive (for example an iCE40 `SB_MAC16` against `cells_sim.v`) passes the oracle. |
 
 Deferred: clock-generating modules (§6.7); inout / tristate ports; Rust-side
-models; `mem` / `rom` state inside a model; combining `#[verilog]` instances
-with a `multiplex fn` (the multiply-CSE pass orders its shared wires before
-instance outputs).
+models; `mem` / `rom` state inside a model.
 
 ---
 

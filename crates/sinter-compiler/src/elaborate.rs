@@ -192,6 +192,8 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         wires: RefCell::new(Vec::new()),
         instances: RefCell::new(Vec::new()),
         in_model: Cell::new(false),
+        reserved: RefCell::new(std::collections::HashSet::new()),
+        wire_names: RefCell::new(std::collections::HashSet::new()),
     };
     el.build(state_ty, tick, &domain).map(Some)
 }
@@ -290,6 +292,11 @@ struct Elaborator<'p> {
     /// Set while lowering a `#[verilog]` reference model, whose body may not
     /// step another binding (that instance would exist only in simulation).
     in_model: Cell<bool>,
+    /// Names the emitted module already uses (registers and their `_q` / `_next`
+    /// nets, ports, memories, `clk` / `rst_n`), which a shared wire must avoid.
+    reserved: RefCell<std::collections::HashSet<String>>,
+    /// Names given to wires so far.
+    wire_names: RefCell<std::collections::HashSet<String>>,
 }
 
 impl Elaborator<'_> {
@@ -401,7 +408,42 @@ impl Elaborator<'_> {
             }
         }
 
-        // Body: inline `let`s into the environment, then lower the tail.
+        // Registers and ports keep their source names in the emitted Verilog
+        // (they are its interface), so a SystemVerilog keyword can't be one.
+        for name in regs
+            .iter()
+            .map(|r| &r.name)
+            .chain(ports.iter().map(|p| &p.name))
+        {
+            if crate::verilog::is_keyword(name) {
+                return Err(err(
+                    &self.ctx,
+                    tick.pos,
+                    format!(
+                        "`{name}` is a SystemVerilog keyword, so it can't name a register or \
+                         port in the emitted Verilog; rename the field or parameter"
+                    ),
+                ));
+            }
+        }
+
+        // Names the emitted module will use, which shared wires must avoid.
+        {
+            let mut reserved = self.reserved.borrow_mut();
+            for r in &regs {
+                reserved.insert(r.name.clone());
+                reserved.insert(format!("{}_q", r.name));
+                reserved.insert(format!("{}_next", r.name));
+            }
+            reserved.extend(mems.iter().map(|m| m.name.clone()));
+            reserved.extend(ports.iter().map(|p| p.name.clone()));
+            for fixed in ["clk", "rst_n", "fault_code"] {
+                reserved.insert(fixed.to_string());
+            }
+        }
+
+        // Body: lower each `let` (non-trivial values become shared wires), then
+        // the tail.
         for stmt in &tick.body.stmts {
             let (pattern, ty, value, pos) = match stmt {
                 Stmt::Let {
@@ -1373,6 +1415,92 @@ impl Elaborator<'_> {
         )
     }
 
+    /// Give each non-trivial scalar leaf of `v` (bound to `name` by a `let`, a
+    /// pattern, or a call argument) its own named wire, and return `v` with
+    /// those leaves replaced by references to the wires.
+    ///
+    /// Without this, every use of a binding would copy its whole expression
+    /// tree into the IR: a register-file read used three times would be three
+    /// 32-way mux trees in the Verilog and three evaluations per cycle in the
+    /// simulator. Literals and plain references are already cheap and are left
+    /// alone, as are memory handles.
+    fn share(&self, name: &str, v: Val) -> Val {
+        let leaf = |path: &str, e: ir::Expr, frac: u32| {
+            if matches!(e.kind, ir::ExprKind::Literal(_) | ir::ExprKind::Ident(_)) {
+                return e;
+            }
+            let wire = self.wire_name(path);
+            let ty = e.ty;
+            self.wires.borrow_mut().push(ir::Let {
+                name: wire.clone(),
+                ty,
+                frac_bits: frac,
+                value: e,
+            });
+            typed(ir::ExprKind::Ident(wire), ty)
+        };
+        match v {
+            Val::Scalar(e, f) => Val::Scalar(leaf(name, e, f), f),
+            Val::Enum(n, e) => Val::Enum(n, leaf(name, e, 0)),
+            Val::Struct(n, fields) => Val::Struct(
+                n,
+                fields
+                    .into_iter()
+                    .map(|(f, fv)| {
+                        let fv = self.share(&join(name, &f), fv);
+                        (f, fv)
+                    })
+                    .collect(),
+            ),
+            Val::Tuple(items) => Val::Tuple(
+                items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, it)| self.share(&join(name, &i.to_string()), it))
+                    .collect(),
+            ),
+            Val::Array(items) => Val::Array(
+                items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, it)| self.share(&join(name, &i.to_string()), it))
+                    .collect(),
+            ),
+            Val::Option { is_some, payload } => Val::Option {
+                is_some: leaf(&join(name, "is_some"), is_some, 0),
+                payload: Box::new(self.share(&join(name, "payload"), *payload)),
+            },
+            Val::Mem { .. } => v,
+        }
+    }
+
+    /// A fresh wire name based on the source name `base`. A name that a
+    /// generated net could use (a register's, a port's, an `out*` or `u_*`
+    /// port wire, a `__` internal) or that is a SystemVerilog keyword gets a
+    /// `_w` suffix, then a numeric suffix makes it unique.
+    fn wire_name(&self, base: &str) -> String {
+        let generated = base == "out"
+            || base.starts_with("out_")
+            || base.starts_with("u_")
+            || base.starts_with("__")
+            || crate::verilog::is_keyword(base);
+        let reserved = self.reserved.borrow();
+        let mut used = self.wire_names.borrow_mut();
+        let stem = if generated || reserved.contains(base) {
+            format!("{base}_w")
+        } else {
+            base.to_string()
+        };
+        let mut name = stem.clone();
+        let mut n = 1;
+        while used.contains(&name) || reserved.contains(&name) {
+            name = format!("{stem}_{n}");
+            n += 1;
+        }
+        used.insert(name.clone());
+        name
+    }
+
     /// Every stateful `#[verilog]` binding in state type `ty`, as `(flattened
     /// path, model struct)`. Each one must be stepped every cycle.
     fn binding_fields(
@@ -1545,9 +1673,11 @@ impl Elaborator<'_> {
             };
             let wire = format!("{inst}_{name}");
             let ty = e.ty;
+            self.wire_names.borrow_mut().insert(wire.clone());
             self.wires.borrow_mut().push(ir::Let {
                 name: wire.clone(),
                 ty,
+                frac_bits: frac,
                 value: e,
             });
             inner.insert(
@@ -1557,7 +1687,9 @@ impl Elaborator<'_> {
             inputs.push((name.clone(), wire));
         }
 
-        // The model itself, inlined (and so simulated) like any method.
+        // The model itself, inlined (and so simulated) like any method. Wires
+        // its body creates are part of the model, so simulation-only.
+        let first_model_wire = self.wires.borrow().len();
         self.in_model.set(true);
         let result = self.lower_body(
             &inner,
@@ -1566,6 +1698,10 @@ impl Elaborator<'_> {
             depth + 1,
         );
         self.in_model.set(false);
+        let body_wires: Vec<String> = self.wires.borrow()[first_model_wire..]
+            .iter()
+            .map(|l| l.name.clone())
+            .collect();
         let Val::Tuple(mut parts) = result? else {
             return Err(err(
                 &self.ctx,
@@ -1612,9 +1748,11 @@ impl Elaborator<'_> {
             };
             let wire = format!("{inst}_{port}");
             let ty = e.ty;
+            self.wire_names.borrow_mut().insert(wire.clone());
             self.wires.borrow_mut().push(ir::Let {
                 name: wire.clone(),
                 ty,
+                frac_bits: frac,
                 value: e,
             });
             out_fields.push((
@@ -1629,20 +1767,24 @@ impl Elaborator<'_> {
         let mut next = Vec::new();
         flatten_leaves(&state, "", &mut next);
         let mut model_regs = Vec::new();
+        // Next-state wires first: `build` pairs them with `model_regs` by index.
         let mut model_lets = Vec::new();
         let mut renamed = HashMap::new();
-        for (leaf, e, _) in next {
+        for (leaf, e, frac) in next {
             let wire = format!("{inst}__next_{leaf}");
             renamed.insert(leaf.clone(), wire.clone());
+            self.wire_names.borrow_mut().insert(wire.clone());
             self.wires.borrow_mut().push(ir::Let {
                 name: wire.clone(),
                 ty: e.ty,
+                frac_bits: frac,
                 value: e,
             });
             model_regs.push(join(&path, &leaf));
             model_lets.push(wire);
         }
         let state = rename_leaves(&state, "", &renamed);
+        model_lets.extend(body_wires);
 
         self.instances.borrow_mut().push(ir::Instance {
             name: inst,
@@ -1788,10 +1930,8 @@ impl Elaborator<'_> {
                         .next()
                         .ok_or_else(|| err(&self.ctx, pos, "too few arguments"))?;
                     let pty = self.resolve(ty, *ppos)?;
-                    inner.insert(
-                        name.clone(),
-                        self.lower(caller, arg, Some(&pty), depth, pos)?,
-                    );
+                    let v = self.lower(caller, arg, Some(&pty), depth, pos)?;
+                    inner.insert(name.clone(), self.share(name, v));
                 }
             }
         }
@@ -2065,6 +2205,7 @@ impl Elaborator<'_> {
         match pat {
             Pattern::Wildcard => Ok(()),
             Pattern::Binding(name) => {
+                let v = self.share(name, v);
                 env.insert(name.clone(), v);
                 Ok(())
             }
