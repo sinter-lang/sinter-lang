@@ -50,7 +50,9 @@ Release: tag `v0.2.0` on the "release: v0.2.0" commit.
 
 ## v0.3 — dogfood
 
-Build real things and fix what breaks.
+Build real things and fix what breaks. Release: tag `v0.3.0` on the "release:
+v0.3.0" commit. The two unchecked items below need hands-on work and can
+land in a later 0.3.x.
 
 - [x] RV32I stepping-stone core (DESIGN §9.12 step 5): `examples/rv32/mini.snt`,
       Harvard, word-only loads / stores, checked against a reference ISS
