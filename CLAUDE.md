@@ -209,6 +209,12 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   `foreign.rs` parses the binding and rejects any non-model logic that reads
   model state. The oracle adds `src` to the Yosys / Verilator runs, so it checks
   the model against the real module (`examples/verilog_acc/`).
+- **RV32 core** (§9.12 step 5) — `examples/rv32_mini/` (three-file project:
+  decode / ALU / fetch-ahead core). `tests/rv32.rs` carries a test-only RV32I
+  assembler (`tests/rv32/asm.rs`) and reference ISS (`tests/rv32/iss.rs`); test
+  programs live in `tests/rv32/programs/*.s`. Regenerate the example's
+  `prog.hex` from `prog.s` with `SINTER_BLESS=1 cargo test -p sinter-compiler
+  --test rv32`.
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
@@ -220,7 +226,7 @@ directional `Sender`/`Receiver` views + deep BRAM-backed FIFO (CHAN3–4, §6.11
 `#[faults(mode)]` attribute or build-time file list; FLT1b ships the global knob
 only) and the `assert_static!` / `unreachable!()` SMT-prover bucket;
 byte-enable / multi-port `mem` (the BRAM register-file / sub-word-store axis, §9.6);
-the RV32 flagship soft core that composes them (§9.12); elastic `Stream<T>`
+the 5-stage RV32 capstone core (§9.12 step 6); elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),
 clock-domain phantom types (§6.7), multi-port / dual-clock / non-scalar-element
 memories, `include_bin!` and inferred-depth ROMs, and data-dependent (`Bounded` /

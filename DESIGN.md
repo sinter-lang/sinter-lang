@@ -1448,9 +1448,13 @@ the next:
 2. **§9.11 REG1** — the `x0`-hardwired 2-read/1-write register file.
 3. **§9.8 CHAN1** — a skid buffer between stages (also generally useful).
 4. **§9.9 FLT1** — illegal-instruction / misaligned-access faults.
-5. **Stepping-stone core:** a single-cycle (or 3-stage) **RV32I subset** — Harvard
+5. ✅ **Stepping-stone core:** a single-cycle (or 3-stage) **RV32I subset** — Harvard
    (`rom` + `include_hex!` instruction memory, `mem<u32, N>` data memory), word-only
-   `LW`/`SW`, no CSRs/traps — proving the datapath end-to-end.
+   `LW`/`SW`, no CSRs/traps — proving the datapath end-to-end. Realized as
+   `examples/rv32_mini`: because both memories have a one-cycle synchronous read,
+   it fetches ahead (one instruction per cycle, two for a load) rather than being
+   literally single-cycle. `tests/rv32.rs` checks it against a reference ISS over
+   a suite of test programs, and the oracle co-simulates it against its Verilog.
 6. **Capstone:** the full 5-stage core with hazard detection + forwarding (explicit
    stage-register `struct` fields).
 

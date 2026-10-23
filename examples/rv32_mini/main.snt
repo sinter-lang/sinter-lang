@@ -1,0 +1,161 @@
+// rv32_mini: a small RV32I core (DESIGN §9.12, step 5 — the stepping stone).
+//
+// Harvard: instructions come from a 256-word `rom` loaded from prog.hex
+// (assembled from prog.s), data from a 256-word `mem`. Both are synchronous
+// block RAMs with a one-cycle read, so the core fetches ahead: while it
+// executes the instruction at `pc`, it already reads the next one. Every
+// instruction takes one cycle except a load, which takes two.
+//
+// Supported: all of RV32I except byte / halfword loads and stores (LW / SW
+// only), FENCE (a no-op), and CSRs. ECALL / EBREAK halt the core; so does an
+// illegal instruction, which also fails a sim-only assertion.
+//
+// Memory map (data side):
+//   0x0000_0000 - 0x0000_03FF   data RAM (word-addressed by addr[9:2])
+//   bit 31 set                  output port: a store sets `port` and
+//                               increments `port_count`; loads read the RAM.
+//
+// Input `run` gates the clock enable: while it is 0 the core holds still.
+
+mod alu;
+mod decode;
+
+use root::alu::*;
+use root::decode::*;
+
+enum Phase {
+    Boot, // first cycle after reset: fetch pc 0
+    Run,  // execute the fetched instruction
+    Load, // second cycle of a load: write the loaded word back
+}
+
+struct Core {
+    pc: u32 = 0,
+    regs: [u32; 32] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    phase: Phase = Phase::Boot,
+    // A load in flight: its destination register and RAM word index.
+    load_rd: u5 = 0,
+    load_word: u8 = 0,
+    halted: u1 = 0,
+    // The output port.
+    port: u32 = 0,
+    port_count: u8 = 0,
+    imem: rom<u32, 256> = include_hex!("prog.hex"),
+    dmem: mem<u32, 256> = 0,
+}
+
+impl Core {
+    #[clock(domain = sys)]
+    fn tick(self, run: u1) -> Core {
+        let go = run == 1 & self.halted == 0;
+        let running = self.phase == Phase::Run;
+
+        // Decode the instruction fetched last cycle.
+        let inst = self.imem.value();
+        let opcode: u7 = inst[6:0];
+        let rd: u5 = inst[11:7];
+        let f3: u3 = inst[14:12];
+        let rs1: u5 = inst[19:15];
+        let rs2: u5 = inst[24:20];
+        let f7: u7 = inst[31:25];
+        let a = self.regs[rs1];
+        let b = self.regs[rs2];
+
+        let is_lui = opcode == OP_LUI;
+        let is_auipc = opcode == OP_AUIPC;
+        let is_jal = opcode == OP_JAL;
+        let is_jalr = opcode == OP_JALR & f3 == 0;
+        let is_branch = opcode == OP_BRANCH & f3 != 2 & f3 != 3;
+        let is_load = opcode == OP_LOAD & f3 == 2;
+        let is_store = opcode == OP_STORE & f3 == 2;
+        // OP-IMM shifts need a valid funct7: 0 (SLLI / SRLI) or 0x20 (SRAI).
+        let imm_shift_ok = if f3 == 1 { f7 == 0 } else { f7 == 0 | f7 == 0b0100000 };
+        let is_imm = opcode == OP_IMM & (f3 == 0 | f3 == 2 | f3 == 3 | f3 == 4 | f3 == 6 | f3 == 7 | imm_shift_ok);
+        // OP: funct7 0x20 only for SUB and SRA.
+        let is_reg = opcode == OP_REG & (f7 == 0 | (f7 == 0b0100000 & (f3 == 0 | f3 == 5)));
+        let is_fence = opcode == OP_FENCE;
+        let is_system = opcode == OP_SYSTEM;
+        let legal = is_lui | is_auipc | is_jal | is_jalr | is_branch | is_load | is_store | is_imm | is_reg | is_fence | is_system;
+
+        // The core executes when running and not stalled.
+        let exec = go & running;
+        assert!(exec == 0 | legal == 1, "illegal instruction");
+
+        // ALU: register-register, or register-immediate (only SRAI uses funct7).
+        let alt: u1 = if is_reg { inst[30:30] } else { if f3 == 5 { inst[30:30] } else { 0 } };
+        let alu_b = if is_reg { b } else { imm_i(inst) };
+        let result = alu(f3, alt, a, alu_b);
+
+        let pc4 = (self.pc + 4) as u32 wrap;
+        let taken = is_branch & branch_taken(f3, a, b) == 1;
+        let next_pc = if is_jal {
+            (self.pc + imm_j(inst)) as u32 wrap
+        } else if is_jalr {
+            ((a + imm_i(inst)) as u32 wrap) & 0xFFFF_FFFE
+        } else if taken {
+            (self.pc + imm_b(inst)) as u32 wrap
+        } else if is_system | legal == 0 {
+            self.pc
+        } else {
+            pc4
+        };
+
+        // Register write-back: this cycle's result, or a completing load.
+        let wb_value = if is_lui {
+            imm_u(inst)
+        } else if is_auipc {
+            (self.pc + imm_u(inst)) as u32 wrap
+        } else if is_jal | is_jalr {
+            pc4
+        } else {
+            result
+        };
+        let writes_rd = is_lui | is_auipc | is_jal | is_jalr | is_imm | is_reg;
+        let finishing_load = go & self.phase == Phase::Load;
+        let wen = (exec & writes_rd) | finishing_load;
+        let waddr = if finishing_load { self.load_rd } else { rd };
+        let wdata = if finishing_load { self.dmem.value() } else { wb_value };
+        let regs = if wen & waddr != 0 { self.regs.set(waddr, wdata) } else { self.regs };
+
+        // Data memory: the effective address of a load or store.
+        let addr = if is_store { (a + imm_s(inst)) as u32 wrap } else { (a + imm_i(inst)) as u32 wrap };
+        let word: u8 = addr[9:2];
+        let to_port = addr[31:31] == 1;
+        let do_load = exec & is_load;
+        let do_store = exec & is_store;
+        let ram_we = do_store & to_port == 0;
+        // Re-read the in-flight load's word while stalled in `Load`.
+        let raddr = if do_load { word } else { self.load_word };
+
+        let pc = if exec { next_pc } else { self.pc };
+        // Fetch ahead: read the instruction at the next pc (or keep the current
+        // one while stalled, halted, booting, or finishing a load).
+        let fetch: u8 = pc[9:2];
+
+        let phase = if go == 0 {
+            self.phase
+        } else if do_load {
+            Phase::Load
+        } else {
+            Phase::Run
+        };
+        let halt = exec & (is_system | legal == 0);
+        let wrote_port = do_store & to_port;
+
+        Core {
+            pc: pc,
+            regs: regs,
+            phase: phase,
+            load_rd: if do_load { rd } else { self.load_rd },
+            load_word: raddr,
+            halted: if halt { 1 } else { self.halted },
+            port: if wrote_port { b } else { self.port },
+            port_count: if wrote_port { (self.port_count + 1) as u8 wrap } else { self.port_count },
+            imem: self.imem.next(fetch),
+            dmem: self.dmem.next(raddr, ram_we, word, b),
+        }
+    }
+}

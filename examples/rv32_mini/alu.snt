@@ -1,0 +1,32 @@
+// The RV32I integer ALU and branch comparator.
+
+// `f3` is funct3; `alt` selects SUB (for ADD) or SRA (for SRL).
+pub fn alu(f3: u3, alt: u1, a: u32, b: u32) -> u32 {
+    let sh: u5 = b[4:0];
+    match f3 {
+        0 => if alt == 1 { (a - b) as u32 wrap } else { (a + b) as u32 wrap },
+        1 => a << sh,
+        2 => if (a as i32 wrap) < (b as i32 wrap) { 1 } else { 0 },
+        3 => if a < b { 1 } else { 0 },
+        4 => a ^ b,
+        5 => if alt == 1 { ((a as i32 wrap) >> sh) as u32 wrap } else { a >> sh },
+        6 => a | b,
+        _ => a & b,
+    }
+}
+
+// Whether a branch with funct3 `f3` is taken. funct3 2 and 3 are illegal
+// (the decoder rejects them), so they never branch.
+pub fn branch_taken(f3: u3, a: u32, b: u32) -> u1 {
+    let sa = a as i32 wrap;
+    let sb = b as i32 wrap;
+    match f3 {
+        0 => a == b,
+        1 => a != b,
+        4 => sa < sb,
+        5 => sa >= sb,
+        6 => a < b,
+        7 => a >= b,
+        _ => 0,
+    }
+}

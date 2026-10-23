@@ -52,8 +52,9 @@ Release: tag `v0.2.0` on the "release: v0.2.0" commit.
 
 Build real things and fix what breaks.
 
-- [ ] RV32I stepping-stone core (DESIGN §9.12 step 5): single-cycle, Harvard,
-      word-only loads / stores.
+- [x] RV32I stepping-stone core (DESIGN §9.12 step 5): `examples/rv32_mini`,
+      Harvard, word-only loads / stores, checked against a reference ISS
+      (`tests/rv32.rs`) and through the oracle.
 - [ ] Full 5-stage RV32I core with hazard detection + forwarding (§9.12
       step 6).
 - [ ] At least one design outside this repo built with `sinter`.

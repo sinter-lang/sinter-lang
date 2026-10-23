@@ -13,6 +13,12 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   and `sat` (clamping) modes. Signed compare, arithmetic shift, and sign
   extension of unsigned fields now work, which an RV32 datapath needs.
 - A bare literal under a cast takes the cast's type (`0 as u18 wrap`).
+- **`examples/rv32_mini`**: an RV32I core (DESIGN §9.12 step 5): Harvard,
+  word-only loads and stores, fetch-ahead with one instruction per cycle.
+  `tests/rv32.rs` adds a small RV32I assembler and a reference instruction-set
+  simulator, and checks the core against it over a suite of test programs,
+  with and without clock-enable stalls. The core is also in the conformance
+  oracle.
 
 ### Changed
 

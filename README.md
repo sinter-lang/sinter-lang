@@ -37,6 +37,9 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
   instantiates existing Verilog IP. Its Sinter reference model runs in
   simulation, and the oracle checks it against the real module
   (`examples/verilog_acc/`).
+- **An RV32I core**: `examples/rv32_mini/` is a small RV32I processor
+  (word-only loads and stores) in about 200 lines of Sinter, checked
+  against a reference instruction-set simulator and through the oracle.
 
 **Known limitations** (designed in `DESIGN.md`, not yet implemented):
 

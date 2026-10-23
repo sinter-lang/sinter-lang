@@ -1,0 +1,43 @@
+// RV32I instruction fields, opcodes, and immediates.
+
+pub const OP_LUI: u7 = 0b0110111;
+pub const OP_AUIPC: u7 = 0b0010111;
+pub const OP_JAL: u7 = 0b1101111;
+pub const OP_JALR: u7 = 0b1100111;
+pub const OP_BRANCH: u7 = 0b1100011;
+pub const OP_LOAD: u7 = 0b0000011;
+pub const OP_STORE: u7 = 0b0100011;
+pub const OP_IMM: u7 = 0b0010011;
+pub const OP_REG: u7 = 0b0110011;
+pub const OP_FENCE: u7 = 0b0001111;
+pub const OP_SYSTEM: u7 = 0b1110011;
+
+// Sign-extend an N-bit immediate to 32 bits: reinterpret as iN, widen to
+// i32 (which sign-extends), then back to raw u32 bits.
+
+// I-type: inst[31:20].
+pub fn imm_i(inst: u32) -> u32 {
+    ((inst[31:20] as i12 wrap) as i32 wrap) as u32 wrap
+}
+
+// S-type: inst[31:25] @ inst[11:7].
+pub fn imm_s(inst: u32) -> u32 {
+    (((inst[31:25] @ inst[11:7]) as i12 wrap) as i32 wrap) as u32 wrap
+}
+
+// B-type: a 13-bit, 2-byte-aligned offset.
+pub fn imm_b(inst: u32) -> u32 {
+    let raw = inst[31:31] @ inst[7:7] @ inst[30:25] @ inst[11:8] @ 0_u1;
+    ((raw as i13 wrap) as i32 wrap) as u32 wrap
+}
+
+// U-type: inst[31:12] in the upper 20 bits.
+pub fn imm_u(inst: u32) -> u32 {
+    inst[31:12] @ 0_u12
+}
+
+// J-type: a 21-bit, 2-byte-aligned offset.
+pub fn imm_j(inst: u32) -> u32 {
+    let raw = inst[31:31] @ inst[19:12] @ inst[20:20] @ inst[30:21] @ 0_u1;
+    ((raw as i21 wrap) as i32 wrap) as u32 wrap
+}

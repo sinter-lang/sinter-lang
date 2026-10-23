@@ -225,6 +225,8 @@ const EXAMPLES: &[Example] = &[
 struct Project {
     name: &'static str,
     root: &'static str,
+    /// Cycles of random stimulus to co-simulate.
+    cycles: usize,
 }
 
 const PROJECTS: &[Project] = &[
@@ -236,6 +238,7 @@ const PROJECTS: &[Project] = &[
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/sat_counter/main.snt"
         ),
+        cycles: CYCLES,
     },
     // ROM1b: a `rom<u8, 8>` whose contents are loaded from `table.hex` via
     // `include_hex!` (compile-time, relative to the source, embedded inline). The
@@ -247,6 +250,7 @@ const PROJECTS: &[Project] = &[
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/rom_hex/main.snt"
         ),
+        cycles: CYCLES,
     },
     // EXT1: a `#[verilog]` binding to the hand-written `rtl/acc16.v`. The sim
     // runs the Sinter reference model; Verilator runs the real module. Both
@@ -258,6 +262,19 @@ const PROJECTS: &[Project] = &[
             env!("CARGO_MANIFEST_DIR"),
             "/../../examples/verilog_acc/main.snt"
         ),
+        cycles: CYCLES,
+    },
+    // RV32 stepping-stone core (DESIGN §9.12 step 5): three-file project, a
+    // 256-word ROM program (Fibonacci to the output port) and data RAM. The
+    // random `run` input stalls it about half the time, so 1000 cycles cover
+    // the whole program, its halt, and the halted state.
+    Project {
+        name: "rv32_mini",
+        root: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/rv32_mini/main.snt"
+        ),
+        cycles: 1000,
     },
 ];
 
@@ -306,24 +323,26 @@ fn compile_project_one(root: &str) -> Module {
     design.modules.into_iter().next().expect("one module")
 }
 
-/// Every oracle case as `(name, module)` — the single-file examples plus the
-/// multi-file projects.
-fn all_cases() -> Vec<(String, Module)> {
-    let mut cases: Vec<(String, Module)> = EXAMPLES
+/// Every oracle case as `(name, module, cycles)` — the single-file examples
+/// plus the multi-file projects.
+fn all_cases() -> Vec<(String, Module, usize)> {
+    let mut cases: Vec<(String, Module, usize)> = EXAMPLES
         .iter()
-        .map(|ex| (ex.name.to_string(), compile_one(ex.source)))
+        .map(|ex| (ex.name.to_string(), compile_one(ex.source), CYCLES))
         .collect();
     cases.extend(
         PROJECTS
             .iter()
-            .map(|p| (p.name.to_string(), compile_project_one(p.root))),
+            .map(|p| (p.name.to_string(), compile_project_one(p.root), p.cycles)),
     );
     // FLT1b fault-latch examples, compiled in `--faults=on` mode.
-    cases.extend(
-        FAULT_EXAMPLES
-            .iter()
-            .map(|ex| (ex.name.to_string(), compile_one_faults_on(ex.source))),
-    );
+    cases.extend(FAULT_EXAMPLES.iter().map(|ex| {
+        (
+            ex.name.to_string(),
+            compile_one_faults_on(ex.source),
+            CYCLES,
+        )
+    }));
     cases
 }
 
@@ -510,8 +529,8 @@ fn co_simulate(tools: &Tools, name: &str, module: &Module, stimulus: &[Vec<u64>]
 #[test]
 fn examples_pass_the_oracle() {
     let tools = tools();
-    for (name, module) in &all_cases() {
-        let stimulus = gen_stimulus(module, CYCLES, 0xDEAD_BEEF);
+    for (name, module, cycles) in &all_cases() {
+        let stimulus = gen_stimulus(module, *cycles, 0xDEAD_BEEF);
         co_simulate(&tools, name, module, &stimulus);
     }
 }
