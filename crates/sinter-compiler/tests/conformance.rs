@@ -143,6 +143,13 @@ const EXAMPLES: &[Example] = &[
         name: "fn_fifo_bram",
         source: include_str!("../../../examples/fn_fifo_bram.snt"),
     },
+    // CLK1 (DESIGN §6.7 / §9.14): two clock domains with coprime periods (3, 7)
+    // and no crossing. The sim and the Verilator harness replay the same edge
+    // schedule, including both edges at once.
+    Example {
+        name: "fn_two_clocks",
+        source: include_str!("../../../examples/fn_two_clocks.snt"),
+    },
     Example {
         name: "fn_ring",
         source: include_str!("../../../examples/fn_ring.snt"),

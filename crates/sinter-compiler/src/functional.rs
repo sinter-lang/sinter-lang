@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use sinter_syntax::ast::{
-    BinOp, Block, CastMode, Expr, FnColor, Func, Item, Param, Pattern, Pos, Program, Stmt, Type,
-    TypeRef, UnaryOp, Visibility,
+    AttrValue, BinOp, Block, CastMode, Expr, FnColor, Func, Item, Param, Pattern, Pos, Program,
+    Stmt, Type, TypeRef, UnaryOp, Visibility,
 };
 
 use crate::error::CompileError;
@@ -2162,52 +2162,96 @@ impl Checker<'_> {
         Ok(())
     }
 
-    /// Validate the unique `#[clock]` transition root.
+    /// Validate the `#[clock]` transition roots: one per clock domain, all
+    /// methods of the same state struct (DESIGN §6.7). With several, each
+    /// names a distinct domain and an integer `period`.
     fn check_clock_root(&self, program: &Program) -> Result<(), CompileError> {
         let mut roots = Vec::new();
         for item in &program.items {
             if let Item::Impl(im) = item {
                 for m in &im.methods {
-                    if m.attrs.iter().any(|a| a.name == "clock") {
-                        roots.push((im.type_name.clone(), m));
+                    if let Some(attr) = m.attrs.iter().find(|a| a.name == "clock") {
+                        roots.push((im.type_name.clone(), m, attr));
                     }
                 }
             }
         }
-        let [(type_name, m)] = roots.as_slice() else {
-            if roots.is_empty() {
-                return Ok(()); // a library of helpers with no clock root is fine
-            }
+        let Some((type_name, _, _)) = roots.first() else {
+            return Ok(()); // a library of helpers with no clock root is fine
+        };
+        let multi = roots.len() > 1;
+        if let Some((ty, m, _)) = roots.iter().find(|(ty, _, _)| ty != type_name) {
             return Err(sem(
                 "clock",
-                roots[1].1.pos,
-                "more than one `#[clock]` root (multiple clock domains are not yet supported)"
-                    .to_string(),
-            ));
-        };
-        if !m.params.iter().any(|p| matches!(p, Param::SelfRef { .. })) {
-            return Err(sem(
-                &m.name,
-                m.pos,
-                "a `#[clock]` transition root must take `self`".to_string(),
-            ));
-        }
-        // The return must be the state type (`-> Self`) or `(Self, Outputs)`.
-        let ok = match &m.ret {
-            TypeRef::Named(n) => n == type_name,
-            TypeRef::Tuple(ts) => matches!(ts.first(), Some(TypeRef::Named(n)) if n == type_name),
-            _ => false,
-        };
-        if !ok {
-            return Err(sem(
-                &m.name,
                 m.pos,
                 format!(
-                    "`#[clock]` root `{type_name}::{}` must return `{type_name}` or \
-                     `({type_name}, Outputs)`",
-                    m.name
+                    "every `#[clock]` root must be a method of the same state struct \
+                     (`{type_name}` and `{ty}` both have one)"
                 ),
             ));
+        }
+        let mut domains: Vec<String> = Vec::new();
+        for (_, m, attr) in &roots {
+            let arg = |key: &str| attr.args.iter().find(|a| a.key == key);
+            let domain = match arg("domain").and_then(|a| a.value.as_ref()) {
+                Some(AttrValue::Ident(d)) => d.clone(),
+                _ => "sys".to_string(),
+            };
+            if domains.contains(&domain) {
+                return Err(sem(
+                    &m.name,
+                    m.pos,
+                    format!("two `#[clock]` roots for domain `{domain}`; each domain has one tick"),
+                ));
+            }
+            domains.push(domain.clone());
+            match arg("period").map(|a| a.value.as_ref()) {
+                Some(Some(AttrValue::Literal(p))) if *p >= 1 && *p <= u128::from(u32::MAX) => {}
+                Some(_) => {
+                    return Err(sem(
+                        &m.name,
+                        m.pos,
+                        "a clock `period` is a positive integer, e.g. `period = 10`".to_string(),
+                    ))
+                }
+                None if multi => {
+                    return Err(sem(
+                        &m.name,
+                        m.pos,
+                        format!(
+                            "with several clock domains, each `#[clock]` needs a period: \
+                             `#[clock(domain = {domain}, period = ..)]`"
+                        ),
+                    ))
+                }
+                None => {}
+            }
+            if !m.params.iter().any(|p| matches!(p, Param::SelfRef { .. })) {
+                return Err(sem(
+                    &m.name,
+                    m.pos,
+                    "a `#[clock]` transition root must take `self`".to_string(),
+                ));
+            }
+            // The return must be the state type (`-> Self`) or `(Self, Outputs)`.
+            let ok = match &m.ret {
+                TypeRef::Named(n) => n == type_name,
+                TypeRef::Tuple(ts) => {
+                    matches!(ts.first(), Some(TypeRef::Named(n)) if n == type_name)
+                }
+                _ => false,
+            };
+            if !ok {
+                return Err(sem(
+                    &m.name,
+                    m.pos,
+                    format!(
+                        "`#[clock]` root `{type_name}::{}` must return `{type_name}` or \
+                         `({type_name}, Outputs)`",
+                        m.name
+                    ),
+                ));
+            }
         }
         Ok(())
     }

@@ -5,6 +5,19 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Several clock domains** (CLK1, DESIGN §6.7 / §9.14). A state struct tags
+  each field `#[domain(d)]` and has one `#[clock(domain = d, period = p)]`
+  tick per domain. A tick may read and change only its own domain's state
+  (other fields pass through), checked after inlining, so reading another
+  domain's register is a compile error. The module gets a `clk_<d>` per
+  domain and synchronizes the one `rst_n` into each. The simulator, the
+  Verilator harness, `sinter sim` (rows are edge times), and VCD dumps all
+  follow one edge schedule (`examples/fn_two_clocks.snt`).
+
 ## [0.4.0] — unreleased
 
 ### Added

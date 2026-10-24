@@ -178,7 +178,10 @@ fn multiple_clock_roots_are_rejected() {
         impl A { #[clock(domain = sys)] fn tick(self) -> A { self } }
         impl B { #[clock(domain = sys)] fn tick(self) -> B { self } }
     ";
-    reject(src, "more than one `#[clock]` root");
+    reject(
+        src,
+        "every `#[clock]` root must be a method of the same state struct",
+    );
 }
 
 #[test]

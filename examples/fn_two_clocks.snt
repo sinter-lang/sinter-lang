@@ -1,0 +1,26 @@
+// Two clock domains in one design (DESIGN §6.7 / §9.14, CLK1).
+//
+// Each field is tagged with its domain, and each domain has its own tick with
+// its own period. A tick updates only its domain's fields and passes the
+// others through; reading the other domain's state would be a compile error
+// (crossings go through a CDC primitive). The periods 3 and 7 are coprime, so
+// the edges interleave every way, including both at once.
+struct Clocks {
+    #[domain(fast)]
+    pub fast_count: u8 = 0,
+    #[domain(slow)]
+    pub slow_sum: u8 = 0,
+}
+
+impl Clocks {
+    #[clock(domain = fast, period = 3)]
+    fn tick_fast(self, fast_en: u1) -> (Clocks, u8) {
+        let count = if fast_en == 1 { (self.fast_count + 1) as u8 wrap } else { self.fast_count };
+        (Clocks { fast_count: count, slow_sum: self.slow_sum }, count)
+    }
+
+    #[clock(domain = slow, period = 7)]
+    fn tick_slow(self, slow_add: u4) -> Clocks {
+        Clocks { fast_count: self.fast_count, slow_sum: (self.slow_sum + slow_add) as u8 wrap }
+    }
+}

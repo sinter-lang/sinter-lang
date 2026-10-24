@@ -35,6 +35,7 @@ pub fn emit_module(m: &Module) -> String {
 
     emit_ports(&mut out, m);
     emit_decls(&mut out, m);
+    emit_reset_syncs(&mut out, m);
     emit_mem_init(&mut out, m);
     emit_comb(&mut out, m);
     emit_instances(&mut out, m);
@@ -75,11 +76,21 @@ fn q_comment(ty: Type, frac_bits: u32) -> String {
 
 fn emit_ports(out: &mut String, m: &Module) {
     let _ = writeln!(out, "module {} (", m.name);
-    let _ = writeln!(
-        out,
-        "    input  wire         clk,    // {} clock",
-        m.clock_domain
-    );
+    if m.is_multi_clock() {
+        for d in &m.domains {
+            let _ = writeln!(
+                out,
+                "    input  wire         clk_{0},  // {0} clock (period {1})",
+                d.name, d.period
+            );
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "    input  wire         clk,    // {} clock",
+            m.clock_domain
+        );
+    }
     let _ = writeln!(
         out,
         "    input  wire         rst_n,  // active-low asynchronous reset"
@@ -171,6 +182,56 @@ fn live_wires(m: &Module) -> std::collections::HashSet<&str> {
     }
     live.retain(|n| !m.is_model_only(n));
     live
+}
+
+/// The clock net of domain `d`: `clk` with one domain, else `clk_<d>`.
+fn clk_net(m: &Module, d: usize) -> String {
+    if m.is_multi_clock() {
+        format!("clk_{}", m.domains[d].name)
+    } else {
+        "clk".to_string()
+    }
+}
+
+/// The active-low reset of domain `d`: `rst_n` with one domain, else that
+/// domain's synchronized reset `rst_<d>_n` (see [`emit_reset_syncs`]).
+fn rst_net(m: &Module, d: usize) -> String {
+    if m.is_multi_clock() {
+        format!("rst_{}_n", m.domains[d].name)
+    } else {
+        "rst_n".to_string()
+    }
+}
+
+/// With several clocks, a reset synchronizer per domain (DESIGN §6.7): the
+/// external `rst_n` asserts every domain's reset at once, and each domain
+/// releases it two of its own clock edges later, so its registers leave reset
+/// synchronously.
+fn emit_reset_syncs(out: &mut String, m: &Module) {
+    if !m.is_multi_clock() {
+        return;
+    }
+    for (d, dom) in m.domains.iter().enumerate() {
+        let meta = format!("rst_{}_meta", dom.name);
+        let rst = rst_net(m, d);
+        let clk = clk_net(m, d);
+        let _ = writeln!(
+            out,
+            "    // Reset synchronizer ({} domain): asynchronous assert, synchronous deassert",
+            dom.name
+        );
+        let _ = writeln!(out, "    logic [0:0] {meta};");
+        let _ = writeln!(out, "    logic [0:0] {rst};");
+        let _ = writeln!(out, "    always_ff @(posedge {clk} or negedge rst_n) begin");
+        let _ = writeln!(out, "        if (!rst_n) begin");
+        let _ = writeln!(out, "            {meta} <= 1'b0;");
+        let _ = writeln!(out, "            {rst} <= 1'b0;");
+        let _ = writeln!(out, "        end else begin");
+        let _ = writeln!(out, "            {meta} <= 1'b1;");
+        let _ = writeln!(out, "            {rst} <= {meta};");
+        let _ = writeln!(out, "        end");
+        let _ = writeln!(out, "    end");
+    }
 }
 
 /// The registers that exist in the emitted Verilog: all but the reference-model
@@ -303,7 +364,7 @@ fn emit_comb(out: &mut String, m: &Module) {
 /// process, the form Yosys maps onto a byte-enable block RAM. The enable and
 /// data are first named (`__<mem>_we` / `__<mem>_wdata`) because a bit- or
 /// part-select of an arbitrary expression is not legal SystemVerilog.
-fn emit_masked_write(out: &mut String, w: &crate::ir::MemWrite, lanes: u32) {
+fn emit_masked_write(out: &mut String, m: &Module, w: &crate::ir::MemWrite, lanes: u32) {
     let we = format!("__{}_we", w.mem);
     let data = format!("__{}_wdata", w.mem);
     let _ = writeln!(
@@ -315,7 +376,11 @@ fn emit_masked_write(out: &mut String, w: &crate::ir::MemWrite, lanes: u32) {
     let _ = writeln!(out, "    logic {} {data};", net_type(w.data.ty));
     let _ = writeln!(out, "    assign {we} = {};", expr(&w.we));
     let _ = writeln!(out, "    assign {data} = {};", expr(&w.data));
-    let _ = writeln!(out, "    always_ff @(posedge clk) begin");
+    let _ = writeln!(
+        out,
+        "    always_ff @(posedge {}) begin",
+        clk_net(m, w.domain)
+    );
     for i in 0..lanes {
         let (hi, lo) = (8 * i + 7, 8 * i);
         let _ = writeln!(out, "        if ({we}[{i}]) begin");
@@ -344,11 +409,15 @@ fn emit_mem_writes(out: &mut String, m: &Module) {
     for w in &m.mem_writes {
         let lanes = w.we.ty.width();
         if lanes > 1 {
-            emit_masked_write(out, w, lanes);
+            emit_masked_write(out, m, w, lanes);
             continue;
         }
         let _ = writeln!(out, "    // Memory write port: {}", w.mem);
-        let _ = writeln!(out, "    always_ff @(posedge clk) begin");
+        let _ = writeln!(
+            out,
+            "    always_ff @(posedge {}) begin",
+            clk_net(m, w.domain)
+        );
         let _ = writeln!(out, "        if ({}) begin", expr(&w.we));
         let _ = writeln!(
             out,
@@ -372,12 +441,13 @@ fn emit_instances(out: &mut String, m: &Module) {
             "    // Foreign Verilog module `{}`, modelled in simulation by `{}`",
             inst.module, inst.model
         );
+        let (clk_wire, rst_wire) = (clk_net(m, inst.domain), rst_net(m, inst.domain));
         let mut conns: Vec<(&str, &str)> = Vec::new();
         if let Some(clk) = &inst.clk {
-            conns.push((clk, "clk"));
+            conns.push((clk, &clk_wire));
         }
         if let Some(rst_n) = &inst.rst_n {
-            conns.push((rst_n, "rst_n"));
+            conns.push((rst_n, &rst_wire));
         }
         conns.extend(inst.inputs.iter().map(|(p, w)| (p.as_str(), w.as_str())));
         conns.extend(inst.outputs.iter().map(|(p, w)| (p.as_str(), w.as_str())));
@@ -392,27 +462,35 @@ fn emit_instances(out: &mut String, m: &Module) {
 }
 
 fn emit_seq(out: &mut String, m: &Module) {
-    if hw_regs(m).next().is_none() {
-        return;
+    for d in 0..m.domains.len().max(1) {
+        let regs: Vec<_> = hw_regs(m).filter(|r| r.domain == d).collect();
+        if regs.is_empty() {
+            continue;
+        }
+        let name = m
+            .domains
+            .get(d)
+            .map_or(m.clock_domain.as_str(), |dom| dom.name.as_str());
+        let (clk, rst) = (clk_net(m, d), rst_net(m, d));
+        let _ = writeln!(out, "    // Sequential state ({name} domain)");
+        let _ = writeln!(out, "    always_ff @(posedge {clk} or negedge {rst}) begin");
+        let _ = writeln!(out, "        if (!{rst}) begin");
+        for r in &regs {
+            let _ = writeln!(
+                out,
+                "            {} <= {}'h{:x};",
+                r.name,
+                r.ty.width(),
+                r.reset
+            );
+        }
+        let _ = writeln!(out, "        end else begin");
+        for r in &regs {
+            let _ = writeln!(out, "            {} <= {}_next;", r.name, r.name);
+        }
+        let _ = writeln!(out, "        end");
+        let _ = writeln!(out, "    end");
     }
-    let _ = writeln!(out, "    // Sequential state ({} domain)", m.clock_domain);
-    let _ = writeln!(out, "    always_ff @(posedge clk or negedge rst_n) begin");
-    let _ = writeln!(out, "        if (!rst_n) begin");
-    for r in hw_regs(m) {
-        let _ = writeln!(
-            out,
-            "            {} <= {}'h{:x};",
-            r.name,
-            r.ty.width(),
-            r.reset
-        );
-    }
-    let _ = writeln!(out, "        end else begin");
-    for r in hw_regs(m) {
-        let _ = writeln!(out, "            {} <= {}_next;", r.name, r.name);
-    }
-    let _ = writeln!(out, "        end");
-    let _ = writeln!(out, "    end");
 }
 
 /// Render a typed expression as a fully-parenthesized SystemVerilog expression.

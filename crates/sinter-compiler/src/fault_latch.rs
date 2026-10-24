@@ -195,6 +195,7 @@ pub fn apply(module: &mut ir::Module) -> Result<(), CompileError> {
     // __fault_bits <= __fault_bits | mask  (sticky OR).
     let next = binary(BinOp::Or, ident(BITS, bits_ty), mask_expr, bits_ty);
     module.regs.push(ir::Reg {
+        domain: 0,
         name: BITS.to_string(),
         ty: bits_ty,
         frac_bits: 0,
@@ -221,6 +222,7 @@ pub fn apply(module: &mut ir::Module) -> Result<(), CompileError> {
         code = ite(bit_set, lit((i + 1) as u64, cw), code, code_ty);
     }
     module.ports.push(ir::Port {
+        domain: 0,
         dir: sinter_syntax::ast::Dir::Out,
         name: CODE.to_string(),
         ty: code_ty,

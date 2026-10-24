@@ -125,6 +125,7 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
         let init = chk.check_expr(&r.init, Some(r.ty), r.pos)?;
         let reset = chk.const_eval(&init, r.pos)?;
         regs.push(ir::Reg {
+            domain: 0,
             name: r.name.clone(),
             ty: r.ty,
             frac_bits: 0,
@@ -168,6 +169,7 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
         .ports
         .iter()
         .map(|p| ir::Port {
+            domain: 0,
             dir: p.dir,
             name: p.name.clone(),
             ty: p.ty,
@@ -196,6 +198,10 @@ fn check_module(m: &AstModule) -> Result<ir::Module, CompileError> {
     Ok(ir::Module {
         name,
         clock_domain: m.clock_domain.clone(),
+        domains: vec![ir::Domain {
+            name: m.clock_domain.clone(),
+            period: 1,
+        }],
         ports,
         regs,
         lets: ordered_lets,

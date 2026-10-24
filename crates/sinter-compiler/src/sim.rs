@@ -107,6 +107,7 @@ impl Node {
 
 /// A memory read port, resolved: `rdata` register index, memory index, address.
 struct ReadPort {
+    domain: usize,
     rdata: usize,
     mem: usize,
     addr: Node,
@@ -116,6 +117,7 @@ struct ReadPort {
 /// `lanes` is the enable's width: 1 writes the whole word, more is one bit
 /// per byte lane (MEM2).
 struct WritePort {
+    domain: usize,
     mem: usize,
     lanes: u32,
     we: Node,
@@ -125,17 +127,23 @@ struct WritePort {
 
 /// A running cycle-accurate model of one [`Module`].
 ///
-/// The module is compiled once into slot-indexed form. Each cycle fills one
+/// The module is compiled once into slot-indexed form. Each step fills one
 /// environment vector: inputs, then registers, then wires in topological
 /// order, against which the outputs and next state are evaluated.
+///
+/// With several clock domains (DESIGN §6.7), each [`Simulator::step`]
+/// advances to the next clock-edge time: every domain with an edge then
+/// takes its new inputs and commits its next state, all against the same
+/// pre-edge values, and the other domains hold. With one domain a step is one
+/// cycle.
 pub struct Simulator<'a> {
     module: &'a Module,
     /// Environment slot of every input, register, and wire, by name.
     slots: HashMap<String, usize>,
     /// The environment: the most recent step's pre-edge values.
     env: Vec<u64>,
-    /// Input ports: `(name, slot, width)`.
-    inputs: Vec<(String, usize, u32)>,
+    /// Input ports: `(name, slot, width, domain)`.
+    inputs: Vec<(String, usize, u32, usize)>,
     /// Register slots, in `module.regs` order.
     reg_slots: Vec<usize>,
     /// Current register values, in `module.regs` order.
@@ -145,8 +153,8 @@ pub struct Simulator<'a> {
     /// Sim-only assert conditions, in `module.asserts` order.
     asserts: Vec<Node>,
     outputs: Vec<(String, Node)>,
-    /// Register next-states: `(register index, value)`.
-    updates: Vec<(usize, Node)>,
+    /// Register next-states: `(register index, value, domain)`.
+    updates: Vec<(usize, Node, usize)>,
     reads: Vec<ReadPort>,
     writes: Vec<WritePort>,
     /// Current memory contents, in `module.mems` order (DESIGN §6.6/§9.6).
@@ -155,6 +163,11 @@ pub struct Simulator<'a> {
     cycle: usize,
     /// `assert!` failures observed so far, in cycle order (DESIGN §6.12, FLT0).
     assert_failures: Vec<AssertFailure>,
+    /// Each domain's next clock-edge time.
+    next_edge: Vec<u64>,
+    /// The time of the most recent step, and which domains ticked in it.
+    time: u64,
+    ticking: Vec<bool>,
 }
 
 impl<'a> Simulator<'a> {
@@ -191,7 +204,7 @@ impl<'a> Simulator<'a> {
             env: vec![0; by_name.len()],
             inputs: module
                 .inputs()
-                .map(|p| (p.name.clone(), slot(&p.name), p.ty.width()))
+                .map(|p| (p.name.clone(), slot(&p.name), p.ty.width(), p.domain))
                 .collect(),
             reg_slots: module.regs.iter().map(|r| slot(&r.name)).collect(),
             state: module.regs.iter().map(|r| r.reset).collect(),
@@ -209,13 +222,18 @@ impl<'a> Simulator<'a> {
             updates: module
                 .reg_updates
                 .iter()
-                .filter_map(|(n, e)| reg_index.get(n.as_str()).map(|&i| (i, node(e))))
+                .filter_map(|(n, e)| {
+                    reg_index
+                        .get(n.as_str())
+                        .map(|&i| (i, node(e), module.regs[i].domain))
+                })
                 .collect(),
             reads: module
                 .mem_reads
                 .iter()
                 .filter_map(|r| {
                     Some(ReadPort {
+                        domain: r.domain,
                         rdata: *reg_index.get(r.rdata.as_str())?,
                         mem: *mem_index.get(r.mem.as_str())?,
                         addr: node(&r.addr),
@@ -227,6 +245,7 @@ impl<'a> Simulator<'a> {
                 .iter()
                 .filter_map(|w| {
                     Some(WritePort {
+                        domain: w.domain,
                         mem: *mem_index.get(w.mem.as_str())?,
                         lanes: w.we.ty.width(),
                         we: node(&w.we),
@@ -242,6 +261,9 @@ impl<'a> Simulator<'a> {
                 .collect(),
             cycle: 0,
             assert_failures: Vec::new(),
+            next_edge: vec![0; module.domains.len().max(1)],
+            time: 0,
+            ticking: vec![false; module.domains.len().max(1)],
         }
     }
 
@@ -253,6 +275,23 @@ impl<'a> Simulator<'a> {
         self.env.iter_mut().for_each(|v| *v = 0);
         self.cycle = 0;
         self.assert_failures.clear();
+        self.next_edge.iter_mut().for_each(|t| *t = 0);
+        self.time = 0;
+        self.ticking.iter_mut().for_each(|t| *t = false);
+    }
+
+    /// The time of the most recent [`Simulator::step`], in the abstract units
+    /// of the clock periods.
+    #[must_use]
+    pub fn time(&self) -> u64 {
+        self.time
+    }
+
+    /// Which domains (by index into the module's `domains`) had a clock edge
+    /// in the most recent step.
+    #[must_use]
+    pub fn ticking(&self) -> &[bool] {
+        &self.ticking
     }
 
     /// The `assert!` failures observed so far, in cycle order (DESIGN §6.12,
@@ -286,9 +325,30 @@ impl<'a> Simulator<'a> {
     /// the port width here; missing inputs read 0). Returns the outputs sampled
     /// this cycle.
     pub fn step(&mut self, inputs: &HashMap<String, u64>) -> HashMap<String, u64> {
-        // Inputs, current registers, then wires (already topologically ordered).
-        for (name, slot, width) in &self.inputs {
-            self.env[*slot] = mask(inputs.get(name).copied().unwrap_or(0), *width);
+        // The next edge time, and the domains with an edge then.
+        let t = self.next_edge.iter().copied().min().unwrap_or(0);
+        for (d, tick) in self.ticking.iter_mut().enumerate() {
+            *tick = self.next_edge[d] == t;
+        }
+        self.time = t;
+        for (d, &tick) in self.ticking.iter().enumerate() {
+            if tick {
+                let period = self
+                    .module
+                    .domains
+                    .get(d)
+                    .map_or(1, |dom| dom.period.max(1));
+                self.next_edge[d] = t + period;
+            }
+        }
+        let ticking = &self.ticking;
+
+        // Inputs (a domain's take new values only at its edges), current
+        // registers, then wires (already topologically ordered).
+        for (name, slot, width, d) in &self.inputs {
+            if ticking[*d] {
+                self.env[*slot] = mask(inputs.get(name).copied().unwrap_or(0), *width);
+            }
         }
         for (slot, v) in self.reg_slots.iter().zip(&self.state) {
             self.env[*slot] = *v;
@@ -304,7 +364,7 @@ impl<'a> Simulator<'a> {
         // recorded as a failure; the Verilog backend has no counterpart, so this
         // affects no output bit and the co-simulation stays byte-identical.
         for (cond, a) in self.asserts.iter().zip(&self.module.asserts) {
-            if cond.eval(&self.env) == 0 {
+            if ticking[a.domain] && cond.eval(&self.env) == 0 {
                 self.assert_failures.push(AssertFailure {
                     cycle: self.cycle,
                     msg: a.msg.clone(),
@@ -322,22 +382,25 @@ impl<'a> Simulator<'a> {
             .collect();
 
         // Compute next state from the same environment, then commit atomically.
+        // Only the ticking domains commit; the others hold.
         let mut next = self.state.clone();
-        for (i, e) in &self.updates {
-            next[*i] = e.eval(&self.env);
+        for (i, e, d) in &self.updates {
+            if ticking[*d] {
+                next[*i] = e.eval(&self.env);
+            }
         }
 
         // Memory read ports: each read-data register latches the addressed word of
         // the *pre-edge* array — so a same-cycle same-address read sees the OLD
         // value (READ_FIRST), and the result appears one cycle later (`Static(1)`).
-        for r in &self.reads {
+        for r in self.reads.iter().filter(|r| ticking[r.domain]) {
             let idx = r.addr.eval(&self.env) as usize;
             next[r.rdata] = self.mem[r.mem].get(idx).copied().unwrap_or(0);
         }
 
         // Memory write ports: commit after the reads above, so they see the
         // pre-edge array.
-        for w in &self.writes {
+        for w in self.writes.iter().filter(|w| ticking[w.domain]) {
             let we = w.we.eval(&self.env);
             if we == 0 {
                 continue;

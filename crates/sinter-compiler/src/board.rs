@@ -77,6 +77,15 @@ pub fn emit_board(
     wrapper_name: &str,
 ) -> Result<Board, CompileError> {
     let src = &pinmap.source;
+    if module.is_multi_clock() {
+        return Err(sem(
+            src,
+            1,
+            "pin maps don't support several clock domains yet; instantiate the module from \
+             a hand-written top level"
+                .to_string(),
+        ));
+    }
     let module_name = sanitize_ident(wrapper_name);
     if module_name == module.name {
         return Err(sem(

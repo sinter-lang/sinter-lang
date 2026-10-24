@@ -180,6 +180,15 @@ fn compile_lowered(
         // `fault_code` sideband) from the assert sites. Read once here, so both
         // backends fold from one IR; `off` leaves the module functional-neutral.
         if faults == FaultMode::On {
+            if module.is_multi_clock() {
+                // The latch is one register over every assert site, which would
+                // itself cross clock domains.
+                return Err(CompileError::semantic(
+                    &module.name,
+                    sinter_syntax::ast::Pos::default(),
+                    "`--faults` doesn't support several clock domains yet",
+                ));
+            }
             fault_latch::apply(&mut module)?;
         }
         design.modules.push(module);

@@ -221,6 +221,15 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   runs every program in `tests/rv32/programs/*.s` on both cores. Regenerate
   `prog.hex` from `prog.s` with `SINTER_BLESS=1 cargo test -p sinter-compiler
   --test rv32`.
+- **Clock domains** (CLK1, §6.7 / §9.14) — `#[domain(d)]` state fields and a
+  `#[clock(domain = d, period = p)]` tick per domain, all on one state struct.
+  `elaborate::build` lowers each tick, keeps only its domain's next state, and
+  `check_domains` enforces the domain rule on the IR. Every `ir::Reg` / `Port`
+  / `MemRead` / `MemWrite` / `Assert` / `Instance` carries a `domain` index
+  into `Module::domains`. The simulator's `step` advances to the next edge
+  time (`time()` / `ticking()`); the Verilog has `clk_<d>` ports and a reset
+  synchronizer per domain; the Verilator harness replays the same schedule.
+  Single-clock designs are unchanged.
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
@@ -232,6 +241,6 @@ the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a
 only) and the `assert_static!` / `unreachable!()` SMT-prover bucket;
 elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),
-clock-domain phantom types (§6.7), multi-port / dual-clock / non-scalar-element
+the CDC primitives (CLK2–CLK4, §9.14), dual-clock / non-scalar-element
 memories, `include_bin!` and inferred-depth ROMs, and data-dependent (`Bounded` /
 `Dynamic`) latencies with the §3.5 latency prover.

@@ -48,7 +48,6 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 **Known limitations** (designed in `DESIGN.md`, not yet implemented):
 
 - Values are at most 64 bits wide (`u65` and wider are rejected).
-- One clock domain per design (no clock-domain types / CDC primitives).
 - Foreign Verilog bindings (EXT1) take scalar ports and default parameters
   only. Clock-generating modules (PLLs) still belong in a hand-written Verilog
   top level.

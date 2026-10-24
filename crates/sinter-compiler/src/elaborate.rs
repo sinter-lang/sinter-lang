@@ -180,7 +180,7 @@ type Env = HashMap<String, Val>;
 /// Returns a [`CompileError`] if the design uses a construct not yet lowered.
 pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> {
     let tables = build_tables(program);
-    let Some((state_ty, tick, domain)) = find_clock_root(program)? else {
+    let Some((state_ty, roots)) = find_clock_roots(program)? else {
         return Ok(None);
     };
     let el = Elaborator {
@@ -199,8 +199,9 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         in_model: Cell::new(false),
         reserved: RefCell::new(std::collections::HashSet::new()),
         wire_names: RefCell::new(std::collections::HashSet::new()),
+        cur_domain: Cell::new(0),
     };
-    el.build(state_ty, tick, &domain).map(Some)
+    el.build(state_ty, &roots).map(Some)
 }
 
 fn build_tables(program: &Program) -> Tables<'_> {
@@ -234,30 +235,44 @@ fn build_tables(program: &Program) -> Tables<'_> {
     t
 }
 
-fn find_clock_root(program: &Program) -> Result<Option<(&str, &Func, String)>, CompileError> {
-    let mut found = None;
+/// The `#[clock]` roots: one per clock domain, all on the same state type
+/// (the checker has validated their shape).
+fn find_clock_roots(program: &Program) -> Result<Option<(&str, Vec<Root<'_>>)>, CompileError> {
+    let mut state: Option<&str> = None;
+    let mut roots = Vec::new();
     for item in &program.items {
         if let Item::Impl(im) = item {
             for m in &im.methods {
                 if let Some(attr) = m.attrs.iter().find(|a| a.name == "clock") {
-                    let domain = attr
-                        .args
-                        .iter()
-                        .find(|a| a.key == "domain")
+                    let arg = |key: &str| attr.args.iter().find(|a| a.key == key);
+                    let domain = arg("domain")
                         .and_then(|a| match &a.value {
                             Some(AttrValue::Ident(d)) => Some(d.clone()),
                             _ => None,
                         })
                         .unwrap_or_else(|| "sys".to_string());
-                    if found.is_some() {
-                        return Err(err(&im.type_name, m.pos, "more than one `#[clock]` root"));
+                    let period = match arg("period").and_then(|a| a.value.as_ref()) {
+                        Some(AttrValue::Literal(p)) => u64::try_from(*p).unwrap_or(0),
+                        _ => 1,
+                    };
+                    if state.is_some_and(|s| s != im.type_name) {
+                        return Err(err(
+                            &im.type_name,
+                            m.pos,
+                            "every `#[clock]` root must be a method of the same state struct",
+                        ));
                     }
-                    found = Some((im.type_name.as_str(), m, domain));
+                    state = Some(&im.type_name);
+                    roots.push(Root {
+                        tick: m,
+                        domain,
+                        period,
+                    });
                 }
             }
         }
     }
-    Ok(found)
+    Ok(state.map(|s| (s, roots)))
 }
 
 struct Elaborator<'p> {
@@ -302,31 +317,56 @@ struct Elaborator<'p> {
     reserved: RefCell<std::collections::HashSet<String>>,
     /// Names given to wires so far.
     wire_names: RefCell<std::collections::HashSet<String>>,
+    /// The clock domain whose tick is being lowered (DESIGN §6.7), stamped on
+    /// the asserts and `#[verilog]` instances it creates.
+    cur_domain: Cell<usize>,
+}
+
+/// One `#[clock]` root: a domain's tick (DESIGN §6.7).
+struct Root<'p> {
+    tick: &'p Func,
+    domain: String,
+    period: u64,
 }
 
 impl Elaborator<'_> {
-    fn build(&self, state_ty: &str, tick: &Func, domain: &str) -> Result<ir::Module, CompileError> {
-        let state = self.resolve_named(state_ty, tick.pos)?;
+    fn build(&self, state_ty: &str, roots: &[Root<'_>]) -> Result<ir::Module, CompileError> {
+        let first = roots[0].tick;
+        let state = self.resolve_named(state_ty, first.pos)?;
+        let multi = roots.len() > 1;
+        let domains: Vec<ir::Domain> = roots
+            .iter()
+            .map(|r| ir::Domain {
+                name: r.domain.clone(),
+                period: r.period,
+            })
+            .collect();
+        // Each register's and memory's domain. With a single clock every field
+        // defaults to it, and any `#[domain(..)]` tag must name it.
+        let leaf_domain =
+            self.leaf_domains(state_ty, &domains, (!multi).then_some(0), first.pos)?;
+        let domain_of = |name: &str| leaf_domain.get(name).copied().unwrap_or(0);
 
         // Registers: the state struct flattened to leaf scalars, reset from the
         // (possibly nested) default values.
         let mut leaves = Vec::new();
         self.flatten_ty(&state, "", &mut leaves);
-        let resets = self.state_resets(state_ty, tick.pos)?;
+        let resets = self.state_resets(state_ty, first.pos)?;
         let mut regs = Vec::new();
         let mut seen = HashMap::new();
         for (name, ty, frac_bits) in &leaves {
             if seen.insert(name.clone(), ()).is_some() {
                 return Err(err(
                     &self.ctx,
-                    tick.pos,
+                    first.pos,
                     format!("flattened state name `{name}` collides; rename a field"),
                 ));
             }
             let reset = *resets
                 .get(name)
-                .ok_or_else(|| err(&self.ctx, tick.pos, format!("no reset for `{name}`")))?;
+                .ok_or_else(|| err(&self.ctx, first.pos, format!("no reset for `{name}`")))?;
             regs.push(ir::Reg {
+                domain: domain_of(name),
                 name: name.clone(),
                 ty: *ty,
                 frac_bits: *frac_bits,
@@ -340,7 +380,7 @@ impl Elaborator<'_> {
         // read-data register `<m>_rdata` (reset 0, observed as `<m>_rdata_q`) whose
         // next-state is the scheduled read (or a hold) derived from the threaded
         // handle below.
-        let mems = self.mems_with_data(state_ty, tick.pos)?;
+        let mems = self.mems_with_data(state_ty, first.pos)?;
         let mut rdata_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (mem, port) in mems
             .iter()
@@ -350,7 +390,7 @@ impl Elaborator<'_> {
             if seen.insert(name.clone(), ()).is_some() {
                 return Err(err(
                     &self.ctx,
-                    tick.pos,
+                    first.pos,
                     format!(
                         "memory read-data register `{name}` collides with a state field; rename \
                          the field or memory"
@@ -359,6 +399,7 @@ impl Elaborator<'_> {
             }
             rdata_names.insert(name.clone());
             regs.push(ir::Reg {
+                domain: domain_of(&mem.name),
                 name,
                 ty: mem.elem_ty,
                 frac_bits: 0,
@@ -366,54 +407,69 @@ impl Elaborator<'_> {
             });
         }
 
-        // Environment: `self` (current registers) and inputs (flattened params).
-        let mut env: Env = HashMap::new();
-        env.insert("self".to_string(), self.idents_val(&state, ""));
-        let mut ports = Vec::new();
-        for p in &tick.params {
-            if let Param::Typed { name, ty, pos } = p {
-                let pty = self.resolve(ty, *pos)?;
-                let mut pleaves = Vec::new();
-                self.flatten_ty(&pty, name, &mut pleaves);
-                for (pname, pty, frac_bits) in pleaves {
-                    // `clk`/`rst_n` are the module's reserved clock/reset ports
-                    // (emitted by the Verilog backend); an input flattening to
-                    // either would duplicate-declare a port.
-                    if pname == "clk" || pname == "rst_n" {
-                        return Err(err(
-                            &self.ctx,
-                            *pos,
-                            format!(
-                                "input `{pname}` collides with the reserved clock/reset port; \
-                                 rename the parameter or field"
-                            ),
-                        ));
-                    }
-                    // Every emitted name shares one flat namespace: a port and a
-                    // `logic` (or two ports) of the same name would double-declare
-                    // in Verilog. `seen` holds the state fields + synthesized
-                    // `<mem>_rdata` registers; reserve each input leaf against it
-                    // (this also rejects the duplicate ports an `Option<T>` field's
-                    // `_is_some`/`_payload` leaves could otherwise produce — §6.5).
-                    if seen.insert(pname.clone(), ()).is_some() {
-                        return Err(err(
-                            &self.ctx,
-                            *pos,
-                            format!(
-                                "input `{pname}` collides with a state field, register, or another \
-                                 input; rename the parameter or field"
-                            ),
-                        ));
-                    }
-                    ports.push(ir::Port {
-                        dir: sinter_syntax::ast::Dir::In,
-                        name: pname,
-                        ty: pty,
-                        frac_bits,
-                    });
-                }
-                env.insert(name.clone(), self.idents_val(&pty, name));
+        // The clock and reset ports (and, with several clocks, the per-domain
+        // clocks and reset synchronizers) are reserved names.
+        let mut fixed: Vec<String> = vec!["clk".into(), "rst_n".into(), "fault_code".into()];
+        if multi {
+            for d in &domains {
+                fixed.push(format!("clk_{}", d.name));
+                fixed.push(format!("rst_{}_n", d.name));
+                fixed.push(format!("rst_{}_meta", d.name));
             }
+        }
+
+        // Inputs: each root's parameters, flattened, in its domain.
+        let mut ports = Vec::new();
+        let mut envs = Vec::new();
+        for (d, root) in roots.iter().enumerate() {
+            let mut env: Env = HashMap::new();
+            env.insert("self".to_string(), self.idents_val(&state, ""));
+            for p in &root.tick.params {
+                if let Param::Typed { name, ty, pos } = p {
+                    let pty = self.resolve(ty, *pos)?;
+                    let mut pleaves = Vec::new();
+                    self.flatten_ty(&pty, name, &mut pleaves);
+                    for (pname, pty, frac_bits) in pleaves {
+                        // The clock / reset ports are emitted by the Verilog
+                        // backend; an input flattening to one would duplicate it.
+                        if fixed.contains(&pname) && pname != "fault_code" {
+                            return Err(err(
+                                &self.ctx,
+                                *pos,
+                                format!(
+                                    "input `{pname}` collides with the reserved clock/reset \
+                                     port; rename the parameter or field"
+                                ),
+                            ));
+                        }
+                        // Every emitted name shares one flat namespace: a port and a
+                        // `logic` (or two ports) of the same name would double-declare
+                        // in Verilog. `seen` holds the state fields + synthesized
+                        // `<mem>_rdata` registers; reserve each input leaf against it
+                        // (this also rejects the duplicate ports an `Option<T>` field's
+                        // `_is_some`/`_payload` leaves could otherwise produce — §6.5).
+                        if seen.insert(pname.clone(), ()).is_some() {
+                            return Err(err(
+                                &self.ctx,
+                                *pos,
+                                format!(
+                                    "input `{pname}` collides with a state field, register, or \
+                                     another input; rename the parameter or field"
+                                ),
+                            ));
+                        }
+                        ports.push(ir::Port {
+                            domain: d,
+                            dir: sinter_syntax::ast::Dir::In,
+                            name: pname,
+                            ty: pty,
+                            frac_bits,
+                        });
+                    }
+                    env.insert(name.clone(), self.idents_val(&pty, name));
+                }
+            }
+            envs.push(env);
         }
 
         // Registers and ports keep their source names in the emitted Verilog
@@ -426,7 +482,7 @@ impl Elaborator<'_> {
             if crate::verilog::is_keyword(name) {
                 return Err(err(
                     &self.ctx,
-                    tick.pos,
+                    first.pos,
                     format!(
                         "`{name}` is a SystemVerilog keyword, so it can't name a register or \
                          port in the emitted Verilog; rename the field or parameter"
@@ -445,82 +501,172 @@ impl Elaborator<'_> {
             }
             reserved.extend(mems.iter().map(|m| m.name.clone()));
             reserved.extend(ports.iter().map(|p| p.name.clone()));
-            for fixed in ["clk", "rst_n", "fault_code"] {
-                reserved.insert(fixed.to_string());
-            }
+            reserved.extend(fixed.iter().cloned());
         }
 
-        // Body: lower each `let` (non-trivial values become shared wires), then
-        // the tail.
-        for stmt in &tick.body.stmts {
-            let (pattern, ty, value, pos) = match stmt {
-                Stmt::Let {
-                    pattern,
-                    ty,
-                    value,
-                    pos,
-                } => (pattern, ty, value, pos),
-                Stmt::Assert { cond, msg, pos, .. } => {
-                    self.lower_assert(&env, cond, msg, 0, *pos)?;
-                    continue;
+        // Each root's tick: lower its body, then take the next state of its own
+        // domain's registers and memories. Every other domain's state must be
+        // passed through unchanged.
+        let mem_of: HashMap<&str, &ir::Mem> = mems.iter().map(|m| (m.name.as_str(), m)).collect();
+        let mut reg_updates = Vec::new();
+        let mut mem_reads = Vec::new();
+        let mut mem_writes = Vec::new();
+        let mut extra_outs = Vec::new();
+        let mut wire_domains: Vec<usize> = Vec::new();
+        for (d, (root, mut env)) in roots.iter().zip(envs).enumerate() {
+            let tick = root.tick;
+            self.cur_domain.set(d);
+            for stmt in &tick.body.stmts {
+                let (pattern, ty, value, pos) = match stmt {
+                    Stmt::Let {
+                        pattern,
+                        ty,
+                        value,
+                        pos,
+                    } => (pattern, ty, value, pos),
+                    Stmt::Assert { cond, msg, pos, .. } => {
+                        self.lower_assert(&env, cond, msg, 0, *pos)?;
+                        continue;
+                    }
+                    Stmt::Yield { pos, .. } => {
+                        return Err(err(
+                            &self.ctx,
+                            *pos,
+                            "`yield` is only valid in a `pipeline fn` (not yet lowered)",
+                        ))
+                    }
+                };
+                let want = self.let_hint(ty.as_ref(), *pos)?;
+                let v = self.lower(&env, value, want.as_ref(), 0, *pos)?;
+                self.bind(pattern, v, &mut env, *pos)?;
+            }
+            let result = self.lower(&env, &tick.body.tail, Some(&state), 0, tick.body.pos)?;
+            let created = self.wires.borrow().len() - wire_domains.len();
+            wire_domains.extend(std::iter::repeat_n(d, created));
+
+            // The result is `Self` or `(Self, Outputs)`. The first is the next
+            // state; the optional second is extra observation outputs.
+            let (next_state, extra_out) = match result {
+                Val::Struct(..) => (result, None),
+                Val::Tuple(mut parts) if parts.len() == 2 => {
+                    let out = parts.pop();
+                    let st = parts.pop().expect("two parts");
+                    (st, out)
                 }
-                Stmt::Yield { pos, .. } => {
+                _ => {
                     return Err(err(
                         &self.ctx,
-                        *pos,
-                        "`yield` is only valid in a `pipeline fn` (not yet lowered)",
+                        tick.body.pos,
+                        "transition root must return `Self` or `(Self, Outputs)`",
                     ))
                 }
             };
-            let want = self.let_hint(ty.as_ref(), *pos)?;
-            let v = self.lower(&env, value, want.as_ref(), 0, *pos)?;
-            self.bind(pattern, v, &mut env, *pos)?;
-        }
-        let result = self.lower(&env, &tick.body.tail, Some(&state), 0, tick.body.pos)?;
 
-        // The result is `Self` or `(Self, Outputs)`. The first is the next
-        // state; the optional second is extra observation outputs.
-        let (next_state, extra_out) = match result {
-            Val::Struct(..) => (result, None),
-            Val::Tuple(mut parts) if parts.len() == 2 => {
-                let out = parts.pop();
-                let st = parts.pop().expect("two parts");
-                (st, out)
-            }
-            _ => {
-                return Err(err(
-                    &self.ctx,
-                    tick.body.pos,
-                    "transition root must return `Self` or `(Self, Outputs)`",
-                ))
-            }
-        };
+            // Collect the next-state of every `mem` field (the pending transition
+            // the threaded handle carries), verifying each is passed through to its
+            // own field — cross-assigning one memory to another would mis-route
+            // writes.
+            let mut transitions = Vec::new();
+            self.mem_transitions(&next_state, "", &mut transitions, tick.body.pos)?;
 
-        // Collect the next-state of every `mem` field (the pending transition the
-        // threaded handle carries), verifying each is passed through to its own
-        // field — cross-assigning one memory to another would mis-route writes.
-        let mut transitions = Vec::new();
-        self.mem_transitions(&next_state, "", &mut transitions, tick.body.pos)?;
-
-        // Register next-state from the returned state value. Read-data registers
-        // are driven from their memory transition (below), not the tail struct, so
-        // they are excluded here.
-        let mut next = Vec::new();
-        flatten_val(&next_state, "", &mut next);
-        let next_by_name: HashMap<_, _> = next.into_iter().collect();
-        let mut reg_updates = Vec::new();
-        for r in &regs {
-            if rdata_names.contains(&r.name) {
-                continue;
+            // Register next-state from the returned state value. Read-data
+            // registers are driven from their memory transition (below), not the
+            // tail struct, so they are excluded here.
+            let mut next = Vec::new();
+            flatten_val(&next_state, "", &mut next);
+            let next_by_name: HashMap<_, _> = next.into_iter().collect();
+            for r in &regs {
+                if rdata_names.contains(&r.name) {
+                    continue;
+                }
+                let value = next_by_name.get(&r.name).cloned().ok_or_else(|| {
+                    err(
+                        &self.ctx,
+                        tick.body.pos,
+                        format!("no next-state for `{}`", r.name),
+                    )
+                })?;
+                if r.domain == d {
+                    reg_updates.push((r.name.clone(), value));
+                } else if !matches!(&value.kind, ir::ExprKind::Ident(n) if *n == r.name) {
+                    return Err(err(
+                        &self.ctx,
+                        tick.body.pos,
+                        format!(
+                            "`{}` (domain `{}`) changes `{}`, which belongs to domain `{}`; \
+                             pass it through unchanged",
+                            tick.name, root.domain, r.name, domains[r.domain].name
+                        ),
+                    ));
+                }
             }
-            let value = next_by_name.get(&r.name).cloned().ok_or_else(|| {
-                err(
-                    &self.ctx,
-                    tick.body.pos,
-                    format!("no next-state for `{}`", r.name),
-                )
-            })?;
-            reg_updates.push((r.name.clone(), value));
+
+            // Memory transitions: a threaded `next()` schedules the read-data
+            // register (`<m>_rdata <= mem[raddr]`, pre-write ⇒ READ_FIRST) and a
+            // `we`-gated write; a memory threaded unchanged holds its read-data
+            // register.
+            for (path, pending) in transitions {
+                let (ty, ports_n) = mem_of
+                    .get(path.as_str())
+                    .map_or((Type::Uint(1), 1), |m| (m.elem_ty, m.read_ports));
+                if domain_of(&path) != d {
+                    if pending.is_some() {
+                        return Err(err(
+                            &self.ctx,
+                            tick.body.pos,
+                            format!(
+                                "`{}` (domain `{}`) steps memory `{path}`, which belongs to \
+                                 domain `{}`; pass it through unchanged",
+                                tick.name,
+                                root.domain,
+                                domains[domain_of(&path)].name
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+                match pending {
+                    Some(p) => {
+                        for (i, addr) in p.read_addrs.into_iter().enumerate() {
+                            mem_reads.push(ir::MemRead {
+                                domain: d,
+                                rdata: rdata_name(&path, ports_n, i as u32),
+                                mem: path.clone(),
+                                addr,
+                            });
+                        }
+                        // A `rom`'s `next()` has no write.
+                        if let Some((we, addr, data)) = p.write {
+                            mem_writes.push(ir::MemWrite {
+                                domain: d,
+                                mem: path,
+                                we,
+                                addr,
+                                data,
+                            });
+                        }
+                    }
+                    None => {
+                        // Idle this cycle: the read-data registers hold their values.
+                        for i in 0..ports_n {
+                            let rdata = rdata_name(&path, ports_n, i);
+                            reg_updates
+                                .push((rdata.clone(), typed(ir::ExprKind::Ident(rdata), ty)));
+                        }
+                    }
+                }
+            }
+            if let Some(out) = extra_out {
+                // With several clocks, each tick's outputs carry its domain name.
+                let prefix = if multi {
+                    format!("{}_out", root.domain)
+                } else {
+                    "out".to_string()
+                };
+                let mut outs = Vec::new();
+                flatten_leaves(&out, &prefix, &mut outs);
+                extra_outs.extend(outs.into_iter().map(|o| (d, o)));
+            }
         }
 
         // `#[verilog]` instances (DESIGN §6.15): the real module is clocked every
@@ -530,12 +676,12 @@ impl Elaborator<'_> {
         let lets = self.wires.take();
         let instances = self.instances.take();
         let mut bound = Vec::new();
-        self.binding_fields(&state, "", &mut bound, tick.body.pos)?;
+        self.binding_fields(&state, "", &mut bound, first.body.pos)?;
         for (path, model) in bound {
             if !instances.iter().any(|i| i.name == format!("u_{path}")) {
                 return Err(err(
                     &self.ctx,
-                    tick.body.pos,
+                    first.body.pos,
                     format!(
                         "`#[verilog]` instance `self.{}` (`{model}`) is never stepped; the real \
                          module runs every cycle, so call its `step` once per cycle",
@@ -552,7 +698,7 @@ impl Elaborator<'_> {
                 if !threaded {
                     return Err(err(
                         &self.ctx,
-                        tick.body.pos,
+                        first.body.pos,
                         format!(
                             "the state of `#[verilog]` instance `{}` (`{}`) must be the result \
                              of its `step`, passed into the next state unchanged",
@@ -566,7 +712,7 @@ impl Elaborator<'_> {
             if seen.insert(l.name.clone(), ()).is_some() {
                 return Err(err(
                     &self.ctx,
-                    tick.body.pos,
+                    first.body.pos,
                     format!(
                         "`#[verilog]` port wire `{}` collides with another name",
                         l.name
@@ -580,49 +726,10 @@ impl Elaborator<'_> {
             .map(String::as_str)
             .collect();
 
-        // Memory transitions: a threaded `next()` schedules the read-data register
-        // (`<m>_rdata <= mem[raddr]`, pre-write ⇒ READ_FIRST) and a `we`-gated
-        // write; a memory threaded unchanged holds its read-data register.
-        let mem_of: HashMap<&str, &ir::Mem> = mems.iter().map(|m| (m.name.as_str(), m)).collect();
-        let mut mem_reads = Vec::new();
-        let mut mem_writes = Vec::new();
-        for (path, pending) in transitions {
-            let (ty, ports) = mem_of
-                .get(path.as_str())
-                .map_or((Type::Uint(1), 1), |m| (m.elem_ty, m.read_ports));
-            match pending {
-                Some(p) => {
-                    for (i, addr) in p.read_addrs.into_iter().enumerate() {
-                        mem_reads.push(ir::MemRead {
-                            rdata: rdata_name(&path, ports, i as u32),
-                            mem: path.clone(),
-                            addr,
-                        });
-                    }
-                    // A `rom`'s `next()` has no write.
-                    if let Some((we, addr, data)) = p.write {
-                        mem_writes.push(ir::MemWrite {
-                            mem: path,
-                            we,
-                            addr,
-                            data,
-                        });
-                    }
-                }
-                None => {
-                    // Idle this cycle: the read-data registers hold their values.
-                    for i in 0..ports {
-                        let rdata = rdata_name(&path, ports, i);
-                        reg_updates.push((rdata.clone(), typed(ir::ExprKind::Ident(rdata), ty)));
-                    }
-                }
-            }
-        }
-
         // Observation outputs: the registers of the state struct's `pub`
         // fields, plus any explicit outputs. Each `_q` name must be fresh in the
         // flat namespace (`seen`).
-        let exported = self.exported_regs(state_ty, tick.pos)?;
+        let exported = self.exported_regs(state_ty, first.pos)?;
         let mut out_drives = Vec::new();
         // A `#[verilog]` model's registers exist only in simulation, so they get
         // no `_q` port.
@@ -634,11 +741,12 @@ impl Elaborator<'_> {
             if seen.insert(name.clone(), ()).is_some() {
                 return Err(err(
                     &self.ctx,
-                    tick.body.pos,
+                    first.body.pos,
                     format!("output port `{name}` collides with another port; rename a field"),
                 ));
             }
             ports.push(ir::Port {
+                domain: r.domain,
                 dir: sinter_syntax::ast::Dir::Out,
                 name: name.clone(),
                 ty: r.ty,
@@ -646,30 +754,28 @@ impl Elaborator<'_> {
             });
             out_drives.push((name, typed(ir::ExprKind::Ident(r.name.clone()), r.ty)));
         }
-        if let Some(out) = extra_out {
-            let mut outs = Vec::new();
-            flatten_leaves(&out, "out", &mut outs);
-            for (name, value, frac_bits) in outs {
-                if seen.insert(name.clone(), ()).is_some() {
-                    return Err(err(
-                        &self.ctx,
-                        tick.body.pos,
-                        format!("output port `{name}` collides with another port; rename a field"),
-                    ));
-                }
-                ports.push(ir::Port {
-                    dir: sinter_syntax::ast::Dir::Out,
-                    name: name.clone(),
-                    ty: value.ty,
-                    frac_bits,
-                });
-                out_drives.push((name, value));
+        for (d, (name, value, frac_bits)) in extra_outs {
+            if seen.insert(name.clone(), ()).is_some() {
+                return Err(err(
+                    &self.ctx,
+                    first.body.pos,
+                    format!("output port `{name}` collides with another port; rename a field"),
+                ));
             }
+            ports.push(ir::Port {
+                domain: d,
+                dir: sinter_syntax::ast::Dir::Out,
+                name: name.clone(),
+                ty: value.ty,
+                frac_bits,
+            });
+            out_drives.push((name, value));
         }
 
         let module = ir::Module {
             name: state_ty.to_string(),
-            clock_domain: domain.to_string(),
+            clock_domain: domains[0].name.clone(),
+            domains,
             ports,
             regs,
             lets,
@@ -684,8 +790,95 @@ impl Elaborator<'_> {
             asserts: self.asserts.take(),
             instances,
         };
-        foreign::check_isolation(&module, &self.ctx, tick.body.pos)?;
+        foreign::check_isolation(&module, &self.ctx, first.body.pos)?;
+        if multi {
+            let ticks: Vec<&str> = roots.iter().map(|r| r.tick.name.as_str()).collect();
+            check_domains(&module, &wire_domains, &ticks, &self.ctx, first.body.pos)?;
+        }
         Ok(module)
+    }
+
+    /// The clock domain of every register leaf and memory of the state struct
+    /// `state_ty` (DESIGN §6.7), from the innermost `#[domain(d)]` on its field
+    /// path. With several clocks, every leaf must have one.
+    fn leaf_domains(
+        &self,
+        state_ty: &str,
+        domains: &[ir::Domain],
+        default: Option<usize>,
+        pos: Pos,
+    ) -> Result<HashMap<String, usize>, CompileError> {
+        let mut out = HashMap::new();
+        self.collect_leaf_domains(state_ty, "", default, domains, &mut out, pos)?;
+        Ok(out)
+    }
+
+    fn collect_leaf_domains(
+        &self,
+        struct_name: &str,
+        path: &str,
+        inherited: Option<usize>,
+        domains: &[ir::Domain],
+        out: &mut HashMap<String, usize>,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        let s = *self
+            .tables
+            .structs
+            .get(struct_name)
+            .ok_or_else(|| err(&self.ctx, pos, format!("unknown struct `{struct_name}`")))?;
+        for f in &s.fields {
+            let fpath = join(path, &f.name);
+            let tagged = match f.attrs.iter().find(|a| a.name == "domain") {
+                Some(attr) => {
+                    let name =
+                        match attr.args.as_slice() {
+                            [arg] if arg.value.is_none() => arg.key.as_str(),
+                            _ => return Err(err(
+                                &self.ctx,
+                                f.pos,
+                                "`#[domain(..)]` names one clock domain, e.g. `#[domain(fast)]`",
+                            )),
+                        };
+                    let i = domains.iter().position(|d| d.name == name).ok_or_else(|| {
+                        err(
+                            &self.ctx,
+                            f.pos,
+                            format!(
+                                "`#[domain({name})]`: no `#[clock(domain = {name})]` tick \
+                                 exists"
+                            ),
+                        )
+                    })?;
+                    Some(i)
+                }
+                None => inherited,
+            };
+            let ty = self.resolve(&f.ty, f.pos)?;
+            if let Ty::Struct(inner) = &ty {
+                self.collect_leaf_domains(inner, &fpath, tagged, domains, out, pos)?;
+                continue;
+            }
+            let d = tagged.ok_or_else(|| {
+                err(
+                    &self.ctx,
+                    f.pos,
+                    format!(
+                        "field `{fpath}` has no clock domain; with several clocks, tag each \
+                         state field `#[domain(..)]`"
+                    ),
+                )
+            })?;
+            let mut leaves = Vec::new();
+            self.flatten_ty(&ty, &fpath, &mut leaves);
+            for (name, _, _) in leaves {
+                out.insert(name, d);
+            }
+            if matches!(ty, Ty::Mem { .. }) {
+                out.insert(fpath, d);
+            }
+        }
+        Ok(())
     }
 
     /// Walk the next-state, collecting each `mem` field's `(path, pending
@@ -1013,6 +1206,7 @@ impl Elaborator<'_> {
         }
         let c = self.lower_scalar(env, cond, Some(Type::Uint(1)), depth, pos)?;
         self.asserts.borrow_mut().push(ir::Assert {
+            domain: self.cur_domain.get(),
             cond: c,
             msg: msg.to_string(),
             loc: self.assert_loc(pos),
@@ -1810,6 +2004,7 @@ impl Elaborator<'_> {
         model_lets.extend(body_wires);
 
         self.instances.borrow_mut().push(ir::Instance {
+            domain: self.cur_domain.get(),
             name: inst,
             module: binding.module.clone(),
             model: type_name.to_string(),
@@ -2969,6 +3164,106 @@ fn sign_change(e: ir::Expr, to: Type, sat: bool) -> ir::Expr {
         resize(unsigned, to, CastMode::Wrap)
     } else {
         resize(unsigned, to, CastMode::Sat)
+    }
+}
+
+/// Check the domain rule (DESIGN §6.7) on a multi-clock module: everything a
+/// domain's tick computes reads only that domain's registers, inputs, and
+/// wires. `wire_domains[i]` is the domain whose tick created `m.lets[i]`;
+/// `ticks[d]` names domain `d`'s tick, for messages.
+fn check_domains(
+    m: &ir::Module,
+    wire_domains: &[usize],
+    ticks: &[&str],
+    ctx: &str,
+    pos: Pos,
+) -> Result<(), CompileError> {
+    let mut owner: HashMap<&str, usize> = HashMap::new();
+    for r in &m.regs {
+        owner.insert(&r.name, r.domain);
+    }
+    for p in m.inputs() {
+        owner.insert(&p.name, p.domain);
+    }
+    for (l, d) in m.lets.iter().zip(wire_domains) {
+        owner.insert(&l.name, *d);
+    }
+    let reg_domain: HashMap<&str, usize> =
+        m.regs.iter().map(|r| (r.name.as_str(), r.domain)).collect();
+    let port_domain: HashMap<&str, usize> = m
+        .ports
+        .iter()
+        .map(|p| (p.name.as_str(), p.domain))
+        .collect();
+
+    // Every expression, with the domain that computes it.
+    let mut checked: Vec<(usize, &ir::Expr)> = Vec::new();
+    for (l, d) in m.lets.iter().zip(wire_domains) {
+        checked.push((*d, &l.value));
+    }
+    for (r, e) in &m.reg_updates {
+        checked.push((reg_domain.get(r.as_str()).copied().unwrap_or(0), e));
+    }
+    for (o, e) in &m.out_drives {
+        checked.push((port_domain.get(o.as_str()).copied().unwrap_or(0), e));
+    }
+    for r in &m.mem_reads {
+        checked.push((r.domain, &r.addr));
+    }
+    for w in &m.mem_writes {
+        checked.extend([(w.domain, &w.we), (w.domain, &w.addr), (w.domain, &w.data)]);
+    }
+    for a in &m.asserts {
+        checked.push((a.domain, &a.cond));
+    }
+
+    for (d, e) in checked {
+        let mut names = Vec::new();
+        collect_idents(e, &mut names);
+        for n in names {
+            let Some(&o) = owner.get(n) else { continue };
+            if o != d {
+                return Err(CompileError::semantic(
+                    ctx,
+                    pos,
+                    format!(
+                        "`{}` (domain `{}`) reads `{n}`, which belongs to domain `{}`; cross clock \
+                         domains through a CDC primitive (`sync`, `pulse`, `mailbox`, \
+                         `async_fifo`)",
+                        ticks[d], m.domains[d].name, m.domains[o].name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every identifier `e` reads.
+fn collect_idents<'a>(e: &'a ir::Expr, out: &mut Vec<&'a str>) {
+    use ir::ExprKind as K;
+    match &e.kind {
+        K::Ident(n) => out.push(n),
+        K::Literal(_) => {}
+        K::Unary { expr, .. }
+        | K::Cast { expr, .. }
+        | K::Shl { expr, .. }
+        | K::Shr { expr, .. } => {
+            collect_idents(expr, out);
+        }
+        K::Binary { lhs, rhs, .. } => {
+            collect_idents(lhs, out);
+            collect_idents(rhs, out);
+        }
+        K::VarShift { expr, amount, .. } => {
+            collect_idents(expr, out);
+            collect_idents(amount, out);
+        }
+        K::If { cond, then, els } => {
+            collect_idents(cond, out);
+            collect_idents(then, out);
+            collect_idents(els, out);
+        }
     }
 }
 

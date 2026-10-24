@@ -25,6 +25,9 @@ pub struct Module {
     pub name: String,
     /// Clock domain name.
     pub clock_domain: String,
+    /// Every clock domain, in declaration order; `domains[0]` is
+    /// `clock_domain`. One entry for a single-clock design (DESIGN §6.7).
+    pub domains: Vec<Domain>,
     /// Interface ports in declaration order.
     pub ports: Vec<Port>,
     /// Registers in declaration order.
@@ -69,9 +72,30 @@ impl Module {
     }
 }
 
+/// A clock domain (DESIGN §6.7): its name and integer period, in abstract
+/// time units. Every register, port, memory port, and assert belongs to one,
+/// by index into [`Module::domains`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Domain {
+    /// The domain's name, e.g. `sys`.
+    pub name: String,
+    /// The clock period (1 for a single-clock design).
+    pub period: u64,
+}
+
+impl Module {
+    /// Whether the design has more than one clock domain.
+    #[must_use]
+    pub fn is_multi_clock(&self) -> bool {
+        self.domains.len() > 1
+    }
+}
+
 /// A checked interface port.
 #[derive(Debug, Clone)]
 pub struct Port {
+    /// The clock domain (index into [`Module::domains`]).
+    pub domain: usize,
     /// Direction.
     pub dir: Dir,
     /// Name.
@@ -86,6 +110,8 @@ pub struct Port {
 /// A checked register with a constant-evaluated reset value.
 #[derive(Debug, Clone)]
 pub struct Reg {
+    /// The clock domain (index into [`Module::domains`]).
+    pub domain: usize,
     /// Name.
     pub name: String,
     /// Type.
@@ -123,6 +149,8 @@ pub struct Mem {
 /// `addr_bits` (a `Cast` to `uN`), so backends index in range.
 #[derive(Debug, Clone)]
 pub struct MemWrite {
+    /// The clock domain (index into [`Module::domains`]).
+    pub domain: usize,
     /// Target memory name.
     pub mem: String,
     /// Write-enable (1-bit).
@@ -141,6 +169,8 @@ pub struct MemWrite {
 /// value — the `Static(1)` read latency).
 #[derive(Debug, Clone)]
 pub struct MemRead {
+    /// The clock domain (index into [`Module::domains`]).
+    pub domain: usize,
     /// The read-data register this read drives.
     pub rdata: String,
     /// Source memory name.
@@ -156,6 +186,8 @@ pub struct MemRead {
 /// `msg` and `loc`.
 #[derive(Debug, Clone)]
 pub struct Assert {
+    /// The clock domain (index into [`Module::domains`]).
+    pub domain: usize,
     /// The 1-bit predicate; a `0` value is a failure.
     pub cond: Expr,
     /// The diagnostic message reported on failure.
@@ -177,6 +209,8 @@ pub struct Assert {
 /// Everything in `model_regs` / `model_lets` exists only in the simulator.
 #[derive(Debug, Clone)]
 pub struct Instance {
+    /// The clock domain (index into [`Module::domains`]).
+    pub domain: usize,
     /// The Verilog instance name, e.g. `u_uart`.
     pub name: String,
     /// The Verilog module to instantiate, e.g. `uart_tx`.

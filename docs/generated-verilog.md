@@ -30,6 +30,15 @@ Every module has two ports first, in this order:
 Drive `rst_n` from a reset synchronizer (asynchronous assert, synchronous
 deassert) as you would for any other logic.
 
+**Several clock domains** (DESIGN §6.7). A design with a `#[clock]` tick per
+domain has a clock port per domain, `clk_<d>` (`clk_fast`, `clk_slow`), in
+declaration order, and still one `rst_n`. The module synchronizes `rst_n`
+into each domain itself (asynchronous assert, release two edges later on that
+domain's clock), so drive it directly. Each register is clocked by its own
+domain. Each tick's extra outputs are named `<d>_out…` (`fast_out`,
+`fast_out_0`). Inputs and outputs of a domain change only relative to its own
+clock.
+
 Memory contents (`mem` / `rom`) are **not** cleared by `rst_n`. A `mem`
 starts at zero and a `rom` at its contents, set by an `initial` block. FPGA
 flows honour this as power-up contents; ASIC flows don't. A memory's

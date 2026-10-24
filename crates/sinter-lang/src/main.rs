@@ -321,7 +321,18 @@ fn cmd_sim(
             .collect::<Vec<_>>()
             .join(" ")
     };
-    println!("cycle | {} || {}", names(&inputs), names(&outputs));
+    // With several clock domains a row is an edge time: show the time and
+    // which domains ticked (DESIGN §6.7).
+    let multi = module.is_multi_clock();
+    if multi {
+        println!(
+            " step |  time | ticks | {} || {}",
+            names(&inputs),
+            names(&outputs)
+        );
+    } else {
+        println!("cycle | {} || {}", names(&inputs), names(&outputs));
+    }
 
     let mut wave = match vcd {
         Some(path) => {
@@ -341,10 +352,20 @@ fn cmd_sim(
             .zip(row.iter().copied())
             .collect();
         let out = sim.step(&in_map);
+        // The inputs in effect: a domain's hold between its edges.
         let in_str = inputs
             .iter()
             .zip(row)
-            .map(|(p, &v)| format_value(v, p.ty))
+            .map(|(p, &v)| {
+                format_value(
+                    if multi {
+                        sim.signal(&p.name).unwrap_or(v)
+                    } else {
+                        v
+                    },
+                    p.ty,
+                )
+            })
             .collect::<Vec<_>>()
             .join(" ");
         let out_str = outputs
@@ -352,7 +373,22 @@ fn cmd_sim(
             .map(|p| format_value(out.get(&p.name).copied().unwrap_or(0), p.ty))
             .collect::<Vec<_>>()
             .join(" ");
-        println!("{k:5} | {in_str} || {out_str}");
+        if multi {
+            let ticks: Vec<&str> = module
+                .domains
+                .iter()
+                .zip(sim.ticking())
+                .filter(|(_, &t)| t)
+                .map(|(d, _)| d.name.as_str())
+                .collect();
+            println!(
+                "{k:5} | {:5} | {:5} | {in_str} || {out_str}",
+                sim.time(),
+                ticks.join(",")
+            );
+        } else {
+            println!("{k:5} | {in_str} || {out_str}");
+        }
         if let Some(stim) = &directed {
             mismatches.extend(stim.check_cycle(module, k, &out));
         }
