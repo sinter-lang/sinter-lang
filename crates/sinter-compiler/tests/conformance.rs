@@ -156,6 +156,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_cdc_sync",
         source: include_str!("../../../examples/fn_cdc_sync.snt"),
     },
+    // CLK3: a `mailbox` (req / ack handshake) carrying u8 words from a
+    // period-3 domain to a period-4 one through Sender / Receiver views.
+    Example {
+        name: "fn_mailbox",
+        source: include_str!("../../../examples/fn_mailbox.snt"),
+    },
     Example {
         name: "fn_ring",
         source: include_str!("../../../examples/fn_ring.snt"),

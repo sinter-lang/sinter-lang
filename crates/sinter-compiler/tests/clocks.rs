@@ -325,3 +325,57 @@ fn crossing_declarations_are_checked() {
         "`#[cdc_sync]` is reserved for the compiler's clock-domain crossings",
     );
 }
+
+// --- CLK3: mailbox ---------------------------------------------------------
+
+const MAILBOX: &str = include_str!("../../../examples/fn_mailbox.snt");
+
+/// Run `fn_mailbox` at the given periods with random `go` / `take` for
+/// `steps` steps, and check every word arrives exactly once and in order.
+/// Returns how many words crossed.
+fn check_mailbox(fast: u32, slow: u32, steps: usize) -> u64 {
+    let src = MAILBOX
+        .replace(
+            "domain = fast, period = 3",
+            &format!("domain = fast, period = {fast}"),
+        )
+        .replace(
+            "domain = slow, period = 4",
+            &format!("domain = slow, period = {slow}"),
+        );
+    let m = module(&src);
+    let mut sim = Simulator::new(&m);
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15 ^ u64::from(fast * 31 + slow);
+    let mut rand = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let (mut received, mut crossed) = (0, 0u64);
+    for k in 0..steps {
+        let out = sim.step(&HashMap::from([
+            ("go".to_string(), u64::from(rand() % 4 != 0)),
+            ("take".to_string(), u64::from(rand() % 3 != 0)),
+        ]));
+        if out["received_q"] != received {
+            received = out["received_q"];
+            crossed += 1;
+            assert_eq!(
+                out["last_q"],
+                (crossed % 256),
+                "{fast}/{slow}, step {k}: word {crossed} arrived as {}",
+                out["last_q"]
+            );
+        }
+    }
+    crossed
+}
+
+#[test]
+fn a_mailbox_delivers_every_word_once_in_order() {
+    for (fast, slow) in [(3, 4), (4, 3), (1, 7), (7, 1), (5, 5)] {
+        let crossed = check_mailbox(fast, slow, 4000);
+        assert!(crossed > 50, "{fast}/{slow}: only {crossed} words crossed");
+    }
+}

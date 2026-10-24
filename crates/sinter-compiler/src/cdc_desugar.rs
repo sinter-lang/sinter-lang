@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use sinter_syntax::ast::{CdcKind, Item, Pos, Program, TypeRef};
+use sinter_syntax::ast::{CdcKind, Item, Pos, Program, Type, TypeRef};
 use sinter_syntax::parse_program;
 
 use crate::error::CompileError;
@@ -51,6 +51,39 @@ struct Mono {
     name: String,
     from: String,
     to: String,
+    /// The element type as source (`mailbox` / `async_fifo`), e.g. `u8`.
+    elem: String,
+}
+
+/// A scalar element type as Sinter source; crossings carry scalars only.
+fn elem_src(t: &TypeRef, pos: Pos) -> Result<String, CompileError> {
+    match t {
+        TypeRef::Scalar(Type::Uint(w)) => Ok(format!("u{w}")),
+        TypeRef::Scalar(Type::Int(w)) => Ok(format!("i{w}")),
+        TypeRef::Fixed {
+            signed,
+            int_bits,
+            frac_bits,
+        } => Ok(format!(
+            "{}{int_bits}.{frac_bits}",
+            if *signed { "i" } else { "u" }
+        )),
+        _ => Err(sem(
+            pos,
+            "a crossing's element must be a scalar (`uN` / `iN` / fixed-point)",
+        )),
+    }
+}
+
+/// The synthesized struct name of a crossing.
+fn mono_name(kind: CdcKind, elem: &str, depth: usize, from: &str, to: &str) -> String {
+    let e = elem.replace('.', "p");
+    match kind {
+        CdcKind::Sync => format!("Sync_{from}_{to}"),
+        CdcKind::Pulse => format!("Pulse_{from}_{to}"),
+        CdcKind::Mailbox => format!("Mailbox_{e}_{from}_{to}"),
+        CdcKind::AsyncFifo => format!("AsyncFifo_{e}_{depth}_{from}_{to}"),
+    }
 }
 
 /// Lower every CDC field to a synthesized `struct` + `impl`.
@@ -65,7 +98,14 @@ pub fn desugar_cdc(program: &Program) -> Result<Program, CompileError> {
     for it in &mut out.items {
         let Item::Struct(s) = it else { continue };
         for f in &mut s.fields {
-            let TypeRef::Cdc { kind, from, to, .. } = &f.ty else {
+            let TypeRef::Cdc {
+                kind,
+                elem,
+                depth,
+                from,
+                to,
+            } = &f.ty
+            else {
                 continue;
             };
             let ks = kind_src(*kind);
@@ -87,18 +127,34 @@ pub fn desugar_cdc(program: &Program) -> Result<Program, CompileError> {
                     ),
                 ));
             }
-            let name = match kind {
-                CdcKind::Sync => format!("Sync_{from}_{to}"),
-                CdcKind::Pulse => format!("Pulse_{from}_{to}"),
-                CdcKind::Mailbox | CdcKind::AsyncFifo => {
-                    return Err(sem(f.pos, format!("`{ks}` is not implemented yet")));
-                }
+            let elem = match elem {
+                Some(t) => elem_src(t, f.pos)?,
+                None => String::new(),
             };
+            let depth = match depth.as_deref() {
+                None => 1,
+                Some(sinter_syntax::ast::Expr::Literal(n)) => {
+                    let n = usize::try_from(*n).unwrap_or(0);
+                    if n < 2 || !n.is_power_of_two() {
+                        return Err(sem(
+                            f.pos,
+                            format!("an `{ks}` depth (`{n}`) must be a power of two ≥ 2"),
+                        ));
+                    }
+                    n
+                }
+                Some(_) => return Err(sem(f.pos, format!("an `{ks}` depth must be a literal"))),
+            };
+            if *kind == CdcKind::AsyncFifo {
+                return Err(sem(f.pos, format!("`{ks}` is not implemented yet")));
+            }
+            let name = mono_name(*kind, &elem, depth, from, to);
             monos.entry(name.clone()).or_insert(Mono {
                 kind: *kind,
                 name: name.clone(),
                 from: from.clone(),
                 to: to.clone(),
+                elem,
             });
             f.ty = TypeRef::Named(name);
         }
@@ -125,13 +181,29 @@ pub fn source_names(program: &Program) -> Vec<(String, String)> {
     for it in &program.items {
         let Item::Struct(s) = it else { continue };
         for f in &s.fields {
-            if let TypeRef::Cdc { kind, from, to, .. } = &f.ty {
-                let synth = match kind {
-                    CdcKind::Sync => format!("Sync_{from}_{to}"),
-                    CdcKind::Pulse => format!("Pulse_{from}_{to}"),
-                    CdcKind::Mailbox | CdcKind::AsyncFifo => continue,
+            if let TypeRef::Cdc {
+                kind,
+                elem,
+                depth,
+                from,
+                to,
+            } = &f.ty
+            {
+                let e = elem
+                    .as_ref()
+                    .and_then(|t| elem_src(t, f.pos).ok())
+                    .unwrap_or_default();
+                let n = match depth.as_deref() {
+                    Some(sinter_syntax::ast::Expr::Literal(n)) => usize::try_from(*n).unwrap_or(0),
+                    _ => 1,
                 };
-                names.push((synth, format!("{}<{from}, {to}>", kind_src(*kind))));
+                let ks = kind_src(*kind);
+                let spelled = match kind {
+                    CdcKind::Sync | CdcKind::Pulse => format!("{ks}<{from}, {to}>"),
+                    CdcKind::Mailbox => format!("{ks}<{e}, {from}, {to}>"),
+                    CdcKind::AsyncFifo => format!("{ks}<{e}, {n}, {from}, {to}>"),
+                };
+                names.push((mono_name(*kind, &e, n, from, to), spelled));
             }
         }
     }
@@ -173,8 +245,11 @@ fn gen_source(m: &Mono) -> String {
         name,
         from,
         to,
+        elem: ts,
         ..
     } = m;
+    // A channel view's synthesized name uses the mangled element type.
+    let e = ts.replace('.', "p");
     match kind {
         // A source flip-flop, then two destination flip-flops.
         CdcKind::Sync => format!(
@@ -242,6 +317,87 @@ impl {name} {{
 }}
 "
         ),
-        CdcKind::Mailbox | CdcKind::AsyncFifo => String::new(),
+        // A two-phase (toggle) handshake carrying one word at a time. The
+        // source holds `data` steady from toggling `req` until the
+        // destination's `ack` comes back, so the destination's capture of it
+        // is safe: `held` is the second register that may sample the source.
+        CdcKind::Mailbox => format!(
+            "\
+#[cdc(from = {from}, to = {to})]
+struct {name} {{
+    #[domain({from})]
+    data: {ts} = 0,
+    #[domain({from})]
+    req: u1 = 0,
+    #[domain({from})]
+    #[cdc_sync]
+    ack_s1: u1 = 0,
+    #[domain({from})]
+    ack_s2: u1 = 0,
+    #[domain({to})]
+    #[cdc_sync]
+    req_s1: u1 = 0,
+    #[domain({to})]
+    req_s2: u1 = 0,
+    #[domain({to})]
+    ack: u1 = 0,
+    #[domain({to})]
+    #[cdc_sync]
+    held: {ts} = 0,
+    #[domain({to})]
+    full: u1 = 0,
+}}
+
+impl {name} {{
+    // The `{from}` side's view: full until the last word is acknowledged.
+    fn sender(self) -> Sender<{ts}, 1> {{
+        let busy: u1 = if self.ack_s2 == self.req {{ 0 }} else {{ 1 }};
+        Sender_{e}_1 {{ full: busy, count: busy }}
+    }}
+    #[cdc_side({from})]
+    fn send(self, push: Push<{ts}>) -> {name} {{
+        let go: u1 = match push.v {{ Some(_) => 1, None => 0 }};
+        let word: {ts} = match push.v {{ Some(v) => v, None => self.data }};
+        {name} {{
+            data: word,
+            req: self.req ^ go,
+            ack_s1: self.ack,
+            ack_s2: self.ack_s1,
+            req_s1: self.req_s1,
+            req_s2: self.req_s2,
+            ack: self.ack,
+            held: self.held,
+            full: self.full,
+        }}
+    }}
+    // The `{to}` side's view of the word waiting to be taken.
+    fn receiver(self) -> Receiver<{ts}, 1> {{
+        Receiver_{e}_1 {{
+            head: if self.full == 1 {{ Some(self.held) }} else {{ None }},
+            count: self.full,
+        }}
+    }}
+    #[cdc_side({to})]
+    fn recv(self, pop: u1) -> {name} {{
+        let take: u1 = self.full & pop;
+        let room: u1 = if self.full == 0 | take == 1 {{ 1 }} else {{ 0 }};
+        let fresh: u1 = if self.req_s2 == self.ack {{ 0 }} else {{ 1 }};
+        let capture: u1 = fresh & room;
+        {name} {{
+            data: self.data,
+            req: self.req,
+            ack_s1: self.ack_s1,
+            ack_s2: self.ack_s2,
+            req_s1: self.req,
+            req_s2: self.req_s1,
+            ack: self.ack ^ capture,
+            held: if capture == 1 {{ self.data }} else {{ self.held }},
+            full: if capture == 1 {{ 1 }} else {{ if take == 1 {{ 0 }} else {{ self.full }} }},
+        }}
+    }}
+}}
+"
+        ),
+        CdcKind::AsyncFifo => String::new(),
     }
 }

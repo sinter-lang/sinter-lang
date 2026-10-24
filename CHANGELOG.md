@@ -22,6 +22,10 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   one-cycle events). The source tick calls `send`, the destination tick calls
   `recv` and reads `value()`, and each must be called exactly once per cycle,
   outside any `if` (`examples/fn_cdc_sync.snt`).
+- `mailbox<T, from, to>` (CLK3): a req / ack handshake carrying one
+  multi-bit word at a time, pushed through its `Sender` (`sender()`,
+  `send(push)`) and read through its `Receiver` (`receiver()`, `recv(pop)`)
+  (`examples/fn_mailbox.snt`).
 
 ## [0.4.0] — unreleased
 

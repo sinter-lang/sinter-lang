@@ -1673,7 +1673,7 @@ Several clocks in one design, with clock-domain crossings that are type-checked
 |---|---|---|
 | **CLK1** | ✅ `#[domain(d)]` fields, one `#[clock(domain = d, period = p)]` tick per domain, and the domain rule checked on the IR. Per-domain clocks and reset synchronizers in Verilog. A multi-clock edge scheduler in the simulator, the Verilator harness, `sinter sim` (rows are edge times), CSV stimulus, and VCD. | ✅ `fn_two_clocks.snt` (periods 3 and 7) passes the oracle, and swapping the harness's periods makes it fail; reading or changing another domain's field, even through a helper, is rejected |
 | **CLK2** | ✅ The CDC mechanism: synchronizer registers that may sample another domain, side methods called exactly once per tick. `sync<from, to>` and `pulse<from, to>`. | ✅ `fn_cdc_sync.snt` passes the oracle; a `pulse` delivers every event exactly once with the destination 2.5× slower to 7× faster than the source; a missing, misplaced, repeated, or conditional side call is rejected |
-| **CLK3** | `mailbox<T, from, to>` with `Sender` / `Receiver` / `Push<T>`. | Every word sent is received exactly once, in order, at several period ratios, in simulation and through the oracle |
+| **CLK3** | ✅ `mailbox<T, from, to>` with `Sender` / `Receiver` / `Push<T>`. | ✅ every word arrives exactly once, in order, at five period ratios (1:7 to 7:1) under random producer / consumer stalls; `fn_mailbox.snt` passes the oracle |
 | **CLK4** | `async_fifo<T, N, from, to>`: dual-clock memory in the IR (a write port on one domain, a read port on another), gray-coded pointers, first-word fall-through. | As CLK3, at full throughput, with the RAM mapped to block RAM |
 
 Deferred: clock gating, derived or related clocks (ratios, phases), PLL

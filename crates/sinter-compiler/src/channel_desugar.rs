@@ -452,8 +452,14 @@ fn build_mono(
         _ => return Err(sem(pos, format!("a `{ks}` capacity must be a literal"))),
     };
     // A `flow<T>` / `Push<T>` is depth-1 by construction (the parser synthesizes
-    // the `1`), so the power-of-two capacity rule applies only to the others.
-    if !matches!(kind, ChannelKind::Flow | ChannelKind::Push) && (n < 2 || !n.is_power_of_two()) {
+    // the `1`), and a view may be of a depth-1 `mailbox` crossing, so the
+    // power-of-two-≥-2 rule applies to the queues themselves.
+    let min = if matches!(kind, ChannelKind::Sender | ChannelKind::Receiver) {
+        1
+    } else {
+        2
+    };
+    if !matches!(kind, ChannelKind::Flow | ChannelKind::Push) && (n < min || !n.is_power_of_two()) {
         return Err(sem(
             pos,
             format!("a `{ks}` capacity (`{n}`) must be a power of two ≥ 2"),

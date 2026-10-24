@@ -87,7 +87,7 @@ The language features the RV32 cores showed were missing. Release: tag
 - [x] CLK1: several clock domains in one design, with the domain rule checked
       (§6.7 / §9.14).
 - [x] CLK2: `sync` and `pulse` synchronizers.
-- [ ] CLK3: `mailbox` handshake register.
+- [x] CLK3: `mailbox` handshake register.
 - [ ] CLK4: `async_fifo` (dual-clock FIFO).
 
 ## v0.6 — cleanup
