@@ -5,7 +5,7 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
-## [Unreleased]
+## [0.6.0] — unreleased
 
 ### Removed
 
@@ -216,6 +216,7 @@ the Yosys + Verilator conformance oracle.
 - `.pins` pin maps that emit a board-top wrapper and a nextpnr PCF.
 - The legacy `module` surface (frozen).
 
+[0.6.0]: https://github.com/sinter-lang/sinter-lang/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sinter-lang/sinter-lang/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sinter-lang/sinter-lang/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sinter-lang/sinter-lang/compare/v0.2.0...v0.3.0

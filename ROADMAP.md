@@ -92,7 +92,9 @@ Release: tag `v0.5.0` on the "release: v0.5.0" commit.
 - [x] CLK3: `mailbox` handshake register.
 - [x] CLK4: `async_fifo` (dual-clock FIFO).
 
-## v0.6 — cleanup
+## v0.6 — cleanup ✅
+
+Release: tag `v0.6.0` on the "release: v0.6.0" commit.
 
 - [x] Settle every DESIGN §11 open question that affects syntax: generators
       return a `Step` sum and are declared `gen fn` (post-1.0, `gen` reserved

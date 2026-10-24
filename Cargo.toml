@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -15,8 +15,8 @@ repository = "https://github.com/sinter-lang/sinter-lang"
 authors = ["The Sinter Authors"]
 
 [workspace.dependencies]
-sinter-syntax = { path = "crates/sinter-syntax", version = "0.5.0" }
-sinter-compiler = { path = "crates/sinter-compiler", version = "0.5.0" }
+sinter-syntax = { path = "crates/sinter-syntax", version = "0.6.0" }
+sinter-compiler = { path = "crates/sinter-compiler", version = "0.6.0" }
 
 # Keep dependencies lean: per the Rust skill, prefer default-features = false
 # and enable only what we need.

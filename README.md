@@ -9,7 +9,7 @@ correctness oracle.
 See [`DESIGN.md`](DESIGN.md) for the full language design (the source of truth)
 and [`CLAUDE.md`](CLAUDE.md) for the coding standards every change must follow.
 
-> **Status: v0.5 — experimental, pre-1.0.** The language and CLI may still
+> **Status: v0.6 — experimental, pre-1.0.** The language and CLI may still
 > change incompatibly between releases. Sinter is usable today for small-to-medium
 > datapaths and controllers, on one clock or several, that you instantiate from
 > hand-written Verilog and verify with your own testbench.
@@ -91,7 +91,7 @@ fully static Linux binaries for `x86_64` and `aarch64`. They have no runtime
 dependencies, so they run on any distro, including Alpine.
 
 ```sh
-SINTER_VERSION=v0.5.0
+SINTER_VERSION=v0.6.0
 mkdir -p ~/.local/bin
 curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
     | tar -xz -C ~/.local/bin sinter
@@ -107,7 +107,7 @@ Each tarball has a matching `.sha256` file alongside it.
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
 
 # Reproducible builds: pin to a release tag (v0.1.1+) or a specific commit.
-cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --tag v0.5.0 --locked
+cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --tag v0.6.0 --locked
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --rev <sha> --locked
 
 # Updating a git-installed copy to a newer commit needs --force.
@@ -138,7 +138,7 @@ is pinned so builds are reproducible.
 
 ```dockerfile
 # --- Sinter HDL compiler ---------------------------------------------------
-ARG SINTER_VERSION=v0.5.0
+ARG SINTER_VERSION=v0.6.0
 RUN curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
         | tar -xz -C /usr/local/bin sinter \
     && sinter --version
@@ -153,7 +153,7 @@ GitHub SSH key.
 ```dockerfile
 # --- Sinter HDL compiler (build stage) -------------------------------------
 FROM rust:1-slim-bookworm AS sinter
-ARG SINTER_REF=v0.5.0
+ARG SINTER_REF=v0.6.0
 RUN cargo install --locked --root /opt/sinter \
         --git https://github.com/sinter-lang/sinter-lang.git --tag ${SINTER_REF} \
         sinter-lang
