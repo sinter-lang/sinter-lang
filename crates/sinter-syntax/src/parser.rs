@@ -9,10 +9,10 @@ use pest::iterators::Pair;
 use pest::Parser as _;
 
 use crate::ast::{
-    Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, ChannelKind, ConstItem,
-    Dir, EnumItem, EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item, LetBinding,
-    MatchArm, ModItem, Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg, Stmt,
-    StructField, StructItem, Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
+    Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, CdcKind, ChannelKind,
+    ConstItem, Dir, EnumItem, EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item,
+    LetBinding, MatchArm, ModItem, Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg,
+    Stmt, StructField, StructItem, Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
 };
 
 /// The `pest`-generated parser and `Rule` enum. Isolated in a submodule so the
@@ -1017,6 +1017,38 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 kind,
                 elem: Box::new(elem),
                 depth: Box::new(depth),
+            })
+        }
+        Rule::f_sync_ty | Rule::f_pulse_ty | Rule::f_mailbox_ty | Rule::f_async_fifo_ty => {
+            let kind = match inner.as_rule() {
+                Rule::f_sync_ty => CdcKind::Sync,
+                Rule::f_pulse_ty => CdcKind::Pulse,
+                Rule::f_mailbox_ty => CdcKind::Mailbox,
+                _ => CdcKind::AsyncFifo,
+            };
+            let mut it = inner.into_inner();
+            let elem = match kind {
+                CdcKind::Mailbox | CdcKind::AsyncFifo => Some(Box::new(parse_typeref(next_pair(
+                    &mut it,
+                    "crossing element type",
+                )?)?)),
+                CdcKind::Sync | CdcKind::Pulse => None,
+            };
+            let depth = match kind {
+                CdcKind::AsyncFifo => Some(Box::new(parse_mem_depth(next_pair(
+                    &mut it,
+                    "crossing depth",
+                )?)?)),
+                _ => None,
+            };
+            let from = next_ident(&mut it, "source domain")?;
+            let to = next_ident(&mut it, "destination domain")?;
+            Ok(TypeRef::Cdc {
+                kind,
+                elem,
+                depth,
+                from,
+                to,
             })
         }
         Rule::f_push_ty => {

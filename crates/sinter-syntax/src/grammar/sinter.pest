@@ -214,7 +214,7 @@ f_binding   = { ident }
 // Type references. Fixed-point `uI.F` / `iI.F` (DESIGN §6.1) is admitted in the
 // scalar form; the dotted frac requires a digit so it never clashes with `..`
 // or member access. Order matters: scalar before named so `u4` is not a name.
-f_typeref   = { f_option_ty | f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_fifo_ty | f_ring_ty | f_flow_ty | f_sender_ty | f_receiver_ty | f_push_ty | f_scalar_ty | ident }
+f_typeref   = { f_option_ty | f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_fifo_ty | f_ring_ty | f_flow_ty | f_sender_ty | f_receiver_ty | f_push_ty | f_sync_ty | f_pulse_ty | f_mailbox_ty | f_async_fifo_ty | f_scalar_ty | ident }
 f_option_ty = { "Option" ~ "<" ~ f_typeref ~ ">" }
 f_array_ty  = { "[" ~ f_typeref ~ ";" ~ f_expr ~ "]" }
 f_tuple_ty  = { "(" ~ f_typeref ~ ("," ~ f_typeref)+ ~ ","? ~ ")" }
@@ -234,6 +234,12 @@ f_flow_ty   = { "flow" ~ "<" ~ f_typeref ~ ">" }
 f_sender_ty   = { "Sender" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
 f_receiver_ty = { "Receiver" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
 f_push_ty     = { "Push" ~ "<" ~ f_typeref ~ ">" }
+// Clock-domain crossing primitives (DESIGN §6.7 / §9.14), each naming its
+// source and destination domains.
+f_sync_ty       = { "sync" ~ "<" ~ ident ~ "," ~ ident ~ ">" }
+f_pulse_ty      = { "pulse" ~ "<" ~ ident ~ "," ~ ident ~ ">" }
+f_mailbox_ty    = { "mailbox" ~ "<" ~ f_typeref ~ "," ~ ident ~ "," ~ ident ~ ">" }
+f_async_fifo_ty = { "async_fifo" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ "," ~ ident ~ "," ~ ident ~ ">" }
 // Depth is a compile-time constant (a literal or a `const` name); using the full
 // `f_expr` would let a relational `>` swallow the closing angle bracket (and any
 // following block) outside field position.

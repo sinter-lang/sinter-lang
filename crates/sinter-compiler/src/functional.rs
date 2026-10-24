@@ -599,6 +599,14 @@ fn resolve_type(
                 ports: *read_ports,
             }
         }
+        TypeRef::Cdc { .. } => {
+            return Err(sem(
+                ctx,
+                pos,
+                "internal error: a clock-domain crossing type should have been desugared before \
+                 type-checking",
+            ));
+        }
         TypeRef::Channel { .. } => {
             // A channel (`fifo`/`ring`/`flow`) is lowered by the channel desugar
             // (DESIGN §9.8) into a plain struct + impl before type-checking, so a

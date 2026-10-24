@@ -200,6 +200,8 @@ pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> 
         reserved: RefCell::new(std::collections::HashSet::new()),
         wire_names: RefCell::new(std::collections::HashSet::new()),
         cur_domain: Cell::new(0),
+        domain_names: RefCell::new(Vec::new()),
+        cdc_calls: RefCell::new(Vec::new()),
     };
     el.build(state_ty, &roots).map(Some)
 }
@@ -320,6 +322,10 @@ struct Elaborator<'p> {
     /// The clock domain whose tick is being lowered (DESIGN §6.7), stamped on
     /// the asserts and `#[verilog]` instances it creates.
     cur_domain: Cell<usize>,
+    /// The domains' names, by index.
+    domain_names: RefCell<Vec<String>>,
+    /// The crossing fields whose side the current tick has called.
+    cdc_calls: RefCell<Vec<String>>,
 }
 
 /// One `#[clock]` root: a domain's tick (DESIGN §6.7).
@@ -343,8 +349,11 @@ impl Elaborator<'_> {
             .collect();
         // Each register's and memory's domain. With a single clock every field
         // defaults to it, and any `#[domain(..)]` tag must name it.
-        let leaf_domain =
+        let (leaf_domain, sync_regs) =
             self.leaf_domains(state_ty, &domains, (!multi).then_some(0), first.pos)?;
+        *self.domain_names.borrow_mut() = domains.iter().map(|d| d.name.clone()).collect();
+        let mut crossings = Vec::new();
+        self.cdc_fields(state_ty, "", &mut crossings, first.pos)?;
         let domain_of = |name: &str| leaf_domain.get(name).copied().unwrap_or(0);
 
         // Registers: the state struct flattened to leaf scalars, reset from the
@@ -516,6 +525,7 @@ impl Elaborator<'_> {
         for (d, (root, mut env)) in roots.iter().zip(envs).enumerate() {
             let tick = root.tick;
             self.cur_domain.set(d);
+            self.cdc_calls.borrow_mut().clear();
             for stmt in &tick.body.stmts {
                 let (pattern, ty, value, pos) = match stmt {
                     Stmt::Let {
@@ -543,6 +553,31 @@ impl Elaborator<'_> {
             let result = self.lower(&env, &tick.body.tail, Some(&state), 0, tick.body.pos)?;
             let created = self.wires.borrow().len() - wire_domains.len();
             wire_domains.extend(std::iter::repeat_n(d, created));
+            // Each crossing with an end in this domain must have that side run.
+            for (path, from, to) in &crossings {
+                let called = self.cdc_calls.borrow().contains(path);
+                let side = if *from == root.domain {
+                    "send"
+                } else if *to == root.domain {
+                    "recv"
+                } else {
+                    continue;
+                };
+                if !called {
+                    return Err(err(
+                        &self.ctx,
+                        tick.body.pos,
+                        format!(
+                            "`{}` must call `self.{}.{side}(..)` once per cycle: a crossing's \
+                             `{}` side runs every `{}` cycle",
+                            tick.name,
+                            path.replace('_', "."),
+                            root.domain,
+                            root.domain
+                        ),
+                    ));
+                }
+            }
 
             // The result is `Self` or `(Self, Outputs)`. The first is the next
             // state; the optional second is extra observation outputs.
@@ -793,7 +828,14 @@ impl Elaborator<'_> {
         foreign::check_isolation(&module, &self.ctx, first.body.pos)?;
         if multi {
             let ticks: Vec<&str> = roots.iter().map(|r| r.tick.name.as_str()).collect();
-            check_domains(&module, &wire_domains, &ticks, &self.ctx, first.body.pos)?;
+            check_domains(
+                &module,
+                &wire_domains,
+                &sync_regs,
+                &ticks,
+                &self.ctx,
+                first.body.pos,
+            )?;
         }
         Ok(module)
     }
@@ -807,19 +849,121 @@ impl Elaborator<'_> {
         domains: &[ir::Domain],
         default: Option<usize>,
         pos: Pos,
-    ) -> Result<HashMap<String, usize>, CompileError> {
+    ) -> Result<(HashMap<String, usize>, std::collections::HashSet<String>), CompileError> {
         let mut out = HashMap::new();
-        self.collect_leaf_domains(state_ty, "", default, domains, &mut out, pos)?;
-        Ok(out)
+        let mut sync = std::collections::HashSet::new();
+        self.collect_leaf_domains(
+            state_ty, "", default, false, domains, &mut out, &mut sync, pos,
+        )?;
+        Ok((out, sync))
     }
 
+    /// Every clock-domain crossing field of struct `struct_name`, as
+    /// `(flattened path, from, to)` (DESIGN §6.7).
+    fn cdc_fields(
+        &self,
+        struct_name: &str,
+        path: &str,
+        out: &mut Vec<(String, String, String)>,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        let s = *self
+            .tables
+            .structs
+            .get(struct_name)
+            .ok_or_else(|| err(&self.ctx, pos, format!("unknown struct `{struct_name}`")))?;
+        if let Some(attr) = s.attrs.iter().find(|a| a.name == "cdc") {
+            let arg = |key: &str| {
+                attr.args
+                    .iter()
+                    .find(|a| a.key == key)
+                    .and_then(|a| match &a.value {
+                        Some(AttrValue::Ident(d)) => Some(d.clone()),
+                        _ => None,
+                    })
+            };
+            if let (Some(from), Some(to)) = (arg("from"), arg("to")) {
+                out.push((path.to_string(), from, to));
+            }
+            return Ok(());
+        }
+        for f in &s.fields {
+            if let Ty::Struct(inner) = self.resolve(&f.ty, f.pos)? {
+                self.cdc_fields(&inner, &join(path, &f.name), out, pos)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Check a call of a crossing's side method (`#[cdc_side(d)]`): it must
+    /// be in domain `d`'s tick, unconditional, on a state field, and the only
+    /// call on that crossing this cycle.
+    fn check_cdc_call(
+        &self,
+        receiver: &Expr,
+        type_name: &str,
+        side: &str,
+        method: &str,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        let cur = self
+            .domain_names
+            .borrow()
+            .get(self.cur_domain.get())
+            .cloned()
+            .unwrap_or_default();
+        let path = self_field_path(receiver).ok_or_else(|| {
+            err(
+                &self.ctx,
+                pos,
+                format!(
+                    "call `{method}` on a `{type_name}` state field, e.g. `self.x.{method}(..)`"
+                ),
+            )
+        })?;
+        let field = format!("self.{}", path.replace('_', "."));
+        if side != cur {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "`{field}.{method}()` is the `{side}` side of `{type_name}`; call it in the \
+                     `{side}` tick, not the `{cur}` one"
+                ),
+            ));
+        }
+        if self.branch_depth.get() > 0 {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "`{field}.{method}()` must run every cycle, outside any `if` / `match` arm; \
+                     select its arguments instead"
+                ),
+            ));
+        }
+        let mut calls = self.cdc_calls.borrow_mut();
+        if calls.contains(&path) {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!("`{field}.{method}()` is called more than once in one cycle"),
+            ));
+        }
+        calls.push(path);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn collect_leaf_domains(
         &self,
         struct_name: &str,
         path: &str,
         inherited: Option<usize>,
+        in_sync: bool,
         domains: &[ir::Domain],
         out: &mut HashMap<String, usize>,
+        sync: &mut std::collections::HashSet<String>,
         pos: Pos,
     ) -> Result<(), CompileError> {
         let s = *self
@@ -855,8 +999,9 @@ impl Elaborator<'_> {
                 None => inherited,
             };
             let ty = self.resolve(&f.ty, f.pos)?;
+            let is_sync = in_sync || f.attrs.iter().any(|a| a.name == "cdc_sync");
             if let Ty::Struct(inner) = &ty {
-                self.collect_leaf_domains(inner, &fpath, tagged, domains, out, pos)?;
+                self.collect_leaf_domains(inner, &fpath, tagged, is_sync, domains, out, sync, pos)?;
                 continue;
             }
             let d = tagged.ok_or_else(|| {
@@ -872,6 +1017,9 @@ impl Elaborator<'_> {
             let mut leaves = Vec::new();
             self.flatten_ty(&ty, &fpath, &mut leaves);
             for (name, _, _) in leaves {
+                if is_sync {
+                    sync.insert(name.clone());
+                }
                 out.insert(name, d);
             }
             if matches!(ty, Ty::Mem { .. }) {
@@ -1615,6 +1763,11 @@ impl Elaborator<'_> {
                     format!("type `{type_name}` has no method `{method}`"),
                 )
             })?;
+        if let Some(side) = m.attrs.iter().find(|a| a.name == "cdc_side") {
+            if let [arg] = side.args.as_slice() {
+                self.check_cdc_call(receiver, &type_name, &arg.key, method, pos)?;
+            }
+        }
         if let Some(binding) = self.binding(&type_name, pos)? {
             return self.lower_binding_step(
                 env, receiver, recv, &type_name, &binding, m, args, depth, pos,
@@ -2557,6 +2710,12 @@ impl Elaborator<'_> {
                 pos,
                 "internal error: a channel type should have been desugared before elaboration",
             )),
+            TypeRef::Cdc { .. } => Err(err(
+                &self.ctx,
+                pos,
+                "internal error: a clock-domain crossing type should have been desugared before \
+                 elaboration",
+            )),
         }
     }
 
@@ -3169,11 +3328,13 @@ fn sign_change(e: ir::Expr, to: Type, sat: bool) -> ir::Expr {
 
 /// Check the domain rule (DESIGN §6.7) on a multi-clock module: everything a
 /// domain's tick computes reads only that domain's registers, inputs, and
-/// wires. `wire_domains[i]` is the domain whose tick created `m.lets[i]`;
+/// wires, except the next state of a `#[cdc_sync]` register (`sync_regs`).
+/// `wire_domains[i]` is the domain whose tick created `m.lets[i]`;
 /// `ticks[d]` names domain `d`'s tick, for messages.
 fn check_domains(
     m: &ir::Module,
     wire_domains: &[usize],
+    sync_regs: &std::collections::HashSet<String>,
     ticks: &[&str],
     ctx: &str,
     pos: Pos,
@@ -3201,7 +3362,9 @@ fn check_domains(
     for (l, d) in m.lets.iter().zip(wire_domains) {
         checked.push((*d, &l.value));
     }
-    for (r, e) in &m.reg_updates {
+    // A synchronizer's first flip-flop is the one register that samples
+    // another domain (DESIGN §6.7); every other next state is checked.
+    for (r, e) in m.reg_updates.iter().filter(|(r, _)| !sync_regs.contains(r)) {
         checked.push((reg_domain.get(r.as_str()).copied().unwrap_or(0), e));
     }
     for (o, e) in &m.out_drives {

@@ -1,0 +1,46 @@
+// Clock-domain crossings for single bits (DESIGN §6.7 / §9.14, CLK2).
+//
+// `fast` drives a level through a `sync` (a 2-flop synchronizer) and one-cycle
+// events through a `pulse` (a toggle synchronizer). `slow` sees the level a
+// couple of its cycles later and counts the events. Each tick must call its
+// side of every crossing once per cycle: `send` in the source, `recv` in the
+// destination. Reading `fast` state from `tick_slow` any other way would be a
+// compile error.
+struct Cdc {
+    #[domain(fast)]
+    pub fast_count: u8 = 0,
+    #[domain(slow)]
+    pub slow_level: u1 = 0,
+    #[domain(slow)]
+    pub slow_events: u8 = 0,
+    level: sync<fast, slow>,
+    event: pulse<fast, slow>,
+}
+
+impl Cdc {
+    #[clock(domain = fast, period = 2)]
+    fn tick_fast(self, go: u1) -> Cdc {
+        let count = if go == 1 { (self.fast_count + 1) as u8 wrap } else { self.fast_count };
+        // One event every 8 counts; the level is bit 3 of the count.
+        let fire: u1 = if go == 1 & count[2:0] == 0 { 1 } else { 0 };
+        Cdc {
+            fast_count: count,
+            slow_level: self.slow_level,
+            slow_events: self.slow_events,
+            level: self.level.send(count[3:3]),
+            event: self.event.send(fire),
+        }
+    }
+
+    #[clock(domain = slow, period = 5)]
+    fn tick_slow(self) -> Cdc {
+        let seen: u8 = if self.event.value() == 1 { 1 } else { 0 };
+        Cdc {
+            fast_count: self.fast_count,
+            slow_level: self.level.value(),
+            slow_events: (self.slow_events + seen) as u8 wrap,
+            level: self.level.recv(),
+            event: self.event.recv(),
+        }
+    }
+}

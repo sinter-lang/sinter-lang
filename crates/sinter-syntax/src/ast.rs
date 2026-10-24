@@ -637,6 +637,21 @@ pub enum TypeRef {
     },
     /// A tuple `(T, U, ...)`.
     Tuple(Vec<TypeRef>),
+    /// A clock-domain crossing primitive (DESIGN §6.7 / §9.14): written in
+    /// domain `from`, read in domain `to`. Lowered to a struct by the CDC
+    /// desugar before checking.
+    Cdc {
+        /// Which primitive.
+        kind: CdcKind,
+        /// The element type (`mailbox` / `async_fifo`).
+        elem: Option<Box<TypeRef>>,
+        /// The depth (`async_fifo`).
+        depth: Option<Box<Expr>>,
+        /// The source domain.
+        from: String,
+        /// The destination domain.
+        to: String,
+    },
     /// A ported memory `mem<T, N>` (DESIGN §6.6/§6.9): an `N`-deep array of `T`
     /// that lowers to block RAM, *distinct* from the `[T; N]` vector-of-registers.
     /// Port count is part of the type; MEM1 fixes it at 1R1W (`read_ports` /
@@ -694,6 +709,19 @@ pub enum ChannelKind {
     Receiver,
     /// `Push<T>` — a push request for a `fifo`, made only by a `Sender` (CHAN3).
     Push,
+}
+
+/// A clock-domain crossing primitive (DESIGN §6.7 / §9.14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CdcKind {
+    /// `sync<from, to>` — a 2-flop level synchronizer for one bit.
+    Sync,
+    /// `pulse<from, to>` — a toggle synchronizer for one-cycle events.
+    Pulse,
+    /// `mailbox<T, from, to>` — a req / ack handshake carrying one word.
+    Mailbox,
+    /// `async_fifo<T, N, from, to>` — a dual-clock FIFO.
+    AsyncFifo,
 }
 
 /// A block: zero or more statements followed by a tail expression (its value).

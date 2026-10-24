@@ -10,6 +10,7 @@
 #![warn(missing_docs)]
 
 pub mod board;
+pub mod cdc_desugar;
 pub mod channel_desugar;
 pub mod check;
 pub mod elaborate;
@@ -115,11 +116,20 @@ fn compile_program(
     // state.
     // Errors after this point name the synthesized channel structs; show them
     // as the user wrote them (`Push_u8` → `Push<u8>`).
+    // Clock-domain crossings first: `mailbox` / `async_fifo` lower to channel
+    // views that the channel desugar then lowers in turn.
+    let mut names = Vec::new();
+    let program = if cdc_desugar::has_cdc(&program) {
+        names.extend(cdc_desugar::source_names(&program));
+        cdc_desugar::desugar_cdc(&program)?
+    } else {
+        program
+    };
     let (program, channel_names) = if channel_desugar::has_channel(&program) {
-        let names = channel_desugar::source_names(&program);
+        names.extend(channel_desugar::source_names(&program));
         (channel_desugar::desugar_channels(&program)?, names)
     } else {
-        (program, Vec::new())
+        (program, names)
     };
     compile_lowered(program, base, faults).map_err(|e| e.rename_types(&channel_names))
 }

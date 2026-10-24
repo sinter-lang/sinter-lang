@@ -150,6 +150,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_two_clocks",
         source: include_str!("../../../examples/fn_two_clocks.snt"),
     },
+    // CLK2: `sync` and `pulse` crossings from a period-2 domain into a
+    // period-5 one; the synchronizers are the only cross-domain reads.
+    Example {
+        name: "fn_cdc_sync",
+        source: include_str!("../../../examples/fn_cdc_sync.snt"),
+    },
     Example {
         name: "fn_ring",
         source: include_str!("../../../examples/fn_ring.snt"),

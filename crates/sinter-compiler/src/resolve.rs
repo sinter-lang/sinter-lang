@@ -541,6 +541,16 @@ impl Resolver {
                 self.rewrite_typeref(elem, cur, src)?;
                 self.rewrite_expr(depth, cur, &mut Locals::new(), src)?;
             }
+            TypeRef::Cdc { elem, depth, .. } => {
+                // Like a channel: the element type and a (const) depth. Domain
+                // names aren't items, so they need no resolution.
+                if let Some(elem) = elem {
+                    self.rewrite_typeref(elem, cur, src)?;
+                }
+                if let Some(depth) = depth {
+                    self.rewrite_expr(depth, cur, &mut Locals::new(), src)?;
+                }
+            }
             TypeRef::Option(t) => self.rewrite_typeref(t, cur, src)?,
             TypeRef::Scalar(_) | TypeRef::Fixed { .. } => {}
         }

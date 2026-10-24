@@ -17,6 +17,11 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   domain and synchronizes the one `rst_n` into each. The simulator, the
   Verilator harness, `sinter sim` (rows are edge times), and VCD dumps all
   follow one edge schedule (`examples/fn_two_clocks.snt`).
+- **Clock-domain crossings** (CLK2): `sync<from, to>` (a 2-flop level
+  synchronizer for one bit) and `pulse<from, to>` (a toggle synchronizer for
+  one-cycle events). The source tick calls `send`, the destination tick calls
+  `recv` and reads `value()`, and each must be called exactly once per cycle,
+  outside any `if` (`examples/fn_cdc_sync.snt`).
 
 ## [0.4.0] — unreleased
 

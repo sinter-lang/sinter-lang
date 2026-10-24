@@ -229,7 +229,11 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   into `Module::domains`. The simulator's `step` advances to the next edge
   time (`time()` / `ticking()`); the Verilog has `clk_<d>` ports and a reset
   synchronizer per domain; the Verilator harness replays the same schedule.
-  Single-clock designs are unchanged.
+  Single-clock designs are unchanged. CDC primitives (CLK2+, `cdc_desugar.rs`,
+  run before the channel desugar) are generated domain-tagged structs:
+  `#[cdc_sync]` marks a synchronizer's first flop (exempt from the domain
+  rule), `#[cdc_side(d)]` marks the `send` / `recv` each tick must call once
+  (`check_cdc_call`). These attributes are compiler-only.
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
@@ -241,6 +245,6 @@ the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a
 only) and the `assert_static!` / `unreachable!()` SMT-prover bucket;
 elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),
-the CDC primitives (CLK2–CLK4, §9.14), dual-clock / non-scalar-element
+the `mailbox` / `async_fifo` crossings (CLK3–CLK4, §9.14), dual-clock / non-scalar-element
 memories, `include_bin!` and inferred-depth ROMs, and data-dependent (`Bounded` /
 `Dynamic`) latencies with the §3.5 latency prover.
