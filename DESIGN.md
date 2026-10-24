@@ -1416,7 +1416,7 @@ emitter — so CHAN1 is a near-mechanical clone of the landed MEM1 path.
 |---|---|---|
 | **CHAN1** | ✅ Single-owner **lossless** `fifo<T, N>` (scalar `T` ≤ 64 b, power-of-two `N`): `next(push: Option<T>, pop: u1)` + pure `front()`/`is_empty()`/`is_full()`/`len()`. Register-backed desugar, SROA-flattened, `Static(0)` combinational `front()`, READ_FIRST same-cycle push+pop, empty/zero reset. `next()` barred from `if`/`match` arms (single-driver); reads unrestricted. | a producer→queue→consumer example (`fn_fifo.snt`) round-trips the §7.4 oracle bit-for-bit |
 | **CHAN2** | ✅ **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar, loss policy fixed by the type: one shared queue template parameterized by `pushf` (a `ring` always accepts) and `shiftf` (a full ring retires its oldest word), so `ring` costs no state a `fifo` does not. Plus `flow<T>` (depth-1 newest-wins): `value()` / `next(push)`, no pop, erased to an `Option<T>` register. | ✅ `fn_ring.snt` (overwrite-oldest) + `fn_flow.snt` (newest-wins) oracle-pass bit-for-bit; `fifo` goldens unchanged |
-| **CHAN3** | Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: wiring a non-backpressure-aware producer to a `Sender` is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | a cross-module producer/consumer example oracle-passes; an ungated producer is rejected at type-check |
+| **CHAN3** | ✅ Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: a `fifo` push is a `Push<T>` token only a `Sender` makes, so an ungated push is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | ✅ `fn_fifo_views.snt` oracle-passes; a cross-module producer/consumer compiles and runs; a raw `Option` push is rejected at type-check |
 | **CHAN4** | Deep **BRAM-backed opaque** `fifo` IR primitive (guarded out of SROA, new side-vector + Verilog emitter + sim path); `front()` becomes a registered `Static(1)` first-word-fall-through read. Gated on depth. | a deep FIFO oracle-passes accounting for the 1-cycle read latency |
 
 #### CHAN3 / CHAN4 surface (proposed, v0.4)
@@ -1437,7 +1437,7 @@ register-backed. A differential test drives a register `fifo` and a BRAM
 `fifo` with the same random pushes and pops and requires identical outputs
 every cycle.
 
-**CHAN3 — a push must come from a `Sender`.** `self.q.sender()` returns a
+**CHAN3 — a push must come from a `Sender` (realized).** `self.q.sender()` returns a
 `Sender<T, N>` view, which exposes `is_full()` and `len()`, and
 `self.q.receiver()` returns a `Receiver<T, N>`, which exposes `front()`,
 `is_empty()`, and `len()`. Both are plain values: they can be passed to
@@ -1445,16 +1445,19 @@ functions in other modules, but they can't change the queue. The one
 `next()` on the owner still commits.
 
 `fifo::next` takes its push as a **`Push<T>` token**. The only way to make a
-`Push<T>` is `tx.try_push(v)` (a push that fires only when `!tx.is_full()`)
-or `Push::none()`. A producer therefore can't push into a full lossless
-queue; dropping is unrepresentable rather than merely detectable. A `ring`
+`Push<T>` is through a `Sender`: `tx.try_push(v)` or `tx.offer(o)` (for an
+`Option<T>`), each of which pushes only when `!tx.is_full()`, or
+`tx.no_push()`. A producer therefore can't push into a full lossless queue;
+dropping is unrepresentable rather than merely detectable. (Associated
+functions such as `Push::none()` aren't in the language, so the empty push is a
+`Sender` method.) A `ring`
 (overwrite-oldest) keeps taking a plain `Option<T>`, because dropping is its
 contract. This is a breaking change to `fifo::next`, which takes an
 `Option<T>` today.
 
 ```
 fn produce(tx: Sender<u8, 4>, data: u8, ready: u1) -> Push<u8> {
-    if ready == 1 { tx.try_push(data) } else { Push::none() }
+    if ready == 1 { tx.try_push(data) } else { tx.no_push() }
 }
 ...
 let push = produce(self.q.sender(), data, ready);

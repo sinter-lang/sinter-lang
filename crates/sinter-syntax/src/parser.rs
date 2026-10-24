@@ -999,6 +999,29 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 depth: Box::new(depth),
             })
         }
+        Rule::f_sender_ty | Rule::f_receiver_ty => {
+            let kind = if inner.as_rule() == Rule::f_sender_ty {
+                ChannelKind::Sender
+            } else {
+                ChannelKind::Receiver
+            };
+            let mut it = inner.into_inner();
+            let elem = parse_typeref(next_pair(&mut it, "view element type")?)?;
+            let depth = parse_mem_depth(next_pair(&mut it, "view capacity")?)?;
+            Ok(TypeRef::Channel {
+                kind,
+                elem: Box::new(elem),
+                depth: Box::new(depth),
+            })
+        }
+        Rule::f_push_ty => {
+            let elem = parse_typeref(first_inner(inner, "push element type")?)?;
+            Ok(TypeRef::Channel {
+                kind: ChannelKind::Push,
+                elem: Box::new(elem),
+                depth: Box::new(Expr::Literal(1)),
+            })
+        }
         Rule::f_flow_ty => {
             // `flow<T>` (DESIGN §6.11 / §9.8) — depth-1 newest-wins, so source
             // names no capacity and we synthesize the `1` the type implies.

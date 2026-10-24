@@ -32,10 +32,20 @@
 //! Common to all: a `pop` when empty is inert, a same-cycle push+pop streams
 //! through (READ_FIRST), and everything resets empty (all-zero / `None`), so the
 //! oracle sees no `X`.
+//!
+//! **Views and the push token (CHAN3).** A `fifo<T, N>` also gets
+//! `sender()` / `receiver()`, returning `Sender<T, N>` / `Receiver<T, N>`
+//! snapshot structs, and its `next` takes its push as a `Push<T>`, a struct
+//! that only a `Sender`'s `try_push` / `offer` / `no_push` construct, each
+//! refusing the word when the queue is full. So a lossless queue can't be
+//! overfilled. These types may appear anywhere a type can (signatures, `let`
+//! annotations), so every type in the program is rewritten, not only fields.
 
 use std::collections::BTreeMap;
 
-use sinter_syntax::ast::{ChannelKind, Expr, Item, Pos, Program, Type, TypeRef};
+use sinter_syntax::ast::{
+    Block, ChannelKind, Expr, Item, MatchArm, Param, Pos, Program, Stmt, Type, TypeRef,
+};
 use sinter_syntax::parse_program;
 
 use crate::error::CompileError;
@@ -52,7 +62,19 @@ fn kind_src(kind: ChannelKind) -> &'static str {
         ChannelKind::Fifo => "fifo",
         ChannelKind::Ring => "ring",
         ChannelKind::Flow => "flow",
+        ChannelKind::Sender => "Sender",
+        ChannelKind::Receiver => "Receiver",
+        ChannelKind::Push => "Push",
     }
+}
+
+/// Whether a kind is channel *state* (a queue held in a field) rather than a
+/// view or push token, which are plain values.
+fn is_state(kind: ChannelKind) -> bool {
+    matches!(
+        kind,
+        ChannelKind::Fifo | ChannelKind::Ring | ChannelKind::Flow
+    )
 }
 
 /// One channel monomorphization → a synthesized `struct` + `impl`.
@@ -69,12 +91,17 @@ struct Mono {
     cbits: u32,
 }
 
-/// Whether any struct field in `program` is (or contains) a channel type.
+/// Whether `program` mentions a channel type anywhere (a field, a signature,
+/// or a `let` annotation).
 pub fn has_channel(program: &Program) -> bool {
-    program
-        .items
-        .iter()
-        .any(|it| matches!(it, Item::Struct(s) if s.fields.iter().any(|f| type_has_channel(&f.ty))))
+    let mut found = false;
+    let mut probe = program.clone();
+    // The visitor only reads; `Ok` keeps walking.
+    let _ = for_each_type(&mut probe, &mut |t| {
+        found |= type_has_channel(t);
+        Ok(())
+    });
+    found
 }
 
 fn type_has_channel(t: &TypeRef) -> bool {
@@ -87,46 +114,96 @@ fn type_has_channel(t: &TypeRef) -> bool {
     }
 }
 
-/// Lower every channel-typed field to a synthesized `struct` + `impl`.
-pub fn desugar_channels(program: &Program) -> Result<Program, CompileError> {
-    // 1. Collect the distinct monomorphizations from struct fields, validating
-    //    the element type and capacity as we go.
+/// The source spelling of each synthesized channel struct name, e.g.
+/// `Push_u8` → `Push<u8>`, so diagnostics can show what the user wrote.
+pub fn source_names(program: &Program) -> Vec<(String, String)> {
     let mut monos: BTreeMap<String, Mono> = BTreeMap::new();
+    let mut probe = program.clone();
+    let _ = for_each_type(&mut probe, &mut |t| rewrite_type(t, &mut monos));
+    let fifos: Vec<(String, usize)> = monos
+        .values()
+        .filter(|m| {
+            matches!(
+                m.kind,
+                ChannelKind::Fifo | ChannelKind::Sender | ChannelKind::Receiver
+            )
+        })
+        .map(|m| (m.elem_src.clone(), m.n))
+        .collect();
+    for (elem_src, n) in fifos {
+        for kind in [
+            ChannelKind::Sender,
+            ChannelKind::Receiver,
+            ChannelKind::Push,
+        ] {
+            let m = mono_for(kind, elem_src.clone(), n);
+            monos.entry(m.name.clone()).or_insert(m);
+        }
+    }
+    monos
+        .into_values()
+        .map(|m| {
+            let ks = kind_src(m.kind);
+            let src = match m.kind {
+                ChannelKind::Flow | ChannelKind::Push => format!("{ks}<{}>", m.elem_src),
+                _ => format!("{ks}<{}, {}>", m.elem_src, m.n),
+            };
+            (m.name, src)
+        })
+        .collect()
+}
+
+/// Lower every channel type to a synthesized `struct` + `impl`.
+pub fn desugar_channels(program: &Program) -> Result<Program, CompileError> {
+    // 1. Validate channel fields: queue state takes no initializer and must be
+    //    held in a plain field.
     for it in &program.items {
         let Item::Struct(s) = it else { continue };
         for f in &s.fields {
             match &f.ty {
-                TypeRef::Channel { kind, elem, depth } => {
-                    if f.default.is_some() {
-                        return Err(sem(
-                            f.pos,
-                            format!(
-                                "a `{}` field (`{}`) resets empty and takes no initializer",
-                                kind_src(*kind),
-                                f.name
-                            ),
-                        ));
-                    }
-                    let m = build_mono(*kind, elem, depth, f.pos)?;
-                    monos.entry(m.name.clone()).or_insert(m);
+                TypeRef::Channel { kind, .. } if is_state(*kind) && f.default.is_some() => {
+                    return Err(sem(
+                        f.pos,
+                        format!(
+                            "a `{}` field (`{}`) resets empty and takes no initializer",
+                            kind_src(*kind),
+                            f.name
+                        ),
+                    ));
                 }
+                TypeRef::Channel { .. } => {}
                 other => reject_nested_channel(other, f.pos)?,
             }
         }
     }
+
+    // 2. Rewrite every channel type, wherever it appears, to its synthesized
+    //    struct name, collecting the distinct monomorphizations. A `fifo`
+    //    brings its views and push token with it.
+    let mut out = program.clone();
+    let mut monos: BTreeMap<String, Mono> = BTreeMap::new();
+    for_each_type(&mut out, &mut |t| rewrite_type(t, &mut monos))?;
     if monos.is_empty() {
         return Ok(program.clone());
     }
-
-    // 2. Rewrite each channel field type to its synthesized struct name.
-    let mut out = program.clone();
-    for it in &mut out.items {
-        let Item::Struct(s) = it else { continue };
-        for f in &mut s.fields {
-            if let TypeRef::Channel { kind, elem, depth } = &f.ty {
-                let name = build_mono(*kind, elem, depth, f.pos)?.name;
-                f.ty = TypeRef::Named(name);
-            }
+    let fifos: Vec<(String, usize)> = monos
+        .values()
+        .filter(|m| {
+            matches!(
+                m.kind,
+                ChannelKind::Fifo | ChannelKind::Sender | ChannelKind::Receiver
+            )
+        })
+        .map(|m| (m.elem_src.clone(), m.n))
+        .collect();
+    for (elem_src, n) in fifos {
+        for kind in [
+            ChannelKind::Sender,
+            ChannelKind::Receiver,
+            ChannelKind::Push,
+        ] {
+            let m = mono_for(kind, elem_src.clone(), n);
+            monos.entry(m.name.clone()).or_insert(m);
         }
     }
 
@@ -147,6 +224,145 @@ pub fn desugar_channels(program: &Program) -> Result<Program, CompileError> {
     Ok(out)
 }
 
+/// Replace `t` (and any channel type inside it) with its synthesized struct
+/// name, recording the monomorphization.
+fn rewrite_type(t: &mut TypeRef, monos: &mut BTreeMap<String, Mono>) -> Result<(), CompileError> {
+    match t {
+        TypeRef::Channel { kind, elem, depth } => {
+            let m = build_mono(*kind, elem, depth, Pos::default())?;
+            *t = TypeRef::Named(m.name.clone());
+            monos.entry(m.name.clone()).or_insert(m);
+            Ok(())
+        }
+        TypeRef::Array { elem, .. } => rewrite_type(elem, monos),
+        TypeRef::Tuple(ts) => ts.iter_mut().try_for_each(|t| rewrite_type(t, monos)),
+        TypeRef::Option(inner) | TypeRef::Mem { elem: inner, .. } => rewrite_type(inner, monos),
+        _ => Ok(()),
+    }
+}
+
+/// Call `f` on every type the program names: struct fields, `const`s,
+/// function and method signatures, `let` annotations, and casts.
+fn for_each_type(
+    program: &mut Program,
+    f: &mut dyn FnMut(&mut TypeRef) -> Result<(), CompileError>,
+) -> Result<(), CompileError> {
+    fn func(
+        fun: &mut sinter_syntax::ast::Func,
+        f: &mut dyn FnMut(&mut TypeRef) -> Result<(), CompileError>,
+    ) -> Result<(), CompileError> {
+        for p in &mut fun.params {
+            if let Param::Typed { ty, .. } = p {
+                f(ty)?;
+            }
+        }
+        f(&mut fun.ret)?;
+        block(&mut fun.body, f)
+    }
+    fn block(
+        b: &mut Block,
+        f: &mut dyn FnMut(&mut TypeRef) -> Result<(), CompileError>,
+    ) -> Result<(), CompileError> {
+        for stmt in &mut b.stmts {
+            match stmt {
+                Stmt::Let { ty, value, .. } => {
+                    if let Some(t) = ty {
+                        f(t)?;
+                    }
+                    expr(value, f)?;
+                }
+                Stmt::Yield { value, .. } => {
+                    if let Some(v) = value {
+                        expr(v, f)?;
+                    }
+                }
+                Stmt::Assert { cond, .. } => expr(cond, f)?,
+            }
+        }
+        expr(&mut b.tail, f)
+    }
+    fn expr(
+        e: &mut Expr,
+        f: &mut dyn FnMut(&mut TypeRef) -> Result<(), CompileError>,
+    ) -> Result<(), CompileError> {
+        match e {
+            Expr::Cast { expr: x, ty, .. } => {
+                f(ty)?;
+                expr(x, f)
+            }
+            Expr::Unary { expr: x, .. }
+            | Expr::Some(x)
+            | Expr::Try(x)
+            | Expr::Field { base: x, .. } => expr(x, f),
+            Expr::Binary { lhs, rhs, .. }
+            | Expr::Index {
+                base: lhs,
+                index: rhs,
+            } => {
+                expr(lhs, f)?;
+                expr(rhs, f)
+            }
+            Expr::If { cond, then, els } => {
+                expr(cond, f)?;
+                expr(then, f)?;
+                expr(els, f)
+            }
+            Expr::Slice { base, hi, lo } => {
+                expr(base, f)?;
+                expr(hi, f)?;
+                expr(lo, f)
+            }
+            Expr::Call { func: callee, args } => {
+                expr(callee, f)?;
+                args.iter_mut().try_for_each(|a| expr(a, f))
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                expr(receiver, f)?;
+                args.iter_mut().try_for_each(|a| expr(a, f))
+            }
+            Expr::StructLit { fields, .. } => {
+                fields.iter_mut().try_for_each(|fi| expr(&mut fi.value, f))
+            }
+            Expr::Tuple(items) | Expr::Array(items) => {
+                items.iter_mut().try_for_each(|i| expr(i, f))
+            }
+            Expr::ArrayRepeat { value, len } => {
+                expr(value, f)?;
+                expr(len, f)
+            }
+            Expr::Match { scrutinee, arms } => {
+                expr(scrutinee, f)?;
+                arms.iter_mut()
+                    .try_for_each(|MatchArm { body, .. }| expr(body, f))
+            }
+            Expr::Block(b) => block(b, f),
+            Expr::None
+            | Expr::Literal(_)
+            | Expr::Ident(_)
+            | Expr::Path(_)
+            | Expr::IncludeHex(_) => Ok(()),
+        }
+    }
+    for item in &mut program.items {
+        match item {
+            Item::Struct(s) => {
+                for fld in &mut s.fields {
+                    f(&mut fld.ty)?;
+                }
+            }
+            Item::Const(c) => f(&mut c.ty)?,
+            Item::Func(fun) => func(fun, f)?,
+            Item::Impl(im) => {
+                for m in &mut im.methods {
+                    func(m, f)?;
+                }
+            }
+            Item::Enum(_) | Item::Mod(_) | Item::Use(_) => {}
+        }
+    }
+    Ok(())
+}
+
 fn build_mono(
     kind: ChannelKind,
     elem: &TypeRef,
@@ -160,28 +376,37 @@ fn build_mono(
             .map_err(|_| sem(pos, format!("`{ks}` capacity `{v}` is too large")))?,
         _ => return Err(sem(pos, format!("a `{ks}` capacity must be a literal"))),
     };
-    // A `flow<T>` is depth-1 by construction (the parser synthesizes the `1`), so
-    // the power-of-two capacity rule applies only to the queue kinds.
-    if kind != ChannelKind::Flow && (n < 2 || !n.is_power_of_two()) {
+    // A `flow<T>` / `Push<T>` is depth-1 by construction (the parser synthesizes
+    // the `1`), so the power-of-two capacity rule applies only to the others.
+    if !matches!(kind, ChannelKind::Flow | ChannelKind::Push) && (n < 2 || !n.is_power_of_two()) {
         return Err(sem(
             pos,
             format!("a `{ks}` capacity (`{n}`) must be a power of two ≥ 2"),
         ));
     }
+    Ok(mono_for(kind, elem_src, n))
+}
+
+/// The monomorphization of `kind` over element `elem_src` and capacity `n`.
+fn mono_for(kind: ChannelKind, elem_src: String, n: usize) -> Mono {
     // Bits to hold the occupancy `0..=N` (e.g. N=16 -> 0..=16 needs 5 bits).
     let cbits = u32::BITS - (n as u32).leading_zeros();
+    let e = mangle(&elem_src);
     let name = match kind {
-        ChannelKind::Fifo => format!("Fifo_{}_{}", mangle(&elem_src), n),
-        ChannelKind::Ring => format!("Ring_{}_{}", mangle(&elem_src), n),
-        ChannelKind::Flow => format!("Flow_{}", mangle(&elem_src)),
+        ChannelKind::Fifo => format!("Fifo_{e}_{n}"),
+        ChannelKind::Ring => format!("Ring_{e}_{n}"),
+        ChannelKind::Flow => format!("Flow_{e}"),
+        ChannelKind::Sender => format!("Sender_{e}_{n}"),
+        ChannelKind::Receiver => format!("Receiver_{e}_{n}"),
+        ChannelKind::Push => format!("Push_{e}"),
     };
-    Ok(Mono {
+    Mono {
         kind,
         name,
         elem_src,
         n,
         cbits,
-    })
+    }
 }
 
 /// Render a scalar element type as Sinter source (a channel holds scalars only).
@@ -271,6 +496,76 @@ fn gen_source(m: &Mono) -> String {
             },
         ),
         ChannelKind::Flow => gen_flow_source(m),
+        ChannelKind::Sender | ChannelKind::Receiver | ChannelKind::Push => gen_view_source(m),
+    }
+}
+
+/// Generate a `fifo`'s producer / consumer view or its push token (CHAN3).
+fn gen_view_source(m: &Mono) -> String {
+    let Mono {
+        kind,
+        name,
+        elem_src: ts,
+        n,
+        cbits,
+    } = m;
+    let push = format!("Push_{}", mangle(ts));
+    match kind {
+        ChannelKind::Sender => format!(
+            "\
+struct {name} {{
+    full: u1 = 0,
+    count: u{cbits} = 0,
+}}
+
+impl {name} {{
+    fn is_full(self) -> u1 {{
+        self.full
+    }}
+    fn len(self) -> u{cbits} {{
+        self.count
+    }}
+    // Push `v` if the queue has room (a full `fifo<_, {n}>` refuses it).
+    fn try_push(self, v: {ts}) -> {push} {{
+        {push} {{ v: if self.full == 1 {{ None }} else {{ Some(v) }} }}
+    }}
+    // Push the word in `o`, if any, when the queue has room.
+    fn offer(self, o: Option<{ts}>) -> {push} {{
+        {push} {{ v: if self.full == 1 {{ None }} else {{ o }} }}
+    }}
+    fn no_push(self) -> {push} {{
+        {push} {{ v: None }}
+    }}
+}}
+"
+        ),
+        ChannelKind::Receiver => format!(
+            "\
+struct {name} {{
+    head: Option<{ts}>,
+    count: u{cbits} = 0,
+}}
+
+impl {name} {{
+    fn front(self) -> Option<{ts}> {{
+        self.head
+    }}
+    fn is_empty(self) -> u1 {{
+        if self.count == 0 {{ 1 }} else {{ 0 }}
+    }}
+    fn len(self) -> u{cbits} {{
+        self.count
+    }}
+}}
+"
+        ),
+        _ => format!(
+            "\
+struct {name} {{
+    v: Option<{ts}>,
+}}
+"
+        ),
     }
 }
 
@@ -309,6 +604,28 @@ fn gen_queue_source(m: &Mono, policy: &QueuePolicy) -> String {
     }
     let data_next = slots.join(",\n            ");
 
+    // A lossless `fifo` takes its push as a `Push<T>` token, which only its
+    // `Sender` view makes (CHAN3); a lossy `ring` takes a plain `Option<T>`.
+    let e = mangle(ts);
+    let (push_param, push_unwrap, views) = if m.kind == ChannelKind::Fifo {
+        (
+            format!("push_tok: Push_{e}"),
+            format!("let push: Option<{ts}> = push_tok.v;"),
+            format!(
+                "\
+    fn sender(self) -> Sender_{e}_{n} {{
+        Sender_{e}_{n} {{ full: self.is_full(), count: self.count }}
+    }}
+    fn receiver(self) -> Receiver_{e}_{n} {{
+        Receiver_{e}_{n} {{ head: self.front(), count: self.count }}
+    }}
+"
+            ),
+        )
+    } else {
+        (format!("push: Option<{ts}>"), String::new(), String::new())
+    };
+
     format!(
         "\
 struct {name} {{
@@ -329,7 +646,8 @@ impl {name} {{
     fn len(self) -> u{cbits} {{
         self.count
     }}
-    fn next(self, push: Option<{ts}>, pop: u1) -> {name} {{
+{views}    fn next(self, {push_param}, pop: u1) -> {name} {{
+        {push_unwrap}
         let popf: u1 = if self.count == 0 {{ 0 }} else {{ pop }};
         let hp: u1 = match push {{ Some(_) => 1, None => 0 }};
         {occupancy_flag}

@@ -130,6 +130,12 @@ const EXAMPLES: &[Example] = &[
     // drop-oldest path (the `shiftf` term a `fifo` never takes) alongside ordinary
     // enqueue/pop — co-simulated sim vs Verilog bit-for-bit
     // (DESIGN §6.11 / §9.8 / §7.4).
+    // CHAN3: a fifo's producer and consumer each see only a directional view
+    // (`Sender` / `Receiver`); pushes go through `Sender::offer`.
+    Example {
+        name: "fn_fifo_views",
+        source: include_str!("../../../examples/fn_fifo_views.snt"),
+    },
     Example {
         name: "fn_ring",
         source: include_str!("../../../examples/fn_ring.snt"),

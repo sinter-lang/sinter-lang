@@ -43,6 +43,32 @@ impl CompileError {
         }
     }
 
+    /// Replace synthesized type names in the message with their source
+    /// spellings (`(synthesized, source)` pairs), whole words only.
+    #[must_use]
+    pub(crate) fn rename_types(self, names: &[(String, String)]) -> Self {
+        if names.is_empty() {
+            return self;
+        }
+        let rename = |msg: String| {
+            names
+                .iter()
+                .fold(msg, |m, (from, to)| replace_word(&m, from, to))
+        };
+        match self {
+            CompileError::Semantic { module, pos, msg } => CompileError::Semantic {
+                module,
+                pos,
+                msg: rename(msg),
+            },
+            CompileError::InFile(mut l) => {
+                l.msg = rename(std::mem::take(&mut l.msg));
+                CompileError::InFile(l)
+            }
+            other => other,
+        }
+    }
+
     /// Attach source context from a project's `files` (indexed by
     /// [`Pos::file`]): a [`CompileError::Semantic`] whose position lies in one
     /// of them becomes a [`CompileError::InFile`]. Any other error, or one
@@ -116,6 +142,26 @@ impl fmt::Display for Located {
         writeln!(f, "{gutter} | {pad}^")?;
         write!(f, "{gutter} = in `{}`", self.context)
     }
+}
+
+/// `text` with every whole-word occurrence of `from` replaced by `to`.
+fn replace_word(text: &str, from: &str, to: &str) -> String {
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(from) {
+        let before = rest[..i].chars().next_back();
+        let after = rest[i + from.len()..].chars().next();
+        out.push_str(&rest[..i]);
+        if before.is_some_and(is_word) || after.is_some_and(is_word) {
+            out.push_str(from);
+        } else {
+            out.push_str(to);
+        }
+        rest = &rest[i + from.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Mask `value` to the low `width` bits.

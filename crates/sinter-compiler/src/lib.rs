@@ -108,17 +108,29 @@ fn compile_program(
     base: Option<&std::path::Path>,
     faults: FaultMode,
 ) -> Result<Design, CompileError> {
-    use sinter_syntax::ast::{FnColor, Item};
     let mut program = program;
     include_expand::expand_includes(&mut program, base)?;
     // Lower channel fields (`fifo`/`ring`/`flow`) to synthesized struct + impl
     // (DESIGN §9.8) before the staged-color desugars, so they see only ordinary
     // state.
-    let program = if channel_desugar::has_channel(&program) {
-        channel_desugar::desugar_channels(&program)?
+    // Errors after this point name the synthesized channel structs; show them
+    // as the user wrote them (`Push_u8` → `Push<u8>`).
+    let (program, channel_names) = if channel_desugar::has_channel(&program) {
+        let names = channel_desugar::source_names(&program);
+        (channel_desugar::desugar_channels(&program)?, names)
     } else {
-        program
+        (program, Vec::new())
     };
+    compile_lowered(program, base, faults).map_err(|e| e.rename_types(&channel_names))
+}
+
+/// The rest of [`compile_program`], after the channel desugar.
+fn compile_lowered(
+    program: sinter_syntax::ast::Program,
+    base: Option<&std::path::Path>,
+    faults: FaultMode,
+) -> Result<Design, CompileError> {
+    use sinter_syntax::ast::{FnColor, Item};
     let has_pipeline = program
         .items
         .iter()

@@ -360,3 +360,85 @@ fn errors_name_the_channel_kind() {
         "a `flow` element must be a scalar",
     );
 }
+
+// --- CHAN3: Sender / Receiver views and the Push token ---------------------
+
+#[test]
+fn a_fifo_push_must_come_from_its_sender() {
+    compile_err(
+        "struct Q { pub q: fifo<u8, 4>, }
+         impl Q {
+             #[clock(domain = sys)]
+             fn tick(self, x: Option<u8>) -> Q { Q { q: self.q.next(x, 0) } }
+         }",
+        "expected `Push<u8>`, found `Option<u8>`",
+    );
+    // A lossy `ring` still takes a plain `Option`: dropping is its contract.
+    compile_str(
+        "struct Q { pub r: ring<u8, 4>, }
+         impl Q {
+             #[clock(domain = sys)]
+             fn tick(self, x: Option<u8>) -> Q { Q { r: self.r.next(x, 0) } }
+         }",
+    )
+    .expect("ring takes Option");
+}
+
+#[test]
+fn a_full_fifo_refuses_a_sender_push() {
+    let design = compile_str(include_str!("../../../examples/fn_fifo_views.snt")).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    // Offer five words with no pops: the fifth is refused, never overwriting.
+    for v in 1..=5 {
+        fifo_step(&mut sim, Some(v), 0);
+    }
+    let (head, _) = fifo_step(&mut sim, None, 1);
+    assert_eq!(head, Some(1));
+    let drained: Vec<_> = (0..4).map(|_| fifo_step(&mut sim, None, 1).0).collect();
+    assert_eq!(drained, [Some(2), Some(3), Some(4), None]);
+}
+
+#[test]
+fn views_cross_module_boundaries() {
+    let dir = std::env::temp_dir().join("sinter-chan3-views");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create dir");
+    std::fs::write(
+        dir.join("ends.snt"),
+        "pub fn produce(tx: Sender<u8, 4>, x: u8, go: u1) -> Push<u8> {
+             if go == 1 { tx.try_push(x) } else { tx.no_push() }
+         }
+         pub fn consume(rx: Receiver<u8, 4>) -> u1 {
+             if rx.is_empty() == 1 { 0 } else { 1 }
+         }\n",
+    )
+    .expect("write");
+    std::fs::write(
+        dir.join("main.snt"),
+        "mod ends;
+         use root::ends::*;
+         struct Q { pub q: fifo<u8, 4>, }
+         impl Q {
+             #[clock(domain = sys)]
+             fn tick(self, x: u8, go: u1) -> (Q, Option<u8>) {
+                 let push = produce(self.q.sender(), x, go);
+                 (Q { q: self.q.next(push, consume(self.q.receiver())) }, self.q.front())
+             }
+         }\n",
+    )
+    .expect("write");
+    let design = sinter_compiler::compile_project(&dir.join("main.snt")).expect("compiles");
+    let mut sim = Simulator::new(&design.modules[0]);
+    let mut step = |x: u64, go: u64| {
+        let out = sim.step(
+            &[("x".to_string(), x), ("go".to_string(), go)]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        );
+        (out["out_is_some"], out["out_payload"])
+    };
+    step(7, 1);
+    // The consumer pops whenever it can, so each word passes through once.
+    assert_eq!(step(0, 0), (1, 7));
+    assert_eq!(step(0, 0), (0, 0));
+}

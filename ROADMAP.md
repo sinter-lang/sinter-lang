@@ -77,7 +77,8 @@ The language features the RV32 cores showed were missing.
 - [x] Byte-enable `mem` writes (§9.6), and RV32 byte / halfword loads and
       stores (`LB` / `LH` / `LBU` / `LHU` / `SB` / `SH`) in both cores.
 - [ ] BRAM-backed deep FIFO (CHAN4, §9.8).
-- [ ] Directional `Sender` / `Receiver` channel views (CHAN3, §6.11).
+- [x] Directional `Sender` / `Receiver` channel views (CHAN3, §6.11), with a
+      `Push<T>` token so a lossless `fifo` can't be overfilled.
 
 ## v0.5 — clock domains
 

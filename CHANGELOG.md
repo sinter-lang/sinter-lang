@@ -21,6 +21,20 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   assertion. The pipelined core's register file moved into a
   `mem<u32, 32, 2>`, so it maps to distributed RAM: 2.2k LUTs instead of 5.2k.
 - `Simulator::memory(name)` reads a memory's current contents.
+- **Channel views** (CHAN3, DESIGN §6.11 / §9.8): `q.sender()` /
+  `q.receiver()` return `Sender<T, N>` / `Receiver<T, N>` views of a `fifo`,
+  usable as ordinary values across modules (`examples/fn_fifo_views.snt`).
+
+### Changed
+
+- **Breaking: a `fifo` push is a `Push<T>` token** (CHAN3). `fifo::next`
+  takes a `Push<T>`, which only the queue's `Sender` makes (`try_push`,
+  `offer`, `no_push`), each refusing the word when the queue is full, so a
+  lossless queue can't be overfilled. Replace `q.next(Some(x), pop)` with
+  `q.next(q.sender().try_push(x), pop)`, or `q.sender().offer(opt)` for an
+  `Option`. `ring` still takes an `Option`.
+- Errors name channel types as written (`Push<u8>`, `fifo<u8, 4>`) rather
+  than as their synthesized structs.
 
 ## [0.3.0] — unreleased
 

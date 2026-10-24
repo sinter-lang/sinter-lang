@@ -684,6 +684,14 @@ pub enum ChannelKind {
     /// `flow<T>` — depth-1, newest-wins. A single valid slot read with `value()`;
     /// there is no pop. A "latest sample" register.
     Flow,
+    /// `Sender<T, N>` — a `fifo<T, N>`'s producer view (CHAN3): `is_full()`,
+    /// `len()`, and the only way to make a [`ChannelKind::Push`].
+    Sender,
+    /// `Receiver<T, N>` — a `fifo<T, N>`'s consumer view (CHAN3): `front()`,
+    /// `is_empty()`, `len()`.
+    Receiver,
+    /// `Push<T>` — a push request for a `fifo`, made only by a `Sender` (CHAN3).
+    Push,
 }
 
 /// A block: zero or more statements followed by a tail expression (its value).
