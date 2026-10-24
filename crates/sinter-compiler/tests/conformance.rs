@@ -162,6 +162,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_mailbox",
         source: include_str!("../../../examples/fn_mailbox.snt"),
     },
+    // CLK4: an `async_fifo<u8, 16>` from a period-3 domain to a period-4 one:
+    // gray pointers through synchronizers and a dual-clock RAM.
+    Example {
+        name: "fn_async_fifo",
+        source: include_str!("../../../examples/fn_async_fifo.snt"),
+    },
     Example {
         name: "fn_ring",
         source: include_str!("../../../examples/fn_ring.snt"),

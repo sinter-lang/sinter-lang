@@ -613,7 +613,7 @@ synchronizer can't be forgotten:
 | `sync<from, to>` | `send(v: u1)` | `recv()`, `value() -> u1` | A source flip-flop, then a 2-flop synchronizer. For single bits (levels). |
 | `pulse<from, to>` | `send(fire: u1)` | `recv()`, `value() -> u1` | Toggle-based. `value()` is high for one destination cycle per source pulse. Pulses closer than about three destination cycles may merge. |
 | `mailbox<T, from, to>` | `sender()`, `send(push: Push<T>)` | `receiver()`, `recv(pop: u1)` | A req / ack handshake carrying one multi-bit word at a time. No RAM. |
-| `async_fifo<T, N, from, to>` | `sender()`, `send(push: Push<T>)` | `receiver()`, `recv(pop: u1)` | A dual-clock FIFO: gray-coded pointers, block RAM written on `from` and read on `to`, and a first-word-fall-through `front()`. |
+| `async_fifo<T, N, from, to>` | `sender()`, `send(push: Push<T>)` | `receiver()`, `recv(pop: u1)` | A dual-clock FIFO: gray-coded pointers, block RAM written on `from` and read on `to`, and a first-word-fall-through `front()`. `N` is a power of two, at least 2. |
 
 `mailbox` and `async_fifo` use the `fifo`'s `Sender` / `Receiver` / `Push<T>`
 views (CHAN3), so pushes stay lossless. A `Sender` lives in the source domain
@@ -1664,7 +1664,7 @@ that the oracle checks against the real Verilog (§6.15).
 Deferred: clock-generating modules (§6.7); inout / tristate ports; Rust-side
 models; `mem` / `rom` state inside a model.
 
-### 9.14 Clock domains — proposed milestone (CLK1–CLK4)
+### 9.14 Clock domains — milestone (CLK1–CLK4)
 
 Several clocks in one design, with clock-domain crossings that are type-checked
 (§6.7).
@@ -1674,7 +1674,7 @@ Several clocks in one design, with clock-domain crossings that are type-checked
 | **CLK1** | ✅ `#[domain(d)]` fields, one `#[clock(domain = d, period = p)]` tick per domain, and the domain rule checked on the IR. Per-domain clocks and reset synchronizers in Verilog. A multi-clock edge scheduler in the simulator, the Verilator harness, `sinter sim` (rows are edge times), CSV stimulus, and VCD. | ✅ `fn_two_clocks.snt` (periods 3 and 7) passes the oracle, and swapping the harness's periods makes it fail; reading or changing another domain's field, even through a helper, is rejected |
 | **CLK2** | ✅ The CDC mechanism: synchronizer registers that may sample another domain, side methods called exactly once per tick. `sync<from, to>` and `pulse<from, to>`. | ✅ `fn_cdc_sync.snt` passes the oracle; a `pulse` delivers every event exactly once with the destination 2.5× slower to 7× faster than the source; a missing, misplaced, repeated, or conditional side call is rejected |
 | **CLK3** | ✅ `mailbox<T, from, to>` with `Sender` / `Receiver` / `Push<T>`. | ✅ every word arrives exactly once, in order, at five period ratios (1:7 to 7:1) under random producer / consumer stalls; `fn_mailbox.snt` passes the oracle |
-| **CLK4** | `async_fifo<T, N, from, to>`: dual-clock memory in the IR (a write port on one domain, a read port on another), gray-coded pointers, first-word fall-through. | As CLK3, at full throughput, with the RAM mapped to block RAM |
+| **CLK4** | ✅ `async_fifo<T, N, from, to>`: dual-clock memory in the IR (a write port on one domain, a read port on another), gray-coded pointers, first-word fall-through. | ✅ as CLK3, and a consumer that pops every cycle takes a word every cycle; `fn_async_fifo.snt` passes the oracle; a 512 × 32 `async_fifo` maps to one ECP5 `DP16KD` |
 
 Deferred: clock gating, derived or related clocks (ratios, phases), PLL
 instantiation from Sinter, dual-clock `mem` as a user-visible type, and

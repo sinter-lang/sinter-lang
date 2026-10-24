@@ -221,7 +221,7 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   runs every program in `tests/rv32/programs/*.s` on both cores. Regenerate
   `prog.hex` from `prog.s` with `SINTER_BLESS=1 cargo test -p sinter-compiler
   --test rv32`.
-- **Clock domains** (CLK1, §6.7 / §9.14) — `#[domain(d)]` state fields and a
+- **Clock domains** (CLK1–CLK4, §6.7 / §9.14) — `#[domain(d)]` state fields and a
   `#[clock(domain = d, period = p)]` tick per domain, all on one state struct.
   `elaborate::build` lowers each tick, keeps only its domain's next state, and
   `check_domains` enforces the domain rule on the IR. Every `ir::Reg` / `Port`
@@ -233,7 +233,10 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   run before the channel desugar) are generated domain-tagged structs:
   `#[cdc_sync]` marks a synchronizer's first flop (exempt from the domain
   rule), `#[cdc_side(d)]` marks the `send` / `recv` each tick must call once
-  (`check_cdc_call`). These attributes are compiler-only.
+  (`check_cdc_call`), and `#[cdc_ram(w)]` marks a dual-clock `mem` (written by
+  domain `w`'s tick, read by its `#[domain]` tick). These attributes are
+  compiler-only. Shipped: `sync`, `pulse` (CLK2), `mailbox` (CLK3), and
+  `async_fifo` (CLK4).
 - **Legacy `module` surface** — the original minimal synchronous core (clocked
   `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
   **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
@@ -245,6 +248,5 @@ the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a
 only) and the `assert_static!` / `unreachable!()` SMT-prover bucket;
 elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),
-the `mailbox` / `async_fifo` crossings (CLK3–CLK4, §9.14), dual-clock / non-scalar-element
-memories, `include_bin!` and inferred-depth ROMs, and data-dependent (`Bounded` /
+user-visible dual-clock / non-scalar-element memories, `include_bin!` and inferred-depth ROMs, and data-dependent (`Bounded` /
 `Dynamic`) latencies with the §3.5 latency prover.

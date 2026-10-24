@@ -10,7 +10,9 @@
 //! - `#[cdc_sync]` on a field marks the first flip-flop of a synchronizer,
 //!   the one kind of register whose next state may sample another domain;
 //! - `#[cdc_side(d)]` on `send` / `recv` marks the method each domain's tick
-//!   must call exactly once per cycle.
+//!   must call exactly once per cycle;
+//! - `#[cdc_ram(w)]` on an `async_fifo`'s RAM makes it dual-clock: written by
+//!   domain `w`'s tick, read by the domain its `#[domain(..)]` names.
 //!
 //! User code may not use these attributes itself.
 
@@ -22,7 +24,7 @@ use sinter_syntax::parse_program;
 use crate::error::CompileError;
 
 /// The attributes reserved for synthesized crossings.
-const RESERVED_ATTRS: [&str; 3] = ["cdc", "cdc_sync", "cdc_side"];
+const RESERVED_ATTRS: [&str; 4] = ["cdc", "cdc_sync", "cdc_side", "cdc_ram"];
 
 fn sem(pos: Pos, msg: impl Into<String>) -> CompileError {
     CompileError::semantic("cdc", pos, msg)
@@ -53,6 +55,8 @@ struct Mono {
     to: String,
     /// The element type as source (`mailbox` / `async_fifo`), e.g. `u8`.
     elem: String,
+    /// The depth (`async_fifo`).
+    depth: usize,
 }
 
 /// A scalar element type as Sinter source; crossings carry scalars only.
@@ -145,9 +149,6 @@ pub fn desugar_cdc(program: &Program) -> Result<Program, CompileError> {
                 }
                 Some(_) => return Err(sem(f.pos, format!("an `{ks}` depth must be a literal"))),
             };
-            if *kind == CdcKind::AsyncFifo {
-                return Err(sem(f.pos, format!("`{ks}` is not implemented yet")));
-            }
             let name = mono_name(*kind, &elem, depth, from, to);
             monos.entry(name.clone()).or_insert(Mono {
                 kind: *kind,
@@ -155,6 +156,7 @@ pub fn desugar_cdc(program: &Program) -> Result<Program, CompileError> {
                 from: from.clone(),
                 to: to.clone(),
                 elem,
+                depth,
             });
             f.ty = TypeRef::Named(name);
         }
@@ -246,7 +248,7 @@ fn gen_source(m: &Mono) -> String {
         from,
         to,
         elem: ts,
-        ..
+        depth: n,
     } = m;
     // A channel view's synthesized name uses the mangled element type.
     let e = ts.replace('.', "p");
@@ -398,6 +400,150 @@ impl {name} {{
 }}
 "
         ),
-        CdcKind::AsyncFifo => String::new(),
+        CdcKind::AsyncFifo => gen_async_fifo(name, from, to, ts, *n),
     }
+}
+
+/// The source of `g` converted from gray code to binary, for a `bits`-wide
+/// value: the XOR of `g` shifted right by every amount below `bits`.
+fn gray_to_bin(g: &str, bits: u32) -> String {
+    let sbits = u32::BITS - bits.leading_zeros();
+    (0..bits)
+        .map(|k| {
+            if k == 0 {
+                g.to_string()
+            } else {
+                format!("({g} >> {k}_u{sbits})")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ^ ")
+}
+
+/// A dual-clock FIFO (CLK4): gray-coded pointers through 2-flop synchronizers
+/// and a RAM written on `from` and read on `to`, with a first-word-fall-through
+/// `front()` at full throughput.
+///
+/// The reader keeps the head word in `out` and up to one read in flight
+/// (`pend`, whose data is the RAM's read register). The pointer it sends back
+/// to the writer counts only words actually popped (`rdone`), so the slots of
+/// the words in `out` and in flight stay reserved: the writer can't overwrite
+/// them, and an in-flight word can be re-read while it waits.
+fn gen_async_fifo(name: &str, from: &str, to: &str, ts: &str, n: usize) -> String {
+    let abits = n.trailing_zeros();
+    let p = abits + 1; // pointer bits: one more than the address
+    let e = ts.replace('.', "p");
+    let sbits = u32::BITS - p.leading_zeros();
+    let rdone_sync = gray_to_bin("self.rgray_s2", p);
+    let wbin_sync = gray_to_bin("self.wgray_s2", p);
+    format!(
+        "\
+#[cdc(from = {from}, to = {to})]
+struct {name} {{
+    #[domain({from})]
+    wbin: u{p} = 0,
+    #[domain({from})]
+    wgray: u{p} = 0,
+    #[domain({from})]
+    #[cdc_sync]
+    rgray_s1: u{p} = 0,
+    #[domain({from})]
+    rgray_s2: u{p} = 0,
+    #[domain({to})]
+    #[cdc_ram({from})]
+    ram: mem<{ts}, {n}> = 0,
+    #[domain({to})]
+    rdone: u{p} = 0,
+    #[domain({to})]
+    rgray: u{p} = 0,
+    #[domain({to})]
+    #[cdc_sync]
+    wgray_s1: u{p} = 0,
+    #[domain({to})]
+    wgray_s2: u{p} = 0,
+    #[domain({to})]
+    out: {ts} = 0,
+    #[domain({to})]
+    out_valid: u1 = 0,
+    #[domain({to})]
+    pend: u1 = 0,
+}}
+
+impl {name} {{
+    // The `{from}` side's view: full when {n} words are in the queue.
+    fn sender(self) -> Sender<{ts}, {n}> {{
+        let rdone_sync: u{p} = {rdone_sync};
+        let used: u{p} = (self.wbin - rdone_sync) as u{p} wrap;
+        Sender_{e}_{n} {{ full: if used == {n} {{ 1 }} else {{ 0 }}, count: used }}
+    }}
+    #[cdc_side({from})]
+    fn send(self, push: Push<{ts}>) -> {name} {{
+        let go: u1 = match push.v {{ Some(_) => 1, None => 0 }};
+        let word: {ts} = match push.v {{ Some(v) => v, None => 0 }};
+        let wbin2: u{p} = (self.wbin + go) as u{p} wrap;
+        let waddr: u{abits} = self.wbin[{last}:0];
+        {name} {{
+            wbin: wbin2,
+            wgray: wbin2 ^ (wbin2 >> 1_u{sbits}),
+            rgray_s1: self.rgray,
+            rgray_s2: self.rgray_s1,
+            ram: self.ram.next(0, go, waddr, word),
+            rdone: self.rdone,
+            rgray: self.rgray,
+            wgray_s1: self.wgray_s1,
+            wgray_s2: self.wgray_s2,
+            out: self.out,
+            out_valid: self.out_valid,
+            pend: self.pend,
+        }}
+    }}
+    // The `{to}` side's view: the head word, wherever it is.
+    fn receiver(self) -> Receiver<{ts}, {n}> {{
+        let head: Option<{ts}> = if self.out_valid == 1 {{
+            Some(self.out)
+        }} else {{
+            if self.pend == 1 {{ Some(self.ram.value()) }} else {{ None }}
+        }};
+        let wbin_sync: u{p} = {wbin_sync};
+        let used: u{p} = (wbin_sync - self.rdone) as u{p} wrap;
+        Receiver_{e}_{n} {{ head: head, count: used }}
+    }}
+    #[cdc_side({to})]
+    fn recv(self, pop: u1) -> {name} {{
+        let occ: u2 = (self.out_valid + self.pend) as u2 wrap;
+        let take: u1 = if occ == 0 {{ 0 }} else {{ pop }};
+        let rdone2: u{p} = (self.rdone + take) as u{p} wrap;
+        let after: u2 = (occ - take) as u2 wrap;
+        let issued: u{p} = (self.rdone + occ) as u{p} wrap;
+        let wbin_sync: u{p} = {wbin_sync};
+        let avail: u{p} = (wbin_sync - issued) as u{p} wrap;
+        let issue: u1 = if avail != 0 & after <= 1 {{ 1 }} else {{ 0 }};
+        // When the in-flight word can't move up, keep it in flight by
+        // re-reading its slot. (Dropping it would also be correct, since its
+        // slot isn't popped and would be fetched again, but would cost a
+        // bubble when the consumer resumes.)
+        let keep: u1 = self.out_valid & self.pend & (take == 0);
+        let next_slot: u{abits} = (self.rdone[{last}:0] + 1) as u{abits} wrap;
+        let raddr: u{abits} = if issue == 1 {{ issued[{last}:0] }} else {{ next_slot }};
+        let ov2: u1 = if self.out_valid == 1 & take == 0 {{ 1 }} else {{ if self.pend == 1 & (take == 0 | self.out_valid == 1) {{ 1 }} else {{ 0 }} }};
+        let out2: {ts} = if self.out_valid == 1 & take == 0 {{ self.out }} else {{ self.ram.value() }};
+        {name} {{
+            wbin: self.wbin,
+            wgray: self.wgray,
+            rgray_s1: self.rgray_s1,
+            rgray_s2: self.rgray_s2,
+            ram: self.ram.next(raddr, 0, 0, 0),
+            rdone: rdone2,
+            rgray: rdone2 ^ (rdone2 >> 1_u{sbits}),
+            wgray_s1: self.wgray,
+            wgray_s2: self.wgray_s1,
+            out: out2,
+            out_valid: ov2,
+            pend: issue | keep,
+        }}
+    }}
+}}
+",
+        last = abits - 1,
+    )
 }

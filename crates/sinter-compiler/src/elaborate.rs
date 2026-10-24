@@ -328,6 +328,14 @@ struct Elaborator<'p> {
     cdc_calls: RefCell<Vec<String>>,
 }
 
+/// Each state leaf's domain, the `#[cdc_sync]` registers, and each dual-clock
+/// RAM's write domain (by path).
+type LeafDomains = (
+    HashMap<String, usize>,
+    std::collections::HashSet<String>,
+    HashMap<String, usize>,
+);
+
 /// One `#[clock]` root: a domain's tick (DESIGN §6.7).
 struct Root<'p> {
     tick: &'p Func,
@@ -349,7 +357,7 @@ impl Elaborator<'_> {
             .collect();
         // Each register's and memory's domain. With a single clock every field
         // defaults to it, and any `#[domain(..)]` tag must name it.
-        let (leaf_domain, sync_regs) =
+        let (leaf_domain, sync_regs, dual_mems) =
             self.leaf_domains(state_ty, &domains, (!multi).then_some(0), first.pos)?;
         *self.domain_names.borrow_mut() = domains.iter().map(|d| d.name.clone()).collect();
         let mut crossings = Vec::new();
@@ -644,6 +652,23 @@ impl Elaborator<'_> {
                 let (ty, ports_n) = mem_of
                     .get(path.as_str())
                     .map_or((Type::Uint(1), 1), |m| (m.elem_ty, m.read_ports));
+                // A dual-clock RAM: the writer's tick contributes only its write,
+                // and the reader's (below) only its reads.
+                let writer = dual_mems.get(path.as_str()).copied();
+                if writer == Some(d) && domain_of(&path) != d {
+                    if let Some(p) = pending {
+                        if let Some((we, addr, data)) = p.write {
+                            mem_writes.push(ir::MemWrite {
+                                domain: d,
+                                mem: path,
+                                we,
+                                addr,
+                                data,
+                            });
+                        }
+                    }
+                    continue;
+                }
                 if domain_of(&path) != d {
                     if pending.is_some() {
                         return Err(err(
@@ -670,8 +695,9 @@ impl Elaborator<'_> {
                                 addr,
                             });
                         }
-                        // A `rom`'s `next()` has no write.
-                        if let Some((we, addr, data)) = p.write {
+                        // A `rom`'s `next()` has no write, and a dual-clock RAM's
+                        // write comes from its writer's tick.
+                        if let (Some((we, addr, data)), None) = (p.write, writer) {
                             mem_writes.push(ir::MemWrite {
                                 domain: d,
                                 mem: path,
@@ -849,13 +875,14 @@ impl Elaborator<'_> {
         domains: &[ir::Domain],
         default: Option<usize>,
         pos: Pos,
-    ) -> Result<(HashMap<String, usize>, std::collections::HashSet<String>), CompileError> {
+    ) -> Result<LeafDomains, CompileError> {
         let mut out = HashMap::new();
         let mut sync = std::collections::HashSet::new();
+        let mut dual = HashMap::new();
         self.collect_leaf_domains(
-            state_ty, "", default, false, domains, &mut out, &mut sync, pos,
+            state_ty, "", default, false, domains, &mut out, &mut sync, &mut dual, pos,
         )?;
-        Ok((out, sync))
+        Ok((out, sync, dual))
     }
 
     /// Every clock-domain crossing field of struct `struct_name`, as
@@ -964,6 +991,7 @@ impl Elaborator<'_> {
         domains: &[ir::Domain],
         out: &mut HashMap<String, usize>,
         sync: &mut std::collections::HashSet<String>,
+        dual: &mut HashMap<String, usize>,
         pos: Pos,
     ) -> Result<(), CompileError> {
         let s = *self
@@ -1001,7 +1029,9 @@ impl Elaborator<'_> {
             let ty = self.resolve(&f.ty, f.pos)?;
             let is_sync = in_sync || f.attrs.iter().any(|a| a.name == "cdc_sync");
             if let Ty::Struct(inner) = &ty {
-                self.collect_leaf_domains(inner, &fpath, tagged, is_sync, domains, out, sync, pos)?;
+                self.collect_leaf_domains(
+                    inner, &fpath, tagged, is_sync, domains, out, sync, dual, pos,
+                )?;
                 continue;
             }
             let d = tagged.ok_or_else(|| {
@@ -1023,6 +1053,16 @@ impl Elaborator<'_> {
                 out.insert(name, d);
             }
             if matches!(ty, Ty::Mem { .. }) {
+                // A crossing's dual-clock RAM is written by another domain.
+                let writer = f
+                    .attrs
+                    .iter()
+                    .find(|a| a.name == "cdc_ram")
+                    .and_then(|a| a.args.first())
+                    .and_then(|a| domains.iter().position(|dom| dom.name == a.key));
+                if let Some(w) = writer {
+                    dual.insert(fpath.clone(), w);
+                }
                 out.insert(fpath, d);
             }
         }

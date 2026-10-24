@@ -88,7 +88,7 @@ The language features the RV32 cores showed were missing. Release: tag
       (§6.7 / §9.14).
 - [x] CLK2: `sync` and `pulse` synchronizers.
 - [x] CLK3: `mailbox` handshake register.
-- [ ] CLK4: `async_fifo` (dual-clock FIFO).
+- [x] CLK4: `async_fifo` (dual-clock FIFO).
 
 ## v0.6 — cleanup
 

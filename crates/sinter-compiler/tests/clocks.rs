@@ -330,11 +330,12 @@ fn crossing_declarations_are_checked() {
 
 const MAILBOX: &str = include_str!("../../../examples/fn_mailbox.snt");
 
-/// Run `fn_mailbox` at the given periods with random `go` / `take` for
-/// `steps` steps, and check every word arrives exactly once and in order.
-/// Returns how many words crossed.
-fn check_mailbox(fast: u32, slow: u32, steps: usize) -> u64 {
-    let src = MAILBOX
+/// Run a word-stream crossing example (`fn_mailbox` / `fn_async_fifo`, whose
+/// ticks have periods 3 and 4) at the given periods with random `go` /
+/// `take` for `steps` steps, and check every word arrives exactly once and in
+/// order. Returns how many words crossed.
+fn check_stream(example: &str, fast: u32, slow: u32, steps: usize) -> u64 {
+    let src = example
         .replace(
             "domain = fast, period = 3",
             &format!("domain = fast, period = {fast}"),
@@ -375,7 +376,39 @@ fn check_mailbox(fast: u32, slow: u32, steps: usize) -> u64 {
 #[test]
 fn a_mailbox_delivers_every_word_once_in_order() {
     for (fast, slow) in [(3, 4), (4, 3), (1, 7), (7, 1), (5, 5)] {
-        let crossed = check_mailbox(fast, slow, 4000);
+        let crossed = check_stream(MAILBOX, fast, slow, 4000);
         assert!(crossed > 50, "{fast}/{slow}: only {crossed} words crossed");
     }
+}
+
+// --- CLK4: async_fifo --------------------------------------------------------
+
+const ASYNC_FIFO: &str = include_str!("../../../examples/fn_async_fifo.snt");
+
+#[test]
+fn an_async_fifo_delivers_every_word_once_in_order() {
+    for (fast, slow) in [(3, 4), (4, 3), (1, 7), (7, 1), (5, 5), (2, 3)] {
+        let crossed = check_stream(ASYNC_FIFO, fast, slow, 6000);
+        assert!(crossed > 100, "{fast}/{slow}: only {crossed} words crossed");
+    }
+}
+
+#[test]
+fn an_async_fifo_streams_a_word_per_cycle() {
+    // Equal clocks, producer and consumer always active: after the pointers'
+    // synchronizer latency fills the pipe, a word crosses every cycle.
+    let src = ASYNC_FIFO.replace("period = 4", "period = 3");
+    let m = module(&src);
+    let mut sim = Simulator::new(&m);
+    let inputs = HashMap::from([("go".to_string(), 1), ("take".to_string(), 1)]);
+    let mut out = HashMap::new();
+    for _ in 0..20 {
+        out = sim.step(&inputs);
+    }
+    let before = out["received_q"];
+    for _ in 0..200 {
+        out = sim.step(&inputs);
+    }
+    let crossed = (out["received_q"] + 256 - before) % 256;
+    assert!(crossed >= 195, "only {crossed} words in 200 cycles");
 }

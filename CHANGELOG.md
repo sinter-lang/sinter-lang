@@ -26,6 +26,11 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   multi-bit word at a time, pushed through its `Sender` (`sender()`,
   `send(push)`) and read through its `Receiver` (`receiver()`, `recv(pop)`)
   (`examples/fn_mailbox.snt`).
+- `async_fifo<T, N, from, to>` (CLK4): a dual-clock FIFO with gray-coded
+  pointers, a RAM written on `from` and read on `to` (block RAM when large
+  enough), and a first-word-fall-through `front()` at a word per cycle. It
+  uses the same `Sender` / `Receiver` views as `mailbox`
+  (`examples/fn_async_fifo.snt`).
 
 ## [0.4.0] — unreleased
 

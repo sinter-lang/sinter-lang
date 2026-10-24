@@ -1,0 +1,47 @@
+// A dual-clock FIFO (DESIGN §6.7 / §9.14, CLK4).
+//
+// `async_fifo<u8, 16, fast, slow>` moves a stream of words between clock
+// domains: gray-coded pointers cross through 2-flop synchronizers, and the
+// words sit in a RAM written on `fast` and read on `slow`. Pushes go through
+// its `Sender` (refused while full), and `front()` shows the head word with
+// no extra latency (first-word fall-through), so a consumer that pops every
+// cycle takes a word every cycle.
+struct Stream {
+    #[domain(fast)]
+    pub next_word: u8 = 1,
+    #[domain(slow)]
+    pub last: u8 = 0,
+    #[domain(slow)]
+    pub received: u8 = 0,
+    q: async_fifo<u8, 16, fast, slow>,
+}
+
+impl Stream {
+    #[clock(domain = fast, period = 3)]
+    fn tick_fast(self, go: u1) -> Stream {
+        let tx = self.q.sender();
+        let push = if go == 1 { tx.try_push(self.next_word) } else { tx.no_push() };
+        let sent: u1 = if go == 1 & tx.is_full() == 0 { 1 } else { 0 };
+        Stream {
+            next_word: if sent == 1 { (self.next_word + 1) as u8 wrap } else { self.next_word },
+            last: self.last,
+            received: self.received,
+            q: self.q.send(push),
+        }
+    }
+
+    #[clock(domain = slow, period = 4)]
+    fn tick_slow(self, take: u1) -> Stream {
+        let rx = self.q.receiver();
+        let got: Option<u8> = match rx.front() {
+            Some(w) => if take == 1 { Some(w) } else { None },
+            None => None,
+        };
+        Stream {
+            next_word: self.next_word,
+            last: match got { Some(w) => w, None => self.last },
+            received: match got { Some(_) => (self.received + 1) as u8 wrap, None => self.received },
+            q: self.q.recv(take),
+        }
+    }
+}
