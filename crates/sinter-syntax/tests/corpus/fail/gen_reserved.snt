@@ -1,0 +1,8 @@
+// `gen` is reserved for generator functions (DESIGN §4.4), so it can't name a
+// value.
+//~ ERROR syntax error
+struct S { pub v: u8 = 0, }
+impl S {
+    #[clock(domain = sys)]
+    fn tick(self, gen: u8) -> S { S { v: gen } }
+}

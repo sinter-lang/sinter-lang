@@ -94,9 +94,15 @@ Release: tag `v0.5.0` on the "release: v0.5.0" commit.
 
 ## v0.6 — cleanup
 
-- [ ] Settle every DESIGN §11 open question that affects syntax (generator
-      signature §4.4, parser strategy §7.1).
+- [x] Settle every DESIGN §11 open question that affects syntax: generators
+      return a `Step` sum and are declared `gen fn` (post-1.0, `gen` reserved
+      now, §4.4); the compiler keeps its pest parser and editors get a
+      tree-sitter grammar (§7.1). §3.5 is deferred past 1.0 and changes no
+      1.0 syntax.
 - [ ] Remove the legacy `module` surface.
+- [ ] **Diagnostics: expression positions**: carets point at the offending
+      expression rather than the enclosing statement or block (expressions
+      carry no `Pos` today). Moved up from v0.9 with the §7.1 decision.
 
 **Decided for 1.0:** values stay at most 64 bits wide (the IR and simulator
 hold every value in a `u64`); wider values are post-1.0.
@@ -116,12 +122,9 @@ hold every value in a `u64`); wider values are post-1.0.
 - [ ] Language reference and tutorial written for users, separate from
       DESIGN.md.
 - [ ] tree-sitter grammar + VS Code syntax highlighting (a full LSP can follow
-      1.0).
-- [ ] **Diagnostics: expression positions**: carets point at the offending
-      expression rather than the enclosing statement or block (expressions
-      carry no `Pos` today). Do this with the §7.1 parser-strategy decision.
+      1.0), tested against the parser corpus (§7.1).
 - [ ] **Diagnostics: multiple errors**: one run reports more than the first
-      error.
+      semantic error (parsing still stops at the first syntax error, §7.1).
 - [ ] **Generated-Rust simulator** (DESIGN §7.2): `sinter build --emit rust`
       producing a compiled, Verilator-class model with a `step()` API for
       Rust testbenches, cross-checked against the interpreter and the Verilog.

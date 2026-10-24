@@ -5,6 +5,13 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Changed
+
+- `gen` is a reserved word, for generator functions (`gen fn`, DESIGN §4.4),
+  which come after 1.0. A program using `gen` as a name must rename it.
+
 ## [0.5.0] — unreleased
 
 ### Added

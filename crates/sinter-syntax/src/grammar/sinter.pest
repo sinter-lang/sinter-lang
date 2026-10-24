@@ -116,10 +116,13 @@ literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 // shared atom — including the otherwise-frozen legacy `module` surface, since
 // both surfaces share `ident`. No shipped/legacy program uses them as
 // identifiers, so the goldens and the conformance oracle are unaffected.
+//
+// `gen` is reserved for generator functions (`gen fn`, DESIGN §4.4), which come
+// after 1.0; reserving it now keeps adding them from breaking 1.0 programs.
 keyword = @{
     ("let" | "if" | "else"
    | "struct" | "enum" | "impl" | "fn" | "match" | "const" | "as"
-   | "mod" | "use" | "pub" | "pipeline" | "multiplex" | "yield"
+   | "mod" | "use" | "pub" | "pipeline" | "multiplex" | "yield" | "gen"
    | "Option" | "Some" | "None")
     ~ !(ASCII_ALPHANUMERIC | "_")
 }

@@ -333,26 +333,30 @@ them **locally**, and exposes only its combined next-state upward. Rejected
 alternative: flattening every `self` to the root — more uniform but turns the
 root signature into a phone book and destroys encapsulation.
 
-### 4.4 Stateful function outputs are a sum type
+### 4.4 Multi-cycle (generator) outputs are a sum type (SETTLED shape; implementation after 1.0)
 
-A stateful function has two distinct outputs: the value yielded each active
-cycle, and the value returned once on completion (often different types).
-Therefore a step's output is naturally a sum:
+A generator is a function that runs over several cycles. It has two outputs:
+the value it yields on some cycles, and the value it returns once, when it
+finishes (often of a different type). Each step returns both as one sum, and
+the caller `match`es it:
 
 ```
 enum Step<Y, R> { Running, Yielded(Y), Done(R) }
 ```
 
-This is exactly where the `Option`/valid machinery (§6) plugs in: a multi-cycle
-function *is* an `Option`-returning thing at cycle granularity, and a completed
-generator producing a value is precisely a `valid + payload` handshake.
+**Settled (v0.6): the `Step` sum, not separate yield and return channels.**
+The sum threads through `?` / valid like any other `Option`-shaped value: a
+finished generator with a result is exactly a `valid + payload` handshake. The
+case where separate channels read better, a fixed-latency computation that
+yields every cycle, already has its own color (`pipeline fn`, §3.1).
 
-**OPEN QUESTION (signature shape):** model the yield-value and return-value as
-*separate channels* in the signature, or *collapse* both into the `Step` status
-enum and let the caller `match`? (Recommendation: the `Step` sum is cleaner and
-threads through `?`/valid uniformly; separate channels may read better for
-fixed-latency pipelines where "yield each cycle" is the norm. Revisit once the
-pipeline vs multiplex signatures are drafted.)
+A generator is declared `gen fn`. The keyword `gen` is reserved from v0.6 on, so
+adding generators after 1.0 doesn't break 1.0 programs. `Step` will be a
+prelude type that a user-declared `Step` shadows, so it needn't be reserved.
+The body form and the lowering (a synthesized instance struct and `step`
+method, as for the staged colors) are designed with the implementation. Until
+then, write a multi-cycle behaviour as a state struct with an `enum` phase; a
+caller-facing `Step`-shaped protocol can be an ordinary user `enum`.
 
 ---
 
@@ -995,7 +999,7 @@ Single source of truth: a **formal grammar specification** for `.snt`. But see
 the parser caveat below — "one `.grammar` file emits all four tools" is the
 plan's hidden cliff.
 
-### 7.1 Frontend / parser strategy (decide consciously)
+### 7.1 Frontend / parser strategy (SETTLED, v0.6)
 
 A generated grammar that drives *both* a batch compiler and an LSP does **not**
 survive contact with editors. Batch compilers want clean ASTs from a clean
@@ -1014,6 +1018,17 @@ Two realistic paths (pick one explicitly):
 Either way: the formal grammar is the *normative spec and conformance oracle*,
 not necessarily the literal parser. Do not chase the
 one-grammar-emits-everything dream — it quietly costs a year.
+
+**Settled (v0.6): path 1.** The pest grammar (`crates/sinter-syntax/src/grammar/
+sinter.pest`) stays both the compiler's parser and the normative grammar.
+Editors get a separate tree-sitter grammar (highlighting and structural
+editing), tested against the same parser corpus (`tests/corpus/`): every `pass/`
+program must parse without error nodes. Expressions carry source positions
+(v0.6), so diagnostics point at the offending expression. The batch parser
+stops at the first syntax error; the semantic checks may report more than one
+error per run. A future language server takes syntax from tree-sitter and
+meaning from the compiler. Moving to a hand-written, error-recovering parser
+over a lossless tree stays possible after 1.0, since it changes no syntax.
 
 ### 7.2 Backends / lowering targets (ordered by priority)
 
@@ -1142,7 +1157,8 @@ the timeline types — Sinter combines them.
 
 1. **M0 — Spec skeleton.** Lock the name, file extension, CLI name. Write the
    normative grammar spec (EBNF) and resolve the §6.1 sign-bit convention and the
-   §4.4 / §6.9 open questions on paper. Choose the §7.1 parser strategy.
+   §4.4 / §6.9 open questions on paper. Choose the §7.1 parser strategy. (All
+   done: §4.4 and §7.1 settled in v0.6, §6.9 by MEM1.)
 2. **M1 — Core front end.** Lexer + error-tolerant parser → lossless tree → AST;
    width inference; single-driver + acyclicity checks; fixed-point + `iN`/`uN`
    types; mode-named narrowing casts; `?`/valid; `Option`/`enum`.
@@ -1826,6 +1842,9 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   Runtime `[T; N]` indexing lowers to a mux tree / guarded-hold decode (register
   files), distinct from BRAM multi-port `mem` (§6.14 / §9.10 / §9.11).
 - Clock domain as phantom type; CDC crossing without a primitive is a type error.
+- A foreign Verilog module is a `#[verilog(...)]` binding on a state struct
+  whose `step` method is a **mandatory** Sinter reference model, checked
+  against the real Verilog by the oracle (§6.15 / §9.13).
 - Bare `/` forbidden; division via handshaked multi-cycle primitive.
 - `pipeline`/`multiplex` as two function colors; selector binding time sets
   latency class; three latency points (`Static`/`Bounded`/`Dynamic`).
@@ -1839,20 +1858,23 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   (items *and* struct fields). One `#[clock]` top in the root module. External
   dependency/package layer (and its name) deferred (§10).
 - Parser is NOT a single generated grammar driving all tools; grammar is the
-  spec/oracle.
+  spec/oracle. The compiler keeps its pest parser, editors get a tree-sitter
+  grammar tested against the same corpus, and expressions carry positions
+  (§7.1, v0.6).
+- Generators (multi-cycle functions) return a `Step<Y, R>` sum the caller
+  matches, not separate yield / return channels; declared `gen fn`, with `gen`
+  reserved now and the implementation after 1.0 (§4.4, v0.6).
+- Memory is a distinct primitive type whose interface is a latency-contracted
+  stateful instance (§6.9, MEM1).
 
-**Open (decide on paper before/at M0):**
-1. §4.4 — *generator* (multi-cycle, yield + done) signature: separate
-   yield/return channels vs collapsed `Step` sum. (The §2.3 combinational
-   sub-step shape is now settled as a `(new_state, outputs)` tuple.)
-2. §3.5 — prove `Bounded` latency from the transition graph (retain scheduling
-   leverage) vs treat all runtime selectors as `Dynamic`.
-3. §6.9 — memory as latency-contracted stateful instance vs distinct primitive.
-4. §7.1 — tree-sitter shared layer vs rowan + hand-written error-recovering
-   parser.
-5. §6.6 — **RESOLVED (§6.11 / §9.8):** v1 channels expose ready/valid and guarantee
-   no-corruption, not deadlock-freedom (the liveness tier is deferred).
-6. §6.15 — **RESOLVED (EXT1, §9.13):** a foreign Verilog module is a
-   `#[verilog(...)]` binding on a state struct whose `step` method is a
-   **mandatory** Sinter reference model, checked against the real Verilog by
-   the oracle.
+**Open:** none that would change 1.0 syntax.
+
+- §3.5 — prove `Bounded` latency from the transition graph, or treat every
+  runtime selector as `Dynamic`? **Deferred past 1.0** along with `Bounded` /
+  `Dynamic` latencies themselves. No 1.0 syntax depends on it: every 1.0 staged
+  function has `Static` latency (§9.3 / §9.5), and the recommendation stands
+  (types admit `Bounded`; the prover starts conservative).
+
+**Resolved:** §4.4 (generator signature, v0.6), §6.6 (channel guarantees,
+§6.11 / §9.8), §6.9 (memory model, MEM1), §6.15 (foreign Verilog, EXT1, §9.13),
+§7.1 (parser strategy, v0.6).
