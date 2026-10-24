@@ -67,9 +67,10 @@ land in a later 0.3.x.
       DESIGN §7.2's generated-Rust simulator (compiled, Verilator-class speed)
       remains future work.
 
-## v0.4 — memories
+## v0.4 — memories ✅
 
-The language features the RV32 cores showed were missing.
+The language features the RV32 cores showed were missing. Release: tag
+`v0.4.0` on the "release: v0.4.0" commit.
 
 - [x] Multi-read-port `mem` (§9.6), so a 2R1W register file lives in block RAM.
       The pipelined core's register file is a `mem<u32, 32, 2>` and the core
