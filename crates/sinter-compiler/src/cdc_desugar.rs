@@ -135,9 +135,9 @@ pub fn desugar_cdc(program: &Program) -> Result<Program, CompileError> {
                 Some(t) => elem_src(t, f.pos)?,
                 None => String::new(),
             };
-            let depth = match depth.as_deref() {
+            let depth = match depth.as_deref().map(|d| &d.kind) {
                 None => 1,
-                Some(sinter_syntax::ast::Expr::Literal(n)) => {
+                Some(sinter_syntax::ast::ExprKind::Literal(n)) => {
                     let n = usize::try_from(*n).unwrap_or(0);
                     if n < 2 || !n.is_power_of_two() {
                         return Err(sem(
@@ -195,8 +195,10 @@ pub fn source_names(program: &Program) -> Vec<(String, String)> {
                     .as_ref()
                     .and_then(|t| elem_src(t, f.pos).ok())
                     .unwrap_or_default();
-                let n = match depth.as_deref() {
-                    Some(sinter_syntax::ast::Expr::Literal(n)) => usize::try_from(*n).unwrap_or(0),
+                let n = match depth.as_deref().map(|d| &d.kind) {
+                    Some(sinter_syntax::ast::ExprKind::Literal(n)) => {
+                        usize::try_from(*n).unwrap_or(0)
+                    }
                     _ => 1,
                 };
                 let ks = kind_src(*kind);

@@ -100,9 +100,9 @@ Release: tag `v0.5.0` on the "release: v0.5.0" commit.
       tree-sitter grammar (§7.1). §3.5 is deferred past 1.0 and changes no
       1.0 syntax.
 - [x] Remove the legacy `module` surface.
-- [ ] **Diagnostics: expression positions**: carets point at the offending
-      expression rather than the enclosing statement or block (expressions
-      carry no `Pos` today). Moved up from v0.9 with the §7.1 decision.
+- [x] **Diagnostics: expression positions**: carets point at the offending
+      expression (a binary operation at its operator) rather than the
+      enclosing statement or block. Moved up from v0.9 with the §7.1 decision.
 
 **Decided for 1.0:** values stay at most 64 bits wide (the IR and simulator
 hold every value in a `u64`); wider values are post-1.0.

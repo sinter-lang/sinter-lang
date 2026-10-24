@@ -17,6 +17,11 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 
 ### Changed
 
+- **Diagnostics point at the offending expression**, not the enclosing
+  statement: a type error in `self.value + 1` puts its caret under the `+`,
+  and an unknown name under the name.
+- `sinter_syntax::ast::Expr` is now a struct, `{ kind: ExprKind, pos: Pos }`;
+  the variants moved to `ExprKind`. Equality ignores `pos`.
 - `gen` is a reserved word, for generator functions (`gen fn`, DESIGN §4.4),
   which come after 1.0. A program using `gen` as a name must rename it.
 

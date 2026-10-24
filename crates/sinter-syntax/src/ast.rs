@@ -147,9 +147,56 @@ impl BinOp {
     }
 }
 
-/// An expression.
+/// An expression: what it is ([`ExprKind`]) and where it is.
+///
+/// `pos` is where the expression starts, except that a binary operation's is
+/// its operator, so a diagnostic about the operation points between its
+/// operands. A synthesized expression (from a desugar) has the default `Pos`.
+/// Equality and `Debug` ignore `pos`: two expressions are equal when they have
+/// the same shape, and the parser's `.ast` goldens record shape only.
+#[derive(Clone)]
+pub struct Expr {
+    /// What the expression is.
+    pub kind: ExprKind,
+    /// Where it is in the source.
+    pub pos: Pos,
+}
+
+impl Expr {
+    /// An expression of `kind` at `pos`.
+    #[must_use]
+    pub fn new(kind: ExprKind, pos: Pos) -> Self {
+        Expr { kind, pos }
+    }
+}
+
+/// A synthesized expression, with no source position.
+impl From<ExprKind> for Expr {
+    fn from(kind: ExprKind) -> Self {
+        Expr {
+            kind,
+            pos: Pos::default(),
+        }
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for Expr {}
+
+impl core::fmt::Debug for Expr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+/// The kinds of [`Expr`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expr {
+pub enum ExprKind {
     /// An untyped integer literal; its width is resolved from context.
     Literal(u128),
     /// A reference to a port, register, or wire.
@@ -172,7 +219,7 @@ pub enum Expr {
     },
     /// An `if cond { a } else { b }` value-producing conditional.
     ///
-    /// The parser makes `then` / `els` [`Expr::Block`]s; desugars may build
+    /// The parser makes `then` / `els` [`ExprKind::Block`]s; desugars may build
     /// bare expressions.
     If {
         /// The 1-bit condition.
@@ -187,7 +234,7 @@ pub enum Expr {
     /// A `::`-segmented path, e.g. `Cmd::Up` (≥ 2 segments).
     Path(Vec<String>),
     /// `[value; len]`: `len` copies of `value` (DESIGN §6.6). `len` is a literal
-    /// or a `const` name; the compiler expands it to an [`Expr::Array`] before
+    /// or a `const` name; the compiler expands it to an [`ExprKind::Array`] before
     /// checking.
     ArrayRepeat {
         /// The repeated element.
@@ -196,7 +243,7 @@ pub enum Expr {
         len: Box<Expr>,
     },
     /// `include_hex!("path")` — the contents of a line-delimited hex file, used to
-    /// initialize a `rom` (DESIGN §9.7). Expanded to an [`Expr::Array`] at compile
+    /// initialize a `rom` (DESIGN §9.7). Expanded to an [`ExprKind::Array`] at compile
     /// time (relative to the source directory) before checking/elaboration, so no
     /// later pass sees it. Holds the raw path string.
     IncludeHex(String),
@@ -717,7 +764,7 @@ pub struct FieldInit {
     pub value: Expr,
 }
 
-/// An arm of a [`Expr::Match`].
+/// An arm of a [`ExprKind::Match`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchArm {
     /// The pattern to match.
@@ -726,7 +773,7 @@ pub struct MatchArm {
     pub body: Expr,
 }
 
-/// The mode of a narrowing [`Expr::Cast`] (DESIGN §6.3); no default is allowed.
+/// The mode of a narrowing [`ExprKind::Cast`] (DESIGN §6.3); no default is allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastMode {
     /// Saturate to the nearest representable value.

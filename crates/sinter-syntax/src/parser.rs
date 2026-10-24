@@ -10,9 +10,9 @@ use pest::Parser as _;
 
 use crate::ast::{
     Attr, AttrArg, AttrValue, BinOp, Block, CastMode, CdcKind, ChannelKind, ConstItem, EnumItem,
-    EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item, MatchArm, ModItem, Param,
-    PathQualifier, Pattern, Pos, Program, Stmt, StructField, StructItem, Type, TypeRef, UnaryOp,
-    UseItem, UsePath, Visibility,
+    EnumVariant, Expr, ExprKind, FieldInit, FnColor, Func, ImplItem, Item, MatchArm, ModItem,
+    Param, PathQualifier, Pattern, Pos, Program, Stmt, StructField, StructItem, Type, TypeRef,
+    UnaryOp, UseItem, UsePath, Visibility,
 };
 
 /// The `pest`-generated parser and `Rule` enum. Isolated in a submodule so the
@@ -109,9 +109,11 @@ fn unexpected(rule: Rule, ctx: &str) -> ParseError {
 // --- Expressions -----------------------------------------------------------
 
 fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let pos = pos_of(&pair);
+    let at = |kind| Ok(Expr::new(kind, pos));
     match pair.as_rule() {
         Rule::literal => parse_literal(&pair),
-        Rule::ident => Ok(Expr::Ident(pair.as_str().to_string())),
+        Rule::ident => at(ExprKind::Ident(pair.as_str().to_string())),
         Rule::f_expr => parse_expr(first_inner(pair, "f_expr")?),
         Rule::f_concat
         | Rule::f_or
@@ -129,11 +131,11 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::f_if => parse_fif(pair),
         Rule::f_block => parse_block_expr(pair),
         Rule::f_match => parse_fmatch(pair),
-        Rule::f_some => Ok(Expr::Some(Box::new(parse_expr(first_inner(
+        Rule::f_some => at(ExprKind::Some(Box::new(parse_expr(first_inner(
             pair,
             "Some payload",
         )?)?))),
-        Rule::f_none => Ok(Expr::None),
+        Rule::f_none => at(ExprKind::None),
         Rule::f_struct_lit => parse_struct_lit(pair),
         Rule::f_path => parse_fpath(pair),
         Rule::f_group_or_tuple => parse_group_or_tuple(pair),
@@ -142,31 +144,36 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
             let mut inner = pair.into_inner();
             let value = parse_expr(next_pair(&mut inner, "repeated value")?)?;
             let len = parse_mem_depth(next_pair(&mut inner, "repeat length")?)?;
-            Ok(Expr::ArrayRepeat {
+            at(ExprKind::ArrayRepeat {
                 value: Box::new(value),
                 len: Box::new(len),
             })
         }
         Rule::f_include_hex => {
             let s = first_inner(pair, "include_hex path")?;
-            Ok(Expr::IncludeHex(unquote(s.as_str())))
+            at(ExprKind::IncludeHex(unquote(s.as_str())))
         }
         other => Err(unexpected(other, "expression")),
     }
 }
 
-/// Fold a left-associative level: `operand (op operand)*`.
+/// Fold a left-associative level: `operand (op operand)*`. Each operation is
+/// positioned at its operator.
 fn fold_binary(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     let mut inner = pair.into_inner();
     let mut lhs = parse_expr(next_pair(&mut inner, "operand")?)?;
     while let Some(op_pair) = inner.next() {
         let op = bin_op(op_pair.as_str())?;
+        let op_pos = pos_of(&op_pair);
         let rhs = parse_expr(next_pair(&mut inner, "operand")?)?;
-        lhs = Expr::Binary {
-            op,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        };
+        lhs = Expr::new(
+            ExprKind::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            },
+            op_pos,
+        );
     }
     Ok(lhs)
 }
@@ -176,17 +183,20 @@ fn parse_unary(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     let mut operand = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::unary_op => ops.push(unary_op(inner.as_str())?),
+            Rule::unary_op => ops.push((unary_op(inner.as_str())?, pos_of(&inner))),
             _ => operand = Some(parse_expr(inner)?),
         }
     }
     let mut expr = operand.ok_or_else(|| ParseError::Syntax("unary without operand".into()))?;
     // Apply prefix operators right-to-left.
-    for op in ops.into_iter().rev() {
-        expr = Expr::Unary {
-            op,
-            expr: Box::new(expr),
-        };
+    for (op, pos) in ops.into_iter().rev() {
+        expr = Expr::new(
+            ExprKind::Unary {
+                op,
+                expr: Box::new(expr),
+            },
+            pos,
+        );
     }
     Ok(expr)
 }
@@ -198,7 +208,8 @@ fn parse_unary(pair: Pair<Rule>) -> Result<Expr, ParseError> {
 /// patterns and need only fit its width (`0x80_i8` is -128).
 fn parse_literal(pair: &Pair<Rule>) -> Result<Expr, ParseError> {
     let value = literal_value(pair)?;
-    let lit = Expr::Literal(value);
+    let pos = pos_of(pair);
+    let lit = Expr::new(ExprKind::Literal(value), pos);
     let raw = pair.as_str();
     let Some(ty) = width_suffix(raw) else {
         return Ok(lit);
@@ -210,11 +221,14 @@ fn parse_literal(pair: &Pair<Rule>) -> Result<Expr, ParseError> {
         let (line, _) = pair.line_col();
         return Err(ParseError::LiteralRange(raw.to_string(), ty, line));
     }
-    Ok(Expr::Cast {
-        expr: Box::new(lit),
-        ty: TypeRef::Scalar(ty),
-        mode: CastMode::Wrap,
-    })
+    Ok(Expr::new(
+        ExprKind::Cast {
+            expr: Box::new(lit),
+            ty: TypeRef::Scalar(ty),
+            mode: CastMode::Wrap,
+        },
+        pos,
+    ))
 }
 
 /// The type named by a literal's `_uN` / `_iN` width suffix, if it has one.
@@ -694,7 +708,8 @@ fn parse_fblock(pair: Pair<Rule>) -> Result<Block, ParseError> {
 }
 
 fn parse_block_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
-    Ok(Expr::Block(parse_fblock(pair)?))
+    let pos = pos_of(&pair);
+    Ok(Expr::new(ExprKind::Block(parse_fblock(pair)?), pos))
 }
 
 fn parse_fyield(pair: Pair<Rule>) -> Result<Stmt, ParseError> {
@@ -886,7 +901,7 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
             Ok(TypeRef::Channel {
                 kind: ChannelKind::Push,
                 elem: Box::new(elem),
-                depth: Box::new(Expr::Literal(1)),
+                depth: Box::new(ExprKind::Literal(1).into()),
             })
         }
         Rule::f_flow_ty => {
@@ -896,7 +911,7 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
             Ok(TypeRef::Channel {
                 kind: ChannelKind::Flow,
                 elem: Box::new(elem),
-                depth: Box::new(Expr::Literal(1)),
+                depth: Box::new(ExprKind::Literal(1).into()),
             })
         }
         Rule::f_scalar_ty => parse_scalar_typeref(&inner),
@@ -914,9 +929,10 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
 /// swallowed by a relational operator in the full expression grammar.
 fn parse_mem_depth(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     let inner = first_inner(pair, "memory depth")?;
+    let pos = pos_of(&inner);
     match inner.as_rule() {
-        Rule::literal => Ok(Expr::Literal(literal_value(&inner)?)),
-        Rule::ident => Ok(Expr::Ident(inner.as_str().to_string())),
+        Rule::literal => Ok(Expr::new(ExprKind::Literal(literal_value(&inner)?), pos)),
+        Rule::ident => Ok(Expr::new(ExprKind::Ident(inner.as_str().to_string()), pos)),
         other => Err(unexpected(other, "memory depth")),
     }
 }
@@ -961,13 +977,18 @@ fn parse_fcast(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     let expr = parse_expr(next_pair(&mut inner, "cast operand")?)?;
     match inner.next() {
         Some(ty_pair) => {
+            // Positioned at the target type, just after `as`.
+            let pos = pos_of(&ty_pair);
             let ty = parse_typeref(ty_pair)?;
             let mode = parse_cast_mode(&next_pair(&mut inner, "cast mode")?)?;
-            Ok(Expr::Cast {
-                expr: Box::new(expr),
-                ty,
-                mode,
-            })
+            Ok(Expr::new(
+                ExprKind::Cast {
+                    expr: Box::new(expr),
+                    ty,
+                    mode,
+                },
+                pos,
+            ))
         }
         None => Ok(expr),
     }
@@ -987,23 +1008,25 @@ fn parse_fpostfix(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     let mut inner = pair.into_inner();
     let mut expr = parse_expr(next_pair(&mut inner, "postfix base")?)?;
     for op in inner {
-        expr = match op.as_rule() {
+        // Positioned at the postfix operator (`.`, `(`, `[`, `?`).
+        let pos = pos_of(&op);
+        let kind = match op.as_rule() {
             Rule::f_dot => {
                 let mut di = op.into_inner();
                 let name = next_ident(&mut di, "field or method name")?;
                 match di.next() {
-                    Some(args_pair) => Expr::MethodCall {
+                    Some(args_pair) => ExprKind::MethodCall {
                         receiver: Box::new(expr),
                         method: name,
                         args: parse_args(args_pair)?,
                     },
-                    None => Expr::Field {
+                    None => ExprKind::Field {
                         base: Box::new(expr),
                         field: name,
                     },
                 }
             }
-            Rule::f_call => Expr::Call {
+            Rule::f_call => ExprKind::Call {
                 func: Box::new(expr),
                 args: parse_args(first_inner(op, "call arguments")?)?,
             },
@@ -1012,20 +1035,21 @@ fn parse_fpostfix(pair: Pair<Rule>) -> Result<Expr, ParseError> {
                 let mut it = op.into_inner();
                 let first = parse_expr(next_pair(&mut it, "index")?)?;
                 match it.next() {
-                    Some(second) => Expr::Slice {
+                    Some(second) => ExprKind::Slice {
                         base: Box::new(expr),
                         hi: Box::new(first),
                         lo: Box::new(parse_expr(second)?),
                     },
-                    None => Expr::Index {
+                    None => ExprKind::Index {
                         base: Box::new(expr),
                         index: Box::new(first),
                     },
                 }
             }
-            Rule::f_try => Expr::Try(Box::new(expr)),
+            Rule::f_try => ExprKind::Try(Box::new(expr)),
             other => return Err(unexpected(other, "postfix")),
         };
+        expr = Expr::new(kind, pos);
     }
     Ok(expr)
 }
@@ -1035,6 +1059,7 @@ fn parse_args(pair: Pair<Rule>) -> Result<Vec<Expr>, ParseError> {
 }
 
 fn parse_fif(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let pos = pos_of(&pair);
     let mut inner = pair.into_inner();
     let cond = parse_expr(next_pair(&mut inner, "if condition")?)?;
     let then = parse_block_expr(next_pair(&mut inner, "if then-branch")?)?;
@@ -1044,14 +1069,18 @@ fn parse_fif(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::f_block => parse_block_expr(els_pair)?,
         other => return Err(unexpected(other, "if else-branch")),
     };
-    Ok(Expr::If {
-        cond: Box::new(cond),
-        then: Box::new(then),
-        els: Box::new(els),
-    })
+    Ok(Expr::new(
+        ExprKind::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        },
+        pos,
+    ))
 }
 
 fn parse_fmatch(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let pos = pos_of(&pair);
     let mut inner = pair.into_inner();
     let scrutinee = parse_expr(next_pair(&mut inner, "match scrutinee")?)?;
     let mut arms = Vec::new();
@@ -1061,13 +1090,17 @@ fn parse_fmatch(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         let body = parse_expr(next_pair(&mut ai, "match arm body")?)?;
         arms.push(MatchArm { pattern, body });
     }
-    Ok(Expr::Match {
-        scrutinee: Box::new(scrutinee),
-        arms,
-    })
+    Ok(Expr::new(
+        ExprKind::Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        },
+        pos,
+    ))
 }
 
 fn parse_struct_lit(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let pos = pos_of(&pair);
     let mut name = String::new();
     let mut fields = Vec::new();
     for inner in pair.into_inner() {
@@ -1082,16 +1115,19 @@ fn parse_struct_lit(pair: Pair<Rule>) -> Result<Expr, ParseError> {
             other => return Err(unexpected(other, "struct literal")),
         }
     }
-    Ok(Expr::StructLit { name, fields })
+    Ok(Expr::new(ExprKind::StructLit { name, fields }, pos))
 }
 
 fn parse_fpath(pair: Pair<Rule>) -> Result<Expr, ParseError> {
-    Ok(Expr::Path(
-        pair.into_inner().map(|p| p.as_str().to_string()).collect(),
+    let pos = pos_of(&pair);
+    Ok(Expr::new(
+        ExprKind::Path(pair.into_inner().map(|p| p.as_str().to_string()).collect()),
+        pos,
     ))
 }
 
 fn parse_group_or_tuple(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let pos = pos_of(&pair);
     let mut exprs: Vec<Expr> = pair
         .into_inner()
         .map(parse_expr)
@@ -1100,14 +1136,18 @@ fn parse_group_or_tuple(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         // A single parenthesized expression is just grouping.
         Ok(exprs.swap_remove(0))
     } else {
-        Ok(Expr::Tuple(exprs))
+        Ok(Expr::new(ExprKind::Tuple(exprs), pos))
     }
 }
 
 fn parse_array(pair: Pair<Rule>) -> Result<Expr, ParseError> {
-    Ok(Expr::Array(
-        pair.into_inner()
-            .map(parse_expr)
-            .collect::<Result<_, _>>()?,
+    let pos = pos_of(&pair);
+    Ok(Expr::new(
+        ExprKind::Array(
+            pair.into_inner()
+                .map(parse_expr)
+                .collect::<Result<_, _>>()?,
+        ),
+        pos,
     ))
 }

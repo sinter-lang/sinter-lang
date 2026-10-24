@@ -4,9 +4,9 @@ pub struct Counter {
 
 impl Counter {
     pub fn bump(self, en: u1) -> Counter {
-	if en == 1 {
+        if en == 1 {
             // Missing `as u8 wrap`: `value + 1` is a u9.
-            Counter { value: self.value + 1 }
+	    Counter { value: self.value + 1 }
         } else {
             self
         }

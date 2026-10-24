@@ -27,8 +27,8 @@
 use std::collections::HashSet;
 
 use sinter_syntax::ast::{
-    BinOp, Block, Expr, FieldInit, FnColor, Func, ImplItem, Item, Param, Pos, Program, Stmt,
-    StructItem, Type, TypeRef, Visibility,
+    BinOp, Block, Expr, ExprKind, FieldInit, FnColor, Func, ImplItem, Item, Param, Pos, Program,
+    Stmt, StructItem, Type, TypeRef, Visibility,
 };
 
 use crate::error::CompileError;
@@ -196,9 +196,9 @@ fn reject_reserved_in_pattern(
 /// Recurse into an expression for nested binders (block-local `let`s and
 /// `match`-arm patterns) that reuse a reserved multiplex name.
 fn reject_reserved_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
-    match e {
-        Expr::Block(b) => reject_reserved_in_block(b, ctx),
-        Expr::Match { scrutinee, arms } => {
+    match &e.kind {
+        ExprKind::Block(b) => reject_reserved_in_block(b, ctx),
+        ExprKind::Match { scrutinee, arms } => {
             reject_reserved_in_expr(scrutinee, ctx)?;
             for arm in arms {
                 reject_reserved_in_pattern(&arm.pattern, ctx, Pos::default())?;
@@ -206,49 +206,51 @@ fn reject_reserved_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
             }
             Ok(())
         }
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => reject_reserved_in_expr(expr, ctx),
-        Expr::Binary { lhs, rhs, .. } => {
+        ExprKind::Unary { expr, .. } | ExprKind::Cast { expr, .. } => {
+            reject_reserved_in_expr(expr, ctx)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
             reject_reserved_in_expr(lhs, ctx)?;
             reject_reserved_in_expr(rhs, ctx)
         }
-        Expr::If { cond, then, els } => {
+        ExprKind::If { cond, then, els } => {
             reject_reserved_in_expr(cond, ctx)?;
             reject_reserved_in_expr(then, ctx)?;
             reject_reserved_in_expr(els, ctx)
         }
-        Expr::Field { base, .. } => reject_reserved_in_expr(base, ctx),
-        Expr::Call { func, args } => {
+        ExprKind::Field { base, .. } => reject_reserved_in_expr(base, ctx),
+        ExprKind::Call { func, args } => {
             reject_reserved_in_expr(func, ctx)?;
             args.iter()
                 .try_for_each(|a| reject_reserved_in_expr(a, ctx))
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        ExprKind::MethodCall { receiver, args, .. } => {
             reject_reserved_in_expr(receiver, ctx)?;
             args.iter()
                 .try_for_each(|a| reject_reserved_in_expr(a, ctx))
         }
-        Expr::Index { base, index } => {
+        ExprKind::Index { base, index } => {
             reject_reserved_in_expr(base, ctx)?;
             reject_reserved_in_expr(index, ctx)
         }
-        Expr::Slice { base, hi, lo } => {
+        ExprKind::Slice { base, hi, lo } => {
             reject_reserved_in_expr(base, ctx)?;
             reject_reserved_in_expr(hi, ctx)?;
             reject_reserved_in_expr(lo, ctx)
         }
-        Expr::StructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. } => fields
             .iter()
             .try_for_each(|fi| reject_reserved_in_expr(&fi.value, ctx)),
-        Expr::Tuple(items) | Expr::Array(items) => items
+        ExprKind::Tuple(items) | ExprKind::Array(items) => items
             .iter()
             .try_for_each(|i| reject_reserved_in_expr(i, ctx)),
-        Expr::Some(inner) | Expr::Try(inner) => reject_reserved_in_expr(inner, ctx),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Path(_)
-        | Expr::IncludeHex(_)
-        | Expr::ArrayRepeat { .. }
-        | Expr::None => Ok(()),
+        ExprKind::Some(inner) | ExprKind::Try(inner) => reject_reserved_in_expr(inner, ctx),
+        ExprKind::Literal(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Path(_)
+        | ExprKind::IncludeHex(_)
+        | ExprKind::ArrayRepeat { .. }
+        | ExprKind::None => Ok(()),
     }
 }
 
@@ -343,11 +345,11 @@ fn synth_impl(plan: &Plan, struct_name: &str) -> ImplItem {
         stmts.push(Stmt::Let {
             pattern: sinter_syntax::ast::Pattern::Binding(SHARED.to_string()),
             ty: None,
-            value: Expr::Binary {
+            value: Expr::from(ExprKind::Binary {
                 op: BinOp::Mul,
                 lhs: Box::new(phase_mux(&lhs)),
                 rhs: Box::new(phase_mux(&rhs)),
-            },
+            }),
             pos: Pos::default(),
         });
     }
@@ -366,12 +368,12 @@ fn synth_impl(plan: &Plan, struct_name: &str) -> ImplItem {
             });
         }
     }
-    let next_struct = Expr::StructLit {
+    let next_struct = ExprKind::StructLit {
         name: struct_name.to_string(),
         fields: sfields,
     };
     let valid = eq_ph(n); // valid at the final phase
-    let tail = Expr::Tuple(vec![next_struct, payload, valid]);
+    let tail = ExprKind::Tuple(vec![Expr::from(next_struct), payload, valid]);
 
     let ret = TypeRef::Tuple(vec![
         TypeRef::Named(struct_name.to_string()),
@@ -387,7 +389,7 @@ fn synth_impl(plan: &Plan, struct_name: &str) -> ImplItem {
         ret,
         body: Block {
             stmts,
-            tail: Box::new(tail),
+            tail: Box::new(Expr::from(tail)),
             pos: Pos::default(),
         },
         pos: Pos::default(),
@@ -406,20 +408,20 @@ fn mux_next_state(plan: &Plan, v: &str) -> Expr {
     let def = plan.def_group.get(v).copied().unwrap_or(0);
     let regty = plan.carried_ty.get(v).cloned().expect("carried type set");
     let val = if plan.is_param.contains(v) {
-        Expr::Ident(v.to_string())
+        ExprKind::Ident(v.to_string())
     } else {
-        Expr::Ident(local_name(v, def))
+        ExprKind::Ident(local_name(v, def))
     };
-    Expr::If {
+    Expr::from(ExprKind::If {
         cond: Box::new(eq_ph(def)),
         // Pin the width so both `if` arms unify to the register width.
-        then: Box::new(Expr::Cast {
-            expr: Box::new(val),
+        then: Box::new(Expr::from(ExprKind::Cast {
+            expr: Box::new(Expr::from(val)),
             ty: regty,
             mode: sinter_syntax::ast::CastMode::Wrap,
-        }),
+        })),
         els: Box::new(self_field(&reg_name(v))),
-    }
+    })
 }
 
 /// Rewrite an expression in phase `seg`: a value from an earlier phase reads its
@@ -427,8 +429,9 @@ fn mux_next_state(plan: &Plan, v: &str) -> Expr {
 /// parameter, a same-phase local its per-phase name; and THE phase's multiply is
 /// recorded (operands, for the shared mux) and replaced by `Ident("shared")`.
 fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, Expr)>) -> Expr {
-    match e {
-        Expr::Binary {
+    // Every rewritten expression keeps the original's position.
+    let out = match &e.kind {
+        ExprKind::Binary {
             op: BinOp::Mul,
             lhs,
             rhs,
@@ -436,73 +439,77 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
             let l = mux_rewrite(plan, lhs, seg, muls);
             let r = mux_rewrite(plan, rhs, seg, muls);
             muls.push((seg, l, r));
-            Expr::Ident(SHARED.to_string())
+            Expr::from(ExprKind::Ident(SHARED.to_string()))
         }
-        Expr::Ident(x) => match plan.def_group.get(x) {
+        ExprKind::Ident(x) => match plan.def_group.get(x) {
             Some(&dg) if dg == seg => {
                 if plan.is_param.contains(x) {
-                    Expr::Ident(x.clone())
+                    Expr::from(ExprKind::Ident(x.clone()))
                 } else {
-                    Expr::Ident(local_name(x, seg))
+                    Expr::from(ExprKind::Ident(local_name(x, seg)))
                 }
             }
             Some(_) => self_field(&reg_name(x)),
-            None => Expr::Ident(x.clone()),
+            None => Expr::from(ExprKind::Ident(x.clone())),
         },
-        Expr::Some(inner) => Expr::Some(Box::new(mux_rewrite(plan, inner, seg, muls))),
-        Expr::Try(inner) => Expr::Try(Box::new(mux_rewrite(plan, inner, seg, muls))),
-        Expr::Literal(_)
-        | Expr::Path(_)
-        | Expr::IncludeHex(_)
-        | Expr::ArrayRepeat { .. }
-        | Expr::None => e.clone(),
-        Expr::Unary { op, expr } => Expr::Unary {
+        ExprKind::Some(inner) => Expr::from(ExprKind::Some(Box::new(mux_rewrite(
+            plan, inner, seg, muls,
+        )))),
+        ExprKind::Try(inner) => {
+            Expr::from(ExprKind::Try(Box::new(mux_rewrite(plan, inner, seg, muls))))
+        }
+        ExprKind::Literal(_)
+        | ExprKind::Path(_)
+        | ExprKind::IncludeHex(_)
+        | ExprKind::ArrayRepeat { .. }
+        | ExprKind::None => e.clone(),
+        ExprKind::Unary { op, expr } => Expr::from(ExprKind::Unary {
             op: *op,
             expr: Box::new(mux_rewrite(plan, expr, seg, muls)),
-        },
-        Expr::Binary { op, lhs, rhs } => Expr::Binary {
+        }),
+        ExprKind::Binary { op, lhs, rhs } => Expr::from(ExprKind::Binary {
             op: *op,
             lhs: Box::new(mux_rewrite(plan, lhs, seg, muls)),
             rhs: Box::new(mux_rewrite(plan, rhs, seg, muls)),
-        },
-        Expr::If { cond, then, els } => Expr::If {
+        }),
+        ExprKind::If { cond, then, els } => Expr::from(ExprKind::If {
             cond: Box::new(mux_rewrite(plan, cond, seg, muls)),
             then: Box::new(mux_rewrite(plan, then, seg, muls)),
             els: Box::new(mux_rewrite(plan, els, seg, muls)),
-        },
-        Expr::Field { base, field } => Expr::Field {
+        }),
+        ExprKind::Field { base, field } => Expr::from(ExprKind::Field {
             base: Box::new(mux_rewrite(plan, base, seg, muls)),
             field: field.clone(),
-        },
-        Expr::Call { func, args } => Expr::Call {
+        }),
+        ExprKind::Call { func, args } => Expr::from(ExprKind::Call {
             func: Box::new(mux_rewrite(plan, func, seg, muls)),
             args: args
                 .iter()
                 .map(|a| mux_rewrite(plan, a, seg, muls))
                 .collect(),
-        },
-        Expr::MethodCall {
+        }),
+        ExprKind::MethodCall {
             receiver,
             method,
             args,
-        } => Expr::MethodCall {
+        } => Expr::from(ExprKind::MethodCall {
             receiver: Box::new(mux_rewrite(plan, receiver, seg, muls)),
             method: method.clone(),
             args: args
                 .iter()
                 .map(|a| mux_rewrite(plan, a, seg, muls))
                 .collect(),
-        },
-        Expr::Index { base, index } => Expr::Index {
+        }),
+        ExprKind::Index { base, index } => Expr::from(ExprKind::Index {
             base: Box::new(mux_rewrite(plan, base, seg, muls)),
             index: Box::new(mux_rewrite(plan, index, seg, muls)),
-        },
-        Expr::Slice { base, hi, lo } => Expr::Slice {
+        }),
+        ExprKind::Slice { base, hi, lo } => Expr::from(ExprKind::Slice {
             base: Box::new(mux_rewrite(plan, base, seg, muls)),
             hi: Box::new(mux_rewrite(plan, hi, seg, muls)),
             lo: Box::new(mux_rewrite(plan, lo, seg, muls)),
-        },
-        Expr::StructLit { name, fields } => Expr::StructLit {
+        }),
+        ExprKind::StructLit { name, fields } => Expr::from(ExprKind::StructLit {
             name: name.clone(),
             fields: fields
                 .iter()
@@ -511,25 +518,25 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
                     value: mux_rewrite(plan, &fi.value, seg, muls),
                 })
                 .collect(),
-        },
-        Expr::Tuple(items) => Expr::Tuple(
+        }),
+        ExprKind::Tuple(items) => Expr::from(ExprKind::Tuple(
             items
                 .iter()
                 .map(|i| mux_rewrite(plan, i, seg, muls))
                 .collect(),
-        ),
-        Expr::Array(items) => Expr::Array(
+        )),
+        ExprKind::Array(items) => Expr::from(ExprKind::Array(
             items
                 .iter()
                 .map(|i| mux_rewrite(plan, i, seg, muls))
                 .collect(),
-        ),
-        Expr::Cast { expr, ty, mode } => Expr::Cast {
+        )),
+        ExprKind::Cast { expr, ty, mode } => Expr::from(ExprKind::Cast {
             expr: Box::new(mux_rewrite(plan, expr, seg, muls)),
             ty: ty.clone(),
             mode: *mode,
-        },
-        Expr::Match { scrutinee, arms } => Expr::Match {
+        }),
+        ExprKind::Match { scrutinee, arms } => Expr::from(ExprKind::Match {
             scrutinee: Box::new(mux_rewrite(plan, scrutinee, seg, muls)),
             arms: arms
                 .iter()
@@ -538,8 +545,8 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
                     body: mux_rewrite(plan, &arm.body, seg, muls),
                 })
                 .collect(),
-        },
-        Expr::Block(b) => Expr::Block(Block {
+        }),
+        ExprKind::Block(b) => Expr::from(ExprKind::Block(Block {
             stmts: b
                 .stmts
                 .iter()
@@ -567,8 +574,9 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
                 .collect(),
             tail: Box::new(mux_rewrite(plan, &b.tail, seg, muls)),
             pos: b.pos,
-        }),
-    }
+        })),
+    };
+    Expr::new(out.kind, e.pos)
 }
 
 /// Build a phase-mux `if ph == s0 { op0 } else if ph == s1 { … } else { op_last }`
@@ -579,11 +587,11 @@ fn phase_mux(items: &[(usize, Expr)]) -> Expr {
     let (_, last) = rev.next().expect("at least one multiplying phase");
     let mut acc = last.clone();
     for (seg, op) in rev {
-        acc = Expr::If {
+        acc = Expr::from(ExprKind::If {
             cond: Box::new(eq_ph(*seg)),
             then: Box::new(op.clone()),
             els: Box::new(acc),
-        };
+        });
     }
     acc
 }
@@ -593,28 +601,28 @@ fn phase_mux(items: &[(usize, Expr)]) -> Expr {
 /// needs no cast; only the widening `ph + 1` arm is cast back to the counter
 /// width (so the `if`-mux unifies to `uK`).
 fn next_ph(kbits: u32, last: usize) -> Expr {
-    Expr::If {
+    Expr::from(ExprKind::If {
         cond: Box::new(eq_ph(last)),
-        then: Box::new(Expr::Literal(0)),
-        els: Box::new(Expr::Cast {
-            expr: Box::new(Expr::Binary {
+        then: Box::new(Expr::from(ExprKind::Literal(0))),
+        els: Box::new(Expr::from(ExprKind::Cast {
+            expr: Box::new(Expr::from(ExprKind::Binary {
                 op: BinOp::Add,
                 lhs: Box::new(self_field(PH)),
-                rhs: Box::new(Expr::Literal(1)),
-            }),
+                rhs: Box::new(Expr::from(ExprKind::Literal(1))),
+            })),
             ty: TypeRef::Scalar(Type::Uint(kbits)),
             mode: sinter_syntax::ast::CastMode::Wrap,
-        }),
-    }
+        })),
+    })
 }
 
 /// `self.ph == k` (a `u1`).
 fn eq_ph(k: usize) -> Expr {
-    Expr::Binary {
+    Expr::from(ExprKind::Binary {
         op: BinOp::Eq,
         lhs: Box::new(self_field(PH)),
-        rhs: Box::new(Expr::Literal(k as u128)),
-    }
+        rhs: Box::new(Expr::from(ExprKind::Literal(k as u128))),
+    })
 }
 
 /// The single latch register name for value `v`.
@@ -635,28 +643,30 @@ fn ph_bits(latency: usize) -> u32 {
 /// Count every `*` reachable in an expression (including nested in casts /
 /// `if` / `match` arms / blocks).
 fn count_muls(e: &Expr) -> usize {
-    match e {
-        Expr::Binary {
+    match &e.kind {
+        ExprKind::Binary {
             op: BinOp::Mul,
             lhs,
             rhs,
         } => 1 + count_muls(lhs) + count_muls(rhs),
-        Expr::Binary { lhs, rhs, .. } => count_muls(lhs) + count_muls(rhs),
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => count_muls(expr),
-        Expr::If { cond, then, els } => count_muls(cond) + count_muls(then) + count_muls(els),
-        Expr::Field { base, .. } => count_muls(base),
-        Expr::Call { func, args } => count_muls(func) + args.iter().map(count_muls).sum::<usize>(),
-        Expr::MethodCall { receiver, args, .. } => {
+        ExprKind::Binary { lhs, rhs, .. } => count_muls(lhs) + count_muls(rhs),
+        ExprKind::Unary { expr, .. } | ExprKind::Cast { expr, .. } => count_muls(expr),
+        ExprKind::If { cond, then, els } => count_muls(cond) + count_muls(then) + count_muls(els),
+        ExprKind::Field { base, .. } => count_muls(base),
+        ExprKind::Call { func, args } => {
+            count_muls(func) + args.iter().map(count_muls).sum::<usize>()
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
             count_muls(receiver) + args.iter().map(count_muls).sum::<usize>()
         }
-        Expr::Index { base, index } => count_muls(base) + count_muls(index),
-        Expr::Slice { base, hi, lo } => count_muls(base) + count_muls(hi) + count_muls(lo),
-        Expr::StructLit { fields, .. } => fields.iter().map(|fi| count_muls(&fi.value)).sum(),
-        Expr::Tuple(items) | Expr::Array(items) => items.iter().map(count_muls).sum(),
-        Expr::Match { scrutinee, arms } => {
+        ExprKind::Index { base, index } => count_muls(base) + count_muls(index),
+        ExprKind::Slice { base, hi, lo } => count_muls(base) + count_muls(hi) + count_muls(lo),
+        ExprKind::StructLit { fields, .. } => fields.iter().map(|fi| count_muls(&fi.value)).sum(),
+        ExprKind::Tuple(items) | ExprKind::Array(items) => items.iter().map(count_muls).sum(),
+        ExprKind::Match { scrutinee, arms } => {
             count_muls(scrutinee) + arms.iter().map(|a| count_muls(&a.body)).sum::<usize>()
         }
-        Expr::Block(b) => {
+        ExprKind::Block(b) => {
             b.stmts
                 .iter()
                 .map(|s| match s {
@@ -669,13 +679,13 @@ fn count_muls(e: &Expr) -> usize {
                 .sum::<usize>()
                 + count_muls(&b.tail)
         }
-        Expr::Some(inner) | Expr::Try(inner) => count_muls(inner),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Path(_)
-        | Expr::IncludeHex(_)
-        | Expr::ArrayRepeat { .. }
-        | Expr::None => 0,
+        ExprKind::Some(inner) | ExprKind::Try(inner) => count_muls(inner),
+        ExprKind::Literal(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Path(_)
+        | ExprKind::IncludeHex(_)
+        | ExprKind::ArrayRepeat { .. }
+        | ExprKind::None => 0,
     }
 }
 

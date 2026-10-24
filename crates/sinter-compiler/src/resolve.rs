@@ -24,8 +24,8 @@
 use std::collections::HashMap;
 
 use sinter_syntax::ast::{
-    Block, Expr, Func, ImplItem, Item, ModItem, PathQualifier, Pattern, Pos, Program, Stmt,
-    TypeRef, UseItem, UsePath, Visibility,
+    Block, Expr, ExprKind, Func, ImplItem, Item, ModItem, PathQualifier, Pattern, Pos, Program,
+    Stmt, TypeRef, UseItem, UsePath, Visibility,
 };
 use sinter_syntax::ModuleTree;
 
@@ -583,54 +583,54 @@ impl Resolver {
         locals: &mut Locals,
         src: &str,
     ) -> Result<(), CompileError> {
-        match e {
+        match &mut e.kind {
             // `include_hex!` carries only a path string (no module names) and is
             // expanded after resolution, so there is nothing to rewrite here.
-            Expr::Literal(_) | Expr::IncludeHex(_) => {}
-            Expr::Ident(name) => {
+            ExprKind::Literal(_) | ExprKind::IncludeHex(_) => {}
+            ExprKind::Ident(name) => {
                 if !locals.contains(name) {
                     if let Some(canon) = self.scope_lookup(cur, name) {
                         *name = canon;
                     }
                 }
             }
-            Expr::Unary { expr, .. } => self.rewrite_expr(expr, cur, locals, src)?,
-            Expr::Binary { lhs, rhs, .. } => {
+            ExprKind::Unary { expr, .. } => self.rewrite_expr(expr, cur, locals, src)?,
+            ExprKind::Binary { lhs, rhs, .. } => {
                 self.rewrite_expr(lhs, cur, locals, src)?;
                 self.rewrite_expr(rhs, cur, locals, src)?;
             }
-            Expr::If { cond, then, els } => {
+            ExprKind::If { cond, then, els } => {
                 self.rewrite_expr(cond, cur, locals, src)?;
                 self.rewrite_expr(then, cur, locals, src)?;
                 self.rewrite_expr(els, cur, locals, src)?;
             }
-            Expr::Path(segs) => {
+            ExprKind::Path(segs) => {
                 let owned = segs.clone();
-                *e = self.resolve_path(cur, &owned, src, Pos::default())?;
+                *e = self.resolve_path(cur, &owned, src, e.pos)?;
             }
-            Expr::Field { base, .. } => self.rewrite_expr(base, cur, locals, src)?,
-            Expr::Call { func, args } => {
+            ExprKind::Field { base, .. } => self.rewrite_expr(base, cur, locals, src)?,
+            ExprKind::Call { func, args } => {
                 self.rewrite_callee(func, cur, locals, src)?;
                 for a in args {
                     self.rewrite_expr(a, cur, locals, src)?;
                 }
             }
-            Expr::MethodCall { receiver, args, .. } => {
+            ExprKind::MethodCall { receiver, args, .. } => {
                 self.rewrite_expr(receiver, cur, locals, src)?;
                 for a in args {
                     self.rewrite_expr(a, cur, locals, src)?;
                 }
             }
-            Expr::Index { base, index } => {
+            ExprKind::Index { base, index } => {
                 self.rewrite_expr(base, cur, locals, src)?;
                 self.rewrite_expr(index, cur, locals, src)?;
             }
-            Expr::Slice { base, hi, lo } => {
+            ExprKind::Slice { base, hi, lo } => {
                 self.rewrite_expr(base, cur, locals, src)?;
                 self.rewrite_expr(hi, cur, locals, src)?;
                 self.rewrite_expr(lo, cur, locals, src)?;
             }
-            Expr::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields } => {
                 if let Some(canon) = self.scope_lookup(cur, name) {
                     *name = canon;
                 }
@@ -638,21 +638,21 @@ impl Resolver {
                     self.rewrite_expr(&mut f.value, cur, locals, src)?;
                 }
             }
-            Expr::Tuple(es) | Expr::Array(es) => {
+            ExprKind::Tuple(es) | ExprKind::Array(es) => {
                 for x in es {
                     self.rewrite_expr(x, cur, locals, src)?;
                 }
             }
             // Both parts may name items (a `const` length, say).
-            Expr::ArrayRepeat { value, len } => {
+            ExprKind::ArrayRepeat { value, len } => {
                 self.rewrite_expr(value, cur, locals, src)?;
                 self.rewrite_expr(len, cur, locals, src)?;
             }
-            Expr::Cast { expr, ty, .. } => {
+            ExprKind::Cast { expr, ty, .. } => {
                 self.rewrite_expr(expr, cur, locals, src)?;
                 self.rewrite_typeref(ty, cur, src)?;
             }
-            Expr::Match { scrutinee, arms } => {
+            ExprKind::Match { scrutinee, arms } => {
                 self.rewrite_expr(scrutinee, cur, locals, src)?;
                 for arm in arms {
                     locals.enter();
@@ -661,9 +661,11 @@ impl Resolver {
                     locals.exit();
                 }
             }
-            Expr::Block(b) => self.rewrite_block(b, cur, locals, src)?,
-            Expr::Some(inner) | Expr::Try(inner) => self.rewrite_expr(inner, cur, locals, src)?,
-            Expr::None => {}
+            ExprKind::Block(b) => self.rewrite_block(b, cur, locals, src)?,
+            ExprKind::Some(inner) | ExprKind::Try(inner) => {
+                self.rewrite_expr(inner, cur, locals, src)?
+            }
+            ExprKind::None => {}
         }
         Ok(())
     }
@@ -677,8 +679,8 @@ impl Resolver {
         locals: &Locals,
         src: &str,
     ) -> Result<(), CompileError> {
-        match func {
-            Expr::Ident(name) => {
+        match &mut func.kind {
+            ExprKind::Ident(name) => {
                 // A local of the same name shadows the function (it is then not
                 // callable — F1 will diagnose it; we must not rebind to the fn).
                 if !locals.contains(name) {
@@ -688,17 +690,17 @@ impl Resolver {
                 }
                 Ok(())
             }
-            Expr::Path(segs) => {
+            ExprKind::Path(segs) => {
                 let owned = segs.clone();
-                *func = self.resolve_path(cur, &owned, src, Pos::default())?;
+                *func = self.resolve_path(cur, &owned, src, func.pos)?;
                 Ok(())
             }
             _ => Ok(()),
         }
     }
 
-    /// Resolve an expression `::`-path to a rewritten [`Expr`] — either an
-    /// `Ident(canonical)` (a qualified value, e.g. a const) or a two-segment
+    /// Resolve an expression `::`-path at `pos` to a rewritten [`Expr`] — either
+    /// an `Ident(canonical)` (a qualified value, e.g. a const) or a two-segment
     /// `Path([canonical_enum, variant])` (an enum variant).
     fn resolve_path(
         &self,
@@ -713,11 +715,11 @@ impl Resolver {
                 // Bare path: only enum variants `Type::Variant` (Type in scope).
                 if segs.len() == 2 {
                     if let Some(canon) = self.scope_lookup(cur, &segs[0]) {
-                        return Ok(Expr::Path(vec![canon, segs[1].clone()]));
+                        return Ok(Expr::new(ExprKind::Path(vec![canon, segs[1].clone()]), pos));
                     }
                 }
                 // Unresolved here — leave it for F1 to diagnose precisely.
-                Ok(Expr::Path(segs.to_vec()))
+                Ok(Expr::new(ExprKind::Path(segs.to_vec()), pos))
             }
             qualifier => {
                 let start = self.start_module(cur, qualifier, src)?;
@@ -725,11 +727,11 @@ impl Resolver {
                 match rest {
                     [item] => {
                         let canon = self.member(&m, item, cur, src, pos)?;
-                        Ok(Expr::Ident(canon))
+                        Ok(Expr::new(ExprKind::Ident(canon), pos))
                     }
                     [ty, variant] => {
                         let canon = self.member(&m, ty, cur, src, pos)?;
-                        Ok(Expr::Path(vec![canon, variant.clone()]))
+                        Ok(Expr::new(ExprKind::Path(vec![canon, variant.clone()]), pos))
                     }
                     _ => Err(CompileError::semantic(
                         src,
@@ -759,7 +761,7 @@ impl Resolver {
                     }
                 } else {
                     let resolved = self.resolve_path(cur, segs, src, Pos::default())?;
-                    if let Expr::Path(new) = resolved {
+                    if let ExprKind::Path(new) = resolved.kind {
                         *segs = new;
                     }
                 }

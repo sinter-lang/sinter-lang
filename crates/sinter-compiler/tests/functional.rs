@@ -417,3 +417,44 @@ fn try_feeding_a_register_write_is_rejected() {
         "only valid in an `Option`-returning function",
     );
 }
+
+// --- Error positions (v0.6): a diagnostic points at the expression -------
+
+/// Assert the source is rejected at `line:col` with an error mentioning `needle`.
+fn reject_at(src: &str, line: usize, col: usize, needle: &str) {
+    let msg = check(src).expect_err("expected a rejection");
+    assert!(
+        msg.contains(&format!(":{line}:{col}: ")) && msg.contains(needle),
+        "expected {needle:?} at {line}:{col}.\n  got: {msg}"
+    );
+}
+
+#[test]
+fn an_operator_error_points_at_the_operator() {
+    reject_at(
+        "fn f(a: u8, b: u4) -> u8 {\n    let x: u8 = a ^ b;\n    x\n}",
+        2,
+        19,
+        "type mismatch",
+    );
+}
+
+#[test]
+fn an_unknown_name_points_at_the_name() {
+    reject_at(
+        "fn f(a: u8) -> u8 {\n    (a + nope) as u8 wrap\n}",
+        2,
+        10,
+        "nope",
+    );
+}
+
+#[test]
+fn a_method_error_points_at_the_call() {
+    reject_at(
+        "struct S { v: u8 = 0, }\nimpl S {\n    fn f(self) -> u8 { self.v.nope() }\n}",
+        3,
+        30,
+        "has no methods",
+    );
+}

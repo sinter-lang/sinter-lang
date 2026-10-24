@@ -44,7 +44,7 @@
 use std::collections::BTreeMap;
 
 use sinter_syntax::ast::{
-    Block, ChannelKind, Expr, Item, MatchArm, Param, Pos, Program, Stmt, Type, TypeRef,
+    Block, ChannelKind, Expr, ExprKind, Item, MatchArm, Param, Pos, Program, Stmt, Type, TypeRef,
 };
 use sinter_syntax::parse_program;
 
@@ -360,62 +360,62 @@ fn for_each_type(
         e: &mut Expr,
         f: &mut dyn FnMut(&mut TypeRef) -> Result<(), CompileError>,
     ) -> Result<(), CompileError> {
-        match e {
-            Expr::Cast { expr: x, ty, .. } => {
+        match &mut e.kind {
+            ExprKind::Cast { expr: x, ty, .. } => {
                 f(ty)?;
                 expr(x, f)
             }
-            Expr::Unary { expr: x, .. }
-            | Expr::Some(x)
-            | Expr::Try(x)
-            | Expr::Field { base: x, .. } => expr(x, f),
-            Expr::Binary { lhs, rhs, .. }
-            | Expr::Index {
+            ExprKind::Unary { expr: x, .. }
+            | ExprKind::Some(x)
+            | ExprKind::Try(x)
+            | ExprKind::Field { base: x, .. } => expr(x, f),
+            ExprKind::Binary { lhs, rhs, .. }
+            | ExprKind::Index {
                 base: lhs,
                 index: rhs,
             } => {
                 expr(lhs, f)?;
                 expr(rhs, f)
             }
-            Expr::If { cond, then, els } => {
+            ExprKind::If { cond, then, els } => {
                 expr(cond, f)?;
                 expr(then, f)?;
                 expr(els, f)
             }
-            Expr::Slice { base, hi, lo } => {
+            ExprKind::Slice { base, hi, lo } => {
                 expr(base, f)?;
                 expr(hi, f)?;
                 expr(lo, f)
             }
-            Expr::Call { func: callee, args } => {
+            ExprKind::Call { func: callee, args } => {
                 expr(callee, f)?;
                 args.iter_mut().try_for_each(|a| expr(a, f))
             }
-            Expr::MethodCall { receiver, args, .. } => {
+            ExprKind::MethodCall { receiver, args, .. } => {
                 expr(receiver, f)?;
                 args.iter_mut().try_for_each(|a| expr(a, f))
             }
-            Expr::StructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } => {
                 fields.iter_mut().try_for_each(|fi| expr(&mut fi.value, f))
             }
-            Expr::Tuple(items) | Expr::Array(items) => {
+            ExprKind::Tuple(items) | ExprKind::Array(items) => {
                 items.iter_mut().try_for_each(|i| expr(i, f))
             }
-            Expr::ArrayRepeat { value, len } => {
+            ExprKind::ArrayRepeat { value, len } => {
                 expr(value, f)?;
                 expr(len, f)
             }
-            Expr::Match { scrutinee, arms } => {
+            ExprKind::Match { scrutinee, arms } => {
                 expr(scrutinee, f)?;
                 arms.iter_mut()
                     .try_for_each(|MatchArm { body, .. }| expr(body, f))
             }
-            Expr::Block(b) => block(b, f),
-            Expr::None
-            | Expr::Literal(_)
-            | Expr::Ident(_)
-            | Expr::Path(_)
-            | Expr::IncludeHex(_) => Ok(()),
+            ExprKind::Block(b) => block(b, f),
+            ExprKind::None
+            | ExprKind::Literal(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Path(_)
+            | ExprKind::IncludeHex(_) => Ok(()),
         }
     }
     for item in &mut program.items {
@@ -446,8 +446,8 @@ fn build_mono(
 ) -> Result<Mono, CompileError> {
     let elem_src = scalar_src(kind, elem, pos)?;
     let ks = kind_src(kind);
-    let n = match depth {
-        Expr::Literal(v) => usize::try_from(*v)
+    let n = match &depth.kind {
+        ExprKind::Literal(v) => usize::try_from(*v)
             .map_err(|_| sem(pos, format!("`{ks}` capacity `{v}` is too large")))?,
         _ => return Err(sem(pos, format!("a `{ks}` capacity must be a literal"))),
     };

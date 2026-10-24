@@ -30,8 +30,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use sinter_syntax::ast::{
-    AttrValue, BinOp, CastMode, EnumItem, Expr, Func, Item, Param, Pattern, Pos, Program, Stmt,
-    StructItem, Type, TypeRef, UnaryOp, Visibility,
+    AttrValue, BinOp, CastMode, EnumItem, Expr, ExprKind, Func, Item, Param, Pattern, Pos, Program,
+    Stmt, StructItem, Type, TypeRef, UnaryOp, Visibility,
 };
 
 use crate::error::{mask, CompileError};
@@ -1120,24 +1120,25 @@ impl Elaborator<'_> {
         depth: usize,
         pos: Pos,
     ) -> Result<Val, CompileError> {
+        let pos = crate::functional::located(e, pos);
         if depth > MAX_INLINE_DEPTH {
             return Err(err(&self.ctx, pos, "inlining too deep (recursive call?)"));
         }
-        match e {
+        match &e.kind {
             // Expanded to an array before elaboration (via `compile_program`); if it
             // survives, it was used outside a `rom` initializer.
-            Expr::IncludeHex(_) => Err(err(
+            ExprKind::IncludeHex(_) => Err(err(
                 &self.ctx,
                 pos,
                 "`include_hex!` is only valid as a `rom` field initializer",
             )),
             // Expanded to an array by `include_expand` before elaboration.
-            Expr::ArrayRepeat { .. } => Err(err(
+            ExprKind::ArrayRepeat { .. } => Err(err(
                 &self.ctx,
                 pos,
                 "internal error: `[value; N]` was not expanded",
             )),
-            Expr::Literal(v) => {
+            ExprKind::Literal(v) => {
                 let ty = expected
                     .ok_or_else(|| err(&self.ctx, pos, format!("cannot infer type of `{v}`")))?;
                 let it = ty
@@ -1145,7 +1146,7 @@ impl Elaborator<'_> {
                     .ok_or_else(|| err(&self.ctx, pos, format!("`{v}` needs a numeric type")))?;
                 Ok(Val::Scalar(self.lit(*v, it, pos)?, ty.fbits()))
             }
-            Expr::Ident(name) => {
+            ExprKind::Ident(name) => {
                 if let Some(v) = env.get(name) {
                     Ok(v.clone())
                 } else if let Some((v, ty)) = self.consts.get(name) {
@@ -1154,12 +1155,12 @@ impl Elaborator<'_> {
                     Err(err(&self.ctx, pos, format!("unknown name `{name}`")))
                 }
             }
-            Expr::Path(segs) => self.lower_path(segs, pos),
-            Expr::Field { base, field } => {
+            ExprKind::Path(segs) => self.lower_path(segs, pos),
+            ExprKind::Field { base, field } => {
                 let b = self.lower(env, base, None, depth, pos)?;
                 self.field(&b, field, pos)
             }
-            Expr::Index { base, index } => {
+            ExprKind::Index { base, index } => {
                 let b = self.lower(env, base, None, depth, pos)?;
                 let Val::Array(items) = b else {
                     return Err(err(&self.ctx, pos, "indexing a non-array"));
@@ -1184,7 +1185,7 @@ impl Elaborator<'_> {
                 }
                 Ok(result)
             }
-            Expr::Slice { base, hi, lo } => {
+            ExprKind::Slice { base, hi, lo } => {
                 // `base[hi:lo]` -> `(base >> lo)` truncated to `hi-lo+1` bits. The
                 // operand is unsigned (F1), so the shift is logical and the wrap
                 // cast keeps exactly bits `lo..=hi`. Reuses the IR shift + cast.
@@ -1218,13 +1219,13 @@ impl Elaborator<'_> {
                 };
                 Ok(Val::Scalar(result, 0))
             }
-            Expr::Call { func, args } => self.lower_call(env, func, args, depth, pos),
-            Expr::MethodCall {
+            ExprKind::Call { func, args } => self.lower_call(env, func, args, depth, pos),
+            ExprKind::MethodCall {
                 receiver,
                 method,
                 args,
             } => self.lower_method(env, receiver, method, args, depth, pos),
-            Expr::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields } => {
                 let sty = self.resolve_named(name, pos)?;
                 let mut out = Vec::new();
                 for (fname, fty) in self.struct_fields(name, pos)? {
@@ -1240,7 +1241,7 @@ impl Elaborator<'_> {
                 let _ = sty;
                 Ok(Val::Struct(name.clone(), out))
             }
-            Expr::Tuple(items) => {
+            ExprKind::Tuple(items) => {
                 let hint = match expected {
                     Some(Ty::Tuple(ts)) if ts.len() == items.len() => Some(ts),
                     _ => None,
@@ -1251,7 +1252,7 @@ impl Elaborator<'_> {
                 }
                 Ok(Val::Tuple(out))
             }
-            Expr::Array(items) => {
+            ExprKind::Array(items) => {
                 let hint = match expected {
                     Some(Ty::Array(et, _)) => Some((**et).clone()),
                     _ => None,
@@ -1262,7 +1263,7 @@ impl Elaborator<'_> {
                 }
                 Ok(Val::Array(out))
             }
-            Expr::Some(inner) => {
+            ExprKind::Some(inner) => {
                 let hint = match expected {
                     Some(Ty::Option(t)) => Some((**t).clone()),
                     _ => None,
@@ -1273,7 +1274,7 @@ impl Elaborator<'_> {
                     payload: Box::new(payload),
                 })
             }
-            Expr::None => {
+            ExprKind::None => {
                 let Some(Ty::Option(t)) = expected else {
                     return Err(err(&self.ctx, pos, "cannot infer the type of `None`"));
                 };
@@ -1282,7 +1283,7 @@ impl Elaborator<'_> {
                     payload: Box::new(self.zero_val(t)),
                 })
             }
-            Expr::Try(inner) => {
+            ExprKind::Try(inner) => {
                 // `?` (DESIGN §6.4): record the operand's validity bit and yield
                 // its payload unconditionally; `lower_body` AND-folds the recorded
                 // bits into the enclosing function's `Option` result.
@@ -1293,13 +1294,13 @@ impl Elaborator<'_> {
                 self.guards.borrow_mut().push(is_some);
                 Ok(*payload)
             }
-            Expr::Unary { op, expr: inner } => {
+            ExprKind::Unary { op, expr: inner } => {
                 self.lower_unary(env, *op, inner, expected, depth, pos)
             }
-            Expr::Binary { op, lhs, rhs } => {
+            ExprKind::Binary { op, lhs, rhs } => {
                 self.lower_binary(env, *op, lhs, rhs, expected, depth, pos)
             }
-            Expr::If { cond, then, els } => {
+            ExprKind::If { cond, then, els } => {
                 let c = self.lower_scalar(env, cond, Some(Type::Uint(1)), depth, pos)?;
                 // The arms are muxed, so a memory access inside one would be
                 // committed unconditionally — `branch_depth` lets `lower_mem_method`
@@ -1310,15 +1311,15 @@ impl Elaborator<'_> {
                 self.branch_depth.set(self.branch_depth.get() - 1);
                 self.mux(&c, &t?, &e?, pos)
             }
-            Expr::Match { scrutinee, arms } => {
+            ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(env, scrutinee, arms, expected, depth, pos)
             }
-            Expr::Cast {
+            ExprKind::Cast {
                 expr: inner,
                 ty,
                 mode,
             } => self.lower_cast(env, inner, ty, *mode, depth, pos),
-            Expr::Block(b) => {
+            ExprKind::Block(b) => {
                 let mut local = env.clone();
                 for stmt in &b.stmts {
                     let (pattern, ty, value, pos) = match stmt {
@@ -1483,7 +1484,7 @@ impl Elaborator<'_> {
                 let l = self.lower(env, lhs, None, depth, pos)?;
                 let (le, lf) = scalar_parts(&l, &self.ctx, pos)?;
                 let lty = le.ty;
-                if let Expr::Literal(k) = rhs {
+                if let ExprKind::Literal(k) = &rhs.kind {
                     // BIT1: a literal amount -> the widening/narrowing IR const-shift
                     // nodes (the fixed-point path): `<<` widens by `k`, `>>` narrows
                     // by `k` (arithmetic for a signed operand).
@@ -1561,8 +1562,8 @@ impl Elaborator<'_> {
         depth: usize,
         pos: Pos,
     ) -> Result<(Val, Val), CompileError> {
-        let lhs_lit = matches!(lhs, Expr::Literal(_));
-        let rhs_lit = matches!(rhs, Expr::Literal(_));
+        let lhs_lit = matches!(&lhs.kind, ExprKind::Literal(_));
+        let rhs_lit = matches!(&rhs.kind, ExprKind::Literal(_));
         match (lhs_lit, rhs_lit) {
             (true, true) => Ok((
                 self.lower(env, lhs, expected, depth, pos)?,
@@ -1602,8 +1603,8 @@ impl Elaborator<'_> {
             target_fx(&target).ok_or_else(|| err(&self.ctx, pos, "cast to a non-numeric type"))?;
         // A bare literal is typed as the target when it fits, else as the
         // narrowest unsigned type holding it (mirrors `functional`'s check).
-        let hint = match inner {
-            Expr::Literal(v) => {
+        let hint = match &inner.kind {
+            ExprKind::Literal(v) => {
                 let w = ti + tf;
                 let fits = if ts {
                     w >= 1 && (w > 127 || *v < (1u128 << (w - 1)))
@@ -1714,7 +1715,7 @@ impl Elaborator<'_> {
         depth: usize,
         pos: Pos,
     ) -> Result<Val, CompileError> {
-        let Expr::Ident(name) = func else {
+        let ExprKind::Ident(name) = &func.kind else {
             return Err(err(&self.ctx, pos, "call target must be a function name"));
         };
         let f = *self
@@ -2269,9 +2270,9 @@ impl Elaborator<'_> {
                 // `we` is `u1` (the whole word) or a byte-lane mask (MEM2).
                 let write = if writable {
                     let lanes = elem_ty.width() / 8;
-                    let hint = match &args[1] {
-                        Expr::Literal(v) if *v > 1 => Some(Type::Uint(lanes)),
-                        Expr::Literal(_) => Some(Type::Uint(1)),
+                    let hint = match &args[1].kind {
+                        ExprKind::Literal(v) if *v > 1 => Some(Type::Uint(lanes)),
+                        ExprKind::Literal(_) => Some(Type::Uint(1)),
                         _ => None,
                     };
                     let we = self.lower_scalar(env, &args[1], hint, depth, pos)?;
@@ -2316,7 +2317,7 @@ impl Elaborator<'_> {
         let to = Type::Uint(addr_bits);
         let hint = Ty::Array(Box::new(Ty::Scalar(to)), ports as usize);
         let hint =
-            matches!(e, Expr::Array(items) if items.iter().all(|i| matches!(i, Expr::Literal(_))))
+            matches!(&e.kind, ExprKind::Array(items) if items.iter().all(|i| matches!(&i.kind, ExprKind::Literal(_))))
                 .then_some(hint);
         let Val::Array(items) = self.lower(env, e, hint.as_ref(), depth, pos)? else {
             return Err(err(
@@ -2354,7 +2355,7 @@ impl Elaborator<'_> {
     ) -> Result<ir::Expr, CompileError> {
         // A bare literal address adopts the natural address width (matching the
         // checker); a non-literal self-infers, then both are masked below.
-        let hint = matches!(e, Expr::Literal(_)).then_some(Type::Uint(addr_bits));
+        let hint = matches!(&e.kind, ExprKind::Literal(_)).then_some(Type::Uint(addr_bits));
         let a = self.lower_scalar(env, e, hint, depth, pos)?;
         let to = Type::Uint(addr_bits);
         if a.ty == to {
@@ -2844,7 +2845,7 @@ impl Elaborator<'_> {
             .ok_or_else(|| err(&self.ctx, pos, format!("no variant `{variant}`")))?;
         // Explicit discriminant wins; otherwise binary index or one-hot bit.
         if let Some(d) = &e.variants[idx].discriminant {
-            if let Expr::Literal(v) = d {
+            if let ExprKind::Literal(v) = &d.kind {
                 return u64::try_from(*v)
                     .map_err(|_| err(&self.ctx, pos, "discriminant too large"));
             }
@@ -2951,8 +2952,8 @@ impl Elaborator<'_> {
 
     /// Constant-fold `e` to a [`Val`] of literal leaves, of type `ty`.
     fn const_val(&self, e: &Expr, ty: &Ty, pos: Pos) -> Result<Val, CompileError> {
-        match (e, ty) {
-            (Expr::Array(items), Ty::Array(et, n)) => {
+        match (&e.kind, ty) {
+            (ExprKind::Array(items), Ty::Array(et, n)) => {
                 if items.len() != *n {
                     return Err(err(&self.ctx, pos, "array literal length mismatch"));
                 }
@@ -2963,7 +2964,7 @@ impl Elaborator<'_> {
                         .collect::<Result<_, _>>()?,
                 ))
             }
-            (Expr::StructLit { name, fields }, Ty::Struct(_)) => {
+            (ExprKind::StructLit { name, fields }, Ty::Struct(_)) => {
                 let mut out = Vec::new();
                 for (fname, fty) in self.struct_fields(name, pos)? {
                     let init = fields
@@ -2974,12 +2975,12 @@ impl Elaborator<'_> {
                 }
                 Ok(Val::Struct(name.clone(), out))
             }
-            (Expr::Path(segs), Ty::Enum(..)) => self.lower_path(segs, pos),
+            (ExprKind::Path(segs), Ty::Enum(..)) => self.lower_path(segs, pos),
             // A `rom`'s contents: fold each array element to a literal word, carried
             // on the handle's `data` (→ `ir::Mem.reset`). The checker has already
             // confirmed the count and element fit.
             (
-                Expr::Array(items),
+                ExprKind::Array(items),
                 Ty::Mem {
                     elem,
                     addr_bits,
@@ -3026,8 +3027,8 @@ impl Elaborator<'_> {
                 pending: None,
                 data: None,
             }),
-            (Expr::None, Ty::Option(_)) => Ok(self.zero_val(ty)),
-            (Expr::Some(inner), Ty::Option(it)) => Ok(Val::Option {
+            (ExprKind::None, Ty::Option(_)) => Ok(self.zero_val(ty)),
+            (ExprKind::Some(inner), Ty::Option(it)) => Ok(Val::Option {
                 is_some: typed(ir::ExprKind::Literal(1), Type::Uint(1)),
                 payload: Box::new(self.const_val(inner, it, pos)?),
             }),
@@ -3046,22 +3047,20 @@ impl Elaborator<'_> {
 
     /// Constant-fold a scalar expression to a value.
     fn fold_scalar(&self, e: &Expr, ty: Type, pos: Pos) -> Result<u64, CompileError> {
-        match e {
-            Expr::Literal(v) => Ok(mask(self.lit_u64(*v, pos)?, ty.width())),
-            Expr::Ident(name) => self
+        match &e.kind {
+            ExprKind::Literal(v) => Ok(mask(self.lit_u64(*v, pos)?, ty.width())),
+            ExprKind::Ident(name) => self
                 .consts
                 .get(name)
                 .map(|(v, _)| mask(*v, ty.width()))
                 .ok_or_else(|| err(&self.ctx, pos, format!("`{name}` is not a constant"))),
-            other => literal_cast(other)
-                .map(|v| mask(v, ty.width()))
-                .ok_or_else(|| {
-                    unsupported(
-                        &self.ctx,
-                        pos,
-                        "reset values beyond literals, arrays, struct/enum defaults, and `const`s",
-                    )
-                }),
+            _ => literal_cast(e).map(|v| mask(v, ty.width())).ok_or_else(|| {
+                unsupported(
+                    &self.ctx,
+                    pos,
+                    "reset values beyond literals, arrays, struct/enum defaults, and `const`s",
+                )
+            }),
         }
     }
 
@@ -3248,11 +3247,11 @@ impl Elaborator<'_> {
     }
 
     fn const_index(&self, e: &Expr, pos: Pos) -> Result<usize, CompileError> {
-        match e {
-            Expr::Literal(v) => {
+        match &e.kind {
+            ExprKind::Literal(v) => {
                 usize::try_from(*v).map_err(|_| err(&self.ctx, pos, "index too large"))
             }
-            Expr::Ident(name) => self
+            ExprKind::Ident(name) => self
                 .consts
                 .get(name)
                 .and_then(|(v, _)| usize::try_from(*v).ok())
@@ -3481,10 +3480,10 @@ fn rdata_name(mem: &str, ports: u32, port: u32) -> String {
 
 /// `self.a.b` → `Some("a_b")` (the flattened state path); anything else → `None`.
 fn self_field_path(e: &Expr) -> Option<String> {
-    match e {
-        Expr::Field { base, field } => match base.as_ref() {
-            Expr::Ident(s) if s == "self" => Some(field.clone()),
-            inner => self_field_path(inner).map(|p| join(&p, field)),
+    match &e.kind {
+        ExprKind::Field { base, field } => match &base.kind {
+            ExprKind::Ident(s) if s == "self" => Some(field.clone()),
+            _ => self_field_path(base).map(|p| join(&p, field)),
         },
         _ => None,
     }
@@ -3644,13 +3643,13 @@ fn const_values(program: &Program) -> Result<HashMap<String, (u64, Type)>, Compi
                 TypeRef::Scalar(t) => *t,
                 _ => return Err(unsupported(&c.name, c.pos, "non-scalar constants (F4)")),
             };
-            let v = match &c.value {
-                Expr::Literal(v) => u64::try_from(*v)
+            let v = match &c.value.kind {
+                ExprKind::Literal(v) => u64::try_from(*v)
                     .map_err(|_| err(&c.name, c.pos, format!("literal `{v}` is too large")))?,
-                Expr::Ident(name) => consts.get(name).map(|(v, _)| *v).ok_or_else(|| {
+                ExprKind::Ident(name) => consts.get(name).map(|(v, _)| *v).ok_or_else(|| {
                     err(&c.name, c.pos, format!("`{name}` is not a known constant"))
                 })?,
-                other => literal_cast(other).ok_or_else(|| {
+                _ => literal_cast(&c.value).ok_or_else(|| {
                     unsupported(&c.name, c.pos, "const values beyond literals/refs")
                 })?,
             };
@@ -3664,15 +3663,15 @@ fn const_values(program: &Program) -> Result<HashMap<String, (u64, Type)>, Compi
 /// width-suffixed literal (`0b1010_u4`, which the parser desugars to
 /// `0b1010 as u4 wrap`), evaluated with the IR cast semantics.
 fn literal_cast(e: &Expr) -> Option<u64> {
-    let Expr::Cast {
+    let ExprKind::Cast {
         expr,
         ty: TypeRef::Scalar(to),
         mode,
-    } = e
+    } = &e.kind
     else {
         return None;
     };
-    let Expr::Literal(v) = expr.as_ref() else {
+    let ExprKind::Literal(v) = &expr.kind else {
         return None;
     };
     let v = u64::try_from(*v).ok()?;

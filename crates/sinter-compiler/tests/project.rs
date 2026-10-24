@@ -54,7 +54,8 @@ fn split_go_board_elaborates_bit_for_bit_identical() {
 }
 
 /// A semantic error in a submodule names that file, quotes the offending line,
-/// and puts a caret under the position (a tab in the line keeps its width).
+/// and puts a caret under the offending expression, here the `+` that makes a
+/// `u9` (a tab in the line keeps its width).
 #[test]
 fn semantic_errors_name_the_file_and_quote_the_line() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/located_error/main.snt");
@@ -63,10 +64,10 @@ fn semantic_errors_name_the_file_and_quote_the_line() {
         .to_string();
     let counter = root.with_file_name("counter.snt");
     let expected = format!(
-        "{}:7:13: type mismatch: expected `u8`, found `u9`\n  \
+        "{}:9:34: type mismatch: expected `u8`, found `u9`\n  \
          |\n\
-         7 | \tif en == 1 {{\n  \
-         | \t           ^\n  \
+         9 | \t    Counter {{ value: self.value + 1 }}\n  \
+         | \t                                ^\n  \
          = in `bump`",
         counter.display()
     );

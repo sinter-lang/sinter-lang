@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use sinter_syntax::ast::{
-    AttrValue, BinOp, Block, CastMode, Expr, FnColor, Func, Item, Param, Pattern, Pos, Program,
-    Stmt, Type, TypeRef, UnaryOp, Visibility,
+    AttrValue, BinOp, Block, CastMode, Expr, ExprKind, FnColor, Func, Item, Param, Pattern, Pos,
+    Program, Stmt, Type, TypeRef, UnaryOp, Visibility,
 };
 
 use crate::error::CompileError;
@@ -506,6 +506,16 @@ fn is_mem_bearing(t: &FType) -> bool {
     }
 }
 
+/// Where to report a problem with `e`: its own position, or `fallback` (the
+/// enclosing statement's) when `e` was synthesized and has none.
+pub(crate) fn located(e: &Expr, fallback: Pos) -> Pos {
+    if e.pos == Pos::default() {
+        fallback
+    } else {
+        e.pos
+    }
+}
+
 /// Reject a memory used as a function parameter or return type.
 fn reject_mem_value(t: &FType, ctx: &str, pos: Pos) -> Result<(), CompileError> {
     if is_mem_bearing(t) {
@@ -642,7 +652,7 @@ fn const_len(
     ctx: &str,
     pos: Pos,
 ) -> Result<u64, CompileError> {
-    if let Expr::Ident(name) = expr {
+    if let ExprKind::Ident(name) = &expr.kind {
         return consts.get(name).copied().ok_or_else(|| {
             sem(
                 ctx,
@@ -651,8 +661,8 @@ fn const_len(
             )
         });
     }
-    match expr {
-        Expr::Literal(v) => {
+    match &expr.kind {
+        ExprKind::Literal(v) => {
             u64::try_from(*v).map_err(|_| sem(ctx, pos, format!("{noun} `{v}` is too large")))
         }
         _ => Err(sem(
@@ -665,10 +675,10 @@ fn const_len(
 
 /// The value of a literal or width-suffixed literal (desugared to a cast).
 fn literal_len(e: &Expr) -> Option<u64> {
-    let v = match e {
-        Expr::Literal(v) => *v,
-        Expr::Cast { expr, .. } => match expr.as_ref() {
-            Expr::Literal(v) => *v,
+    let v = match &e.kind {
+        ExprKind::Literal(v) => *v,
+        ExprKind::Cast { expr, .. } => match &expr.kind {
+            ExprKind::Literal(v) => *v,
             _ => return None,
         },
         _ => return None,
@@ -1007,10 +1017,13 @@ impl Checker<'_> {
         ctx: &str,
         pos: Pos,
     ) -> Result<FType, CompileError> {
-        let ty = match expr {
+        // Report at the expression itself; `pos` (the enclosing statement) is
+        // the fallback for a synthesized expression, which has no position.
+        let pos = located(expr, pos);
+        let ty = match &expr.kind {
             // Expanded to an array before checking (via `compile_program`); reaching
             // here means it appeared outside a `rom` initializer.
-            Expr::IncludeHex(_) => {
+            ExprKind::IncludeHex(_) => {
                 return Err(sem(
                     ctx,
                     pos,
@@ -1018,14 +1031,14 @@ impl Checker<'_> {
                 ))
             }
             // Expanded to an array by `include_expand` before checking.
-            Expr::ArrayRepeat { .. } => {
+            ExprKind::ArrayRepeat { .. } => {
                 return Err(sem(
                     ctx,
                     pos,
                     "internal error: `[value; N]` was not expanded",
                 ))
             }
-            Expr::Literal(v) => {
+            ExprKind::Literal(v) => {
                 let want = expected.ok_or_else(|| {
                     sem(ctx, pos, format!("cannot infer a type for literal `{v}`"))
                 })?;
@@ -1038,9 +1051,9 @@ impl Checker<'_> {
                 }
                 want.clone()
             }
-            Expr::Ident(name) => self.lookup(name, env, ctx, pos)?,
-            Expr::Path(segs) => self.check_path(segs, ctx, pos)?,
-            Expr::Field { base, field } => {
+            ExprKind::Ident(name) => self.lookup(name, env, ctx, pos)?,
+            ExprKind::Path(segs) => self.check_path(segs, ctx, pos)?,
+            ExprKind::Field { base, field } => {
                 let bt = self.check_expr(base, env, None, ctx, pos)?;
                 let FType::Struct(s) = &bt else {
                     return Err(sem(ctx, pos, format!("`{bt}` has no fields")));
@@ -1055,7 +1068,7 @@ impl Checker<'_> {
                 self.check_field_access(s, field, ctx, pos)?;
                 fty
             }
-            Expr::Index { base, index } => {
+            ExprKind::Index { base, index } => {
                 let bt = self.check_expr(base, env, None, ctx, pos)?;
                 let FType::Array(elem, n) = &bt else {
                     return Err(sem(ctx, pos, format!("`{bt}` cannot be indexed")));
@@ -1064,12 +1077,12 @@ impl Checker<'_> {
                 // infer its width from, so (like a memory address, and since the
                 // index is const-folded during elaboration) it adopts the natural
                 // index width `u<bits(N)>`; a non-literal index self-infers.
-                let hint = matches!(**index, Expr::Literal(_))
+                let hint = matches!(index.kind, ExprKind::Literal(_))
                     .then(|| FType::Uint((u64::BITS - n.leading_zeros()).max(1)));
                 self.check_expr(index, env, hint.as_ref(), ctx, pos)?;
                 (**elem).clone()
             }
-            Expr::Slice { base, hi, lo } => {
+            ExprKind::Slice { base, hi, lo } => {
                 // `base[hi:lo]` extracts bits `hi..=lo` of an unsigned scalar
                 // (DESIGN §6.13, BIT1). Restricted to unsigned so the lowering is
                 // a plain logical shift + truncate (a signed operand would need a
@@ -1108,16 +1121,16 @@ impl Checker<'_> {
                 }
                 FType::Uint((hi - lo + 1) as u32)
             }
-            Expr::Call { func, args } => self.check_call(func, args, env, ctx, pos)?,
-            Expr::MethodCall {
+            ExprKind::Call { func, args } => self.check_call(func, args, env, ctx, pos)?,
+            ExprKind::MethodCall {
                 receiver,
                 method,
                 args,
             } => self.check_method(receiver, method, args, env, ctx, pos)?,
-            Expr::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields } => {
                 self.check_struct_lit(name, fields, env, ctx, pos)?
             }
-            Expr::Tuple(items) => {
+            ExprKind::Tuple(items) => {
                 let want = match expected {
                     Some(FType::Tuple(ts)) if ts.len() == items.len() => Some(ts),
                     _ => None,
@@ -1129,8 +1142,8 @@ impl Checker<'_> {
                 }
                 FType::Tuple(parts)
             }
-            Expr::Array(items) => self.check_array(items, expected, env, ctx, pos)?,
-            Expr::Some(inner) => {
+            ExprKind::Array(items) => self.check_array(items, expected, env, ctx, pos)?,
+            ExprKind::Some(inner) => {
                 // `Some(x)` has type `Option<typeof x>`; an expected `Option<T>`
                 // hints the payload as `T`.
                 let payload_hint = match expected {
@@ -1140,7 +1153,7 @@ impl Checker<'_> {
                 let it = self.check_expr(inner, env, payload_hint, ctx, pos)?;
                 FType::Option(Box::new(it))
             }
-            Expr::None => {
+            ExprKind::None => {
                 match expected {
                     Some(FType::Option(t)) => FType::Option(t.clone()),
                     _ => return Err(sem(
@@ -1150,7 +1163,7 @@ impl Checker<'_> {
                     )),
                 }
             }
-            Expr::Try(inner) => {
+            ExprKind::Try(inner) => {
                 // `?` yields the payload and folds the operand's validity into the
                 // enclosing `Option`-returning function's result (DESIGN §6.4).
                 if !*self.in_option.borrow() {
@@ -1170,23 +1183,23 @@ impl Checker<'_> {
                 };
                 (*payload).clone()
             }
-            Expr::Unary { op, expr: inner } => {
+            ExprKind::Unary { op, expr: inner } => {
                 self.check_unary(*op, inner, env, expected, ctx, pos)?
             }
-            Expr::Binary { op, lhs, rhs } => {
+            ExprKind::Binary { op, lhs, rhs } => {
                 self.check_binary(*op, lhs, rhs, env, expected, ctx, pos)?
             }
-            Expr::If { cond, then, els } => {
+            ExprKind::If { cond, then, els } => {
                 self.check_expr(cond, env, Some(&FType::Uint(1)), ctx, pos)?;
                 let t = self.check_expr(then, env, expected, ctx, pos)?;
                 let e = self.check_expr(els, env, Some(&t), ctx, pos)?;
                 self.expect(&t, &e, ctx, pos)?;
                 t
             }
-            Expr::Match { scrutinee, arms } => {
+            ExprKind::Match { scrutinee, arms } => {
                 self.check_match(scrutinee, arms, env, expected, ctx, pos)?
             }
-            Expr::Cast {
+            ExprKind::Cast {
                 expr: inner,
                 ty,
                 mode,
@@ -1195,8 +1208,8 @@ impl Checker<'_> {
                 // otherwise the narrowest unsigned type that holds it, so the
                 // cast's mode then wraps or saturates it (`0 as u18 wrap`, and
                 // the `0_u18` suffix form, which the parser desugars to a cast).
-                let hint = match inner.as_ref() {
-                    Expr::Literal(v) => {
+                let hint = match &inner.kind {
+                    ExprKind::Literal(v) => {
                         let target = resolve_type(&self.known(), ty, ctx, pos)?;
                         Some(if literal_fits(*v, &target) {
                             target
@@ -1209,7 +1222,7 @@ impl Checker<'_> {
                 let from = self.check_expr(inner, env, hint.as_ref(), ctx, pos)?;
                 self.check_cast(&from, ty, *mode, ctx, pos)?
             }
-            Expr::Block(block) => self.check_block(block, env, expected, ctx)?,
+            ExprKind::Block(block) => self.check_block(block, env, expected, ctx)?,
         };
         if let Some(want) = expected {
             // Always confirm the value matches the context. For width-inferred
@@ -1254,7 +1267,7 @@ impl Checker<'_> {
         ctx: &str,
         pos: Pos,
     ) -> Result<FType, CompileError> {
-        let Expr::Ident(name) = func else {
+        let ExprKind::Ident(name) = &func.kind else {
             return Err(sem(
                 ctx,
                 pos,
@@ -1380,7 +1393,7 @@ impl Checker<'_> {
         }
         // A bare-literal index adopts the natural index width (like `a[i]`); the
         // value must match the element type.
-        let hint = matches!(args[0], Expr::Literal(_))
+        let hint = matches!(args[0].kind, ExprKind::Literal(_))
             .then(|| FType::Uint((u64::BITS - n.leading_zeros()).max(1)));
         self.check_expr(&args[0], env, hint.as_ref(), ctx, pos)?;
         self.check_expr(&args[1], env, Some(elem), ctx, pos)?;
@@ -1420,7 +1433,7 @@ impl Checker<'_> {
         // self-infers any scalar width.
         let addr_bits = depth.trailing_zeros();
         let check_addr = |this: &Self, e: &Expr| -> Result<(), CompileError> {
-            let hint = matches!(e, Expr::Literal(_)).then_some(FType::Uint(addr_bits));
+            let hint = matches!(&e.kind, ExprKind::Literal(_)).then_some(FType::Uint(addr_bits));
             let at = this.check_expr(e, env, hint.as_ref(), ctx, pos)?;
             this.require_scalar(&at, ctx, pos)
         };
@@ -1430,7 +1443,7 @@ impl Checker<'_> {
             if ports == 1 {
                 return check_addr(this, e);
             }
-            let all_literals = matches!(e, Expr::Array(items) if items.iter().all(|i| matches!(i, Expr::Literal(_))));
+            let all_literals = matches!(&e.kind, ExprKind::Array(items) if items.iter().all(|i| matches!(&i.kind, ExprKind::Literal(_))));
             let hint = all_literals
                 .then(|| FType::Array(Box::new(FType::Uint(addr_bits)), u64::from(ports)));
             match this.check_expr(e, env, hint.as_ref(), ctx, pos)? {
@@ -1499,9 +1512,9 @@ impl Checker<'_> {
     ) -> Result<(), CompileError> {
         let width = elem.scalar_width().unwrap_or(0);
         let lanes = (width % 8 == 0 && width > 8).then_some(width / 8);
-        let hint = match we {
-            Expr::Literal(v) if *v <= 1 => Some(FType::Uint(1)),
-            Expr::Literal(_) => lanes.map(FType::Uint),
+        let hint = match &we.kind {
+            ExprKind::Literal(v) if *v <= 1 => Some(FType::Uint(1)),
+            ExprKind::Literal(_) => lanes.map(FType::Uint),
             _ => None,
         };
         match self.check_expr(we, env, hint.as_ref(), ctx, pos)? {
@@ -1540,9 +1553,9 @@ impl Checker<'_> {
         pos: Pos,
     ) -> Result<bool, CompileError> {
         if writable {
-            match value {
-                Expr::Literal(0) => Ok(true),
-                Expr::Literal(_) => Err(sem(
+            match &value.kind {
+                ExprKind::Literal(0) => Ok(true),
+                ExprKind::Literal(_) => Err(sem(
                     ctx,
                     pos,
                     "a `mem` must be zero-initialized (`= 0`); use a `rom` for fixed contents",
@@ -1550,8 +1563,8 @@ impl Checker<'_> {
                 _ => Ok(false),
             }
         } else {
-            match value {
-                Expr::Array(items) => {
+            match &value.kind {
+                ExprKind::Array(items) => {
                     self.check_rom_init(items, elem, depth, env, ctx, pos)?;
                     Ok(true)
                 }
@@ -1874,7 +1887,7 @@ impl Checker<'_> {
                         format!("shift operands must be integers (`uN`/`iN`), not `{l}`"),
                     ));
                 }
-                if let Expr::Literal(k) = rhs {
+                if let ExprKind::Literal(k) = &rhs.kind {
                     // BIT1: a literal amount widens (`<<`) / narrows (`>>`) the
                     // result exactly.
                     let k = u32::try_from(*k)
@@ -2310,8 +2323,8 @@ impl Checker<'_> {
         ctx: &str,
         pos: Pos,
     ) -> Result<(FType, FType), CompileError> {
-        let lhs_lit = matches!(lhs, Expr::Literal(_));
-        let rhs_lit = matches!(rhs, Expr::Literal(_));
+        let lhs_lit = matches!(&lhs.kind, ExprKind::Literal(_));
+        let rhs_lit = matches!(&rhs.kind, ExprKind::Literal(_));
         match (lhs_lit, rhs_lit) {
             (true, true) => Ok((
                 self.check_expr(lhs, env, both_literal_hint, ctx, pos)?,

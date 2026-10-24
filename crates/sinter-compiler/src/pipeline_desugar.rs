@@ -53,8 +53,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sinter_syntax::ast::{
-    Block, Expr, FieldInit, FnColor, Func, Item, Param, Pattern, Pos, Program, Stmt, StructField,
-    StructItem, Type, TypeRef, Visibility,
+    Block, Expr, ExprKind, FieldInit, FnColor, Func, Item, Param, Pattern, Pos, Program, Stmt,
+    StructField, StructItem, Type, TypeRef, Visibility,
 };
 
 use crate::error::CompileError;
@@ -390,8 +390,8 @@ impl Plan {
                 .iter()
                 .find(|l| l.name == v)
                 .expect("carried value is a param or local");
-            let ty = match &local.rhs {
-                Expr::Cast { ty, .. } => ty.clone(),
+            let ty = match &local.rhs.kind {
+                ExprKind::Cast { ty, .. } => ty.clone(),
                 _ => local.ty.clone().ok_or_else(|| {
                     sem(
                         ctx,
@@ -480,7 +480,7 @@ impl Plan {
             let value = if k == 0 {
                 // Stage 0 admits a datum iff `in_valid` (a bubble when 0); the
                 // wavefront's validity then marches down the chain (PL3b).
-                Expr::Ident(IN_VALID.to_string())
+                Expr::from(ExprKind::Ident(IN_VALID.to_string()))
             } else {
                 self_field(&format!("v{}", k - 1))
             };
@@ -499,13 +499,13 @@ impl Plan {
                 }
             }
         }
-        let next_struct = Expr::StructLit {
+        let next_struct = ExprKind::StructLit {
             name: struct_name.to_string(),
             fields: sfields,
         };
         let payload = self.rewrite(&self.tail, self.latency);
         let valid = self_field(&format!("v{}", self.latency - 1));
-        let tail = Expr::Tuple(vec![next_struct, payload, valid]);
+        let tail = ExprKind::Tuple(vec![Expr::from(next_struct), payload, valid]);
 
         let ret = TypeRef::Tuple(vec![
             TypeRef::Named(struct_name.to_string()),
@@ -521,7 +521,7 @@ impl Plan {
             ret,
             body: Block {
                 stmts,
-                tail: Box::new(tail),
+                tail: Box::new(Expr::from(tail)),
                 pos: Pos::default(),
             },
             pos: Pos::default(),
@@ -539,9 +539,9 @@ impl Plan {
     fn next_state(&self, v: &str, k: usize) -> Expr {
         if self.def_group.get(v).copied().unwrap_or(0) == k {
             if self.is_param.contains(v) {
-                Expr::Ident(v.to_string()) // a carried input enters at boundary 0
+                Expr::from(ExprKind::Ident(v.to_string())) // a carried input enters at boundary 0
             } else {
-                Expr::Ident(local_name(v, k))
+                Expr::from(ExprKind::Ident(local_name(v, k)))
             }
         } else {
             self_field(&reg_name(v, k - 1))
@@ -554,66 +554,67 @@ impl Plan {
     /// parameters used in segment 0 and everything else (consts, fn names) are
     /// left as-is.
     fn rewrite(&self, e: &Expr, seg: usize) -> Expr {
-        match e {
-            Expr::Ident(x) => match self.def_group.get(x) {
+        // Every rewritten expression keeps the original's position.
+        let out = match &e.kind {
+            ExprKind::Ident(x) => match self.def_group.get(x) {
                 Some(&dg) if dg == seg => {
                     if self.is_param.contains(x) {
-                        Expr::Ident(x.clone())
+                        Expr::from(ExprKind::Ident(x.clone()))
                     } else {
-                        Expr::Ident(local_name(x, seg))
+                        Expr::from(ExprKind::Ident(local_name(x, seg)))
                     }
                 }
                 Some(_) => self_field(&reg_name(x, seg - 1)),
-                None => Expr::Ident(x.clone()),
+                None => Expr::from(ExprKind::Ident(x.clone())),
             },
-            Expr::Some(inner) => Expr::Some(Box::new(self.rewrite(inner, seg))),
-            Expr::Try(inner) => Expr::Try(Box::new(self.rewrite(inner, seg))),
-            Expr::Literal(_)
-            | Expr::Path(_)
-            | Expr::IncludeHex(_)
-            | Expr::ArrayRepeat { .. }
-            | Expr::None => e.clone(),
-            Expr::Unary { op, expr } => Expr::Unary {
+            ExprKind::Some(inner) => Expr::from(ExprKind::Some(Box::new(self.rewrite(inner, seg)))),
+            ExprKind::Try(inner) => Expr::from(ExprKind::Try(Box::new(self.rewrite(inner, seg)))),
+            ExprKind::Literal(_)
+            | ExprKind::Path(_)
+            | ExprKind::IncludeHex(_)
+            | ExprKind::ArrayRepeat { .. }
+            | ExprKind::None => e.clone(),
+            ExprKind::Unary { op, expr } => Expr::from(ExprKind::Unary {
                 op: *op,
                 expr: Box::new(self.rewrite(expr, seg)),
-            },
-            Expr::Binary { op, lhs, rhs } => Expr::Binary {
+            }),
+            ExprKind::Binary { op, lhs, rhs } => Expr::from(ExprKind::Binary {
                 op: *op,
                 lhs: Box::new(self.rewrite(lhs, seg)),
                 rhs: Box::new(self.rewrite(rhs, seg)),
-            },
-            Expr::If { cond, then, els } => Expr::If {
+            }),
+            ExprKind::If { cond, then, els } => Expr::from(ExprKind::If {
                 cond: Box::new(self.rewrite(cond, seg)),
                 then: Box::new(self.rewrite(then, seg)),
                 els: Box::new(self.rewrite(els, seg)),
-            },
-            Expr::Field { base, field } => Expr::Field {
+            }),
+            ExprKind::Field { base, field } => Expr::from(ExprKind::Field {
                 base: Box::new(self.rewrite(base, seg)),
                 field: field.clone(),
-            },
-            Expr::Call { func, args } => Expr::Call {
+            }),
+            ExprKind::Call { func, args } => Expr::from(ExprKind::Call {
                 func: Box::new(self.rewrite(func, seg)),
                 args: args.iter().map(|a| self.rewrite(a, seg)).collect(),
-            },
-            Expr::MethodCall {
+            }),
+            ExprKind::MethodCall {
                 receiver,
                 method,
                 args,
-            } => Expr::MethodCall {
+            } => Expr::from(ExprKind::MethodCall {
                 receiver: Box::new(self.rewrite(receiver, seg)),
                 method: method.clone(),
                 args: args.iter().map(|a| self.rewrite(a, seg)).collect(),
-            },
-            Expr::Index { base, index } => Expr::Index {
+            }),
+            ExprKind::Index { base, index } => Expr::from(ExprKind::Index {
                 base: Box::new(self.rewrite(base, seg)),
                 index: Box::new(self.rewrite(index, seg)),
-            },
-            Expr::Slice { base, hi, lo } => Expr::Slice {
+            }),
+            ExprKind::Slice { base, hi, lo } => Expr::from(ExprKind::Slice {
                 base: Box::new(self.rewrite(base, seg)),
                 hi: Box::new(self.rewrite(hi, seg)),
                 lo: Box::new(self.rewrite(lo, seg)),
-            },
-            Expr::StructLit { name, fields } => Expr::StructLit {
+            }),
+            ExprKind::StructLit { name, fields } => Expr::from(ExprKind::StructLit {
                 name: name.clone(),
                 fields: fields
                     .iter()
@@ -622,15 +623,19 @@ impl Plan {
                         value: self.rewrite(&fi.value, seg),
                     })
                     .collect(),
-            },
-            Expr::Tuple(items) => Expr::Tuple(items.iter().map(|i| self.rewrite(i, seg)).collect()),
-            Expr::Array(items) => Expr::Array(items.iter().map(|i| self.rewrite(i, seg)).collect()),
-            Expr::Cast { expr, ty, mode } => Expr::Cast {
+            }),
+            ExprKind::Tuple(items) => Expr::from(ExprKind::Tuple(
+                items.iter().map(|i| self.rewrite(i, seg)).collect(),
+            )),
+            ExprKind::Array(items) => Expr::from(ExprKind::Array(
+                items.iter().map(|i| self.rewrite(i, seg)).collect(),
+            )),
+            ExprKind::Cast { expr, ty, mode } => Expr::from(ExprKind::Cast {
                 expr: Box::new(self.rewrite(expr, seg)),
                 ty: ty.clone(),
                 mode: *mode,
-            },
-            Expr::Match { scrutinee, arms } => Expr::Match {
+            }),
+            ExprKind::Match { scrutinee, arms } => Expr::from(ExprKind::Match {
                 scrutinee: Box::new(self.rewrite(scrutinee, seg)),
                 arms: arms
                     .iter()
@@ -639,8 +644,8 @@ impl Plan {
                         body: self.rewrite(&arm.body, seg),
                     })
                     .collect(),
-            },
-            Expr::Block(b) => Expr::Block(Block {
+            }),
+            ExprKind::Block(b) => Expr::from(ExprKind::Block(Block {
                 stmts: b
                     .stmts
                     .iter()
@@ -668,8 +673,9 @@ impl Plan {
                     .collect(),
                 tail: Box::new(self.rewrite(&b.tail, seg)),
                 pos: b.pos,
-            }),
-        }
+            })),
+        };
+        Expr::new(out.kind, e.pos)
     }
 }
 
@@ -685,10 +691,10 @@ pub(crate) fn local_name(v: &str, seg: usize) -> String {
 
 /// A `self.<field>` access expression.
 pub(crate) fn self_field(field: &str) -> Expr {
-    Expr::Field {
-        base: Box::new(Expr::Ident("self".to_string())),
+    Expr::from(ExprKind::Field {
+        base: Box::new(Expr::from(ExprKind::Ident("self".to_string()))),
         field: field.to_string(),
-    }
+    })
 }
 
 /// A struct field of the given type defaulting to `0`.
@@ -698,7 +704,7 @@ pub(crate) fn zero_field(name: &str, ty: TypeRef) -> StructField {
         vis: Visibility::Private,
         name: name.to_string(),
         ty,
-        default: Some(Expr::Literal(0)),
+        default: Some(Expr::from(ExprKind::Literal(0))),
         pos: Pos::default(),
     }
 }
@@ -712,65 +718,65 @@ pub(crate) fn idents(e: &Expr) -> Vec<String> {
 }
 
 fn collect_idents(e: &Expr, out: &mut Vec<String>) {
-    match e {
-        Expr::Ident(x) => out.push(x.clone()),
-        Expr::Some(inner) => collect_idents(inner, out),
-        Expr::Try(inner) => collect_idents(inner, out),
-        Expr::Literal(_)
-        | Expr::Path(_)
-        | Expr::IncludeHex(_)
-        | Expr::ArrayRepeat { .. }
-        | Expr::None => {}
-        Expr::Unary { expr, .. } => collect_idents(expr, out),
-        Expr::Binary { lhs, rhs, .. } => {
+    match &e.kind {
+        ExprKind::Ident(x) => out.push(x.clone()),
+        ExprKind::Some(inner) => collect_idents(inner, out),
+        ExprKind::Try(inner) => collect_idents(inner, out),
+        ExprKind::Literal(_)
+        | ExprKind::Path(_)
+        | ExprKind::IncludeHex(_)
+        | ExprKind::ArrayRepeat { .. }
+        | ExprKind::None => {}
+        ExprKind::Unary { expr, .. } => collect_idents(expr, out),
+        ExprKind::Binary { lhs, rhs, .. } => {
             collect_idents(lhs, out);
             collect_idents(rhs, out);
         }
-        Expr::If { cond, then, els } => {
+        ExprKind::If { cond, then, els } => {
             collect_idents(cond, out);
             collect_idents(then, out);
             collect_idents(els, out);
         }
-        Expr::Field { base, .. } => collect_idents(base, out),
-        Expr::Call { func, args } => {
+        ExprKind::Field { base, .. } => collect_idents(base, out),
+        ExprKind::Call { func, args } => {
             collect_idents(func, out);
             for a in args {
                 collect_idents(a, out);
             }
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        ExprKind::MethodCall { receiver, args, .. } => {
             collect_idents(receiver, out);
             for a in args {
                 collect_idents(a, out);
             }
         }
-        Expr::Index { base, index } => {
+        ExprKind::Index { base, index } => {
             collect_idents(base, out);
             collect_idents(index, out);
         }
-        Expr::Slice { base, hi, lo } => {
+        ExprKind::Slice { base, hi, lo } => {
             collect_idents(base, out);
             collect_idents(hi, out);
             collect_idents(lo, out);
         }
-        Expr::StructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } => {
             for fi in fields {
                 collect_idents(&fi.value, out);
             }
         }
-        Expr::Tuple(items) | Expr::Array(items) => {
+        ExprKind::Tuple(items) | ExprKind::Array(items) => {
             for i in items {
                 collect_idents(i, out);
             }
         }
-        Expr::Cast { expr, .. } => collect_idents(expr, out),
-        Expr::Match { scrutinee, arms } => {
+        ExprKind::Cast { expr, .. } => collect_idents(expr, out),
+        ExprKind::Match { scrutinee, arms } => {
             collect_idents(scrutinee, out);
             for arm in arms {
                 collect_idents(&arm.body, out);
             }
         }
-        Expr::Block(b) => {
+        ExprKind::Block(b) => {
             for s in &b.stmts {
                 if let Stmt::Let { value, .. } = s {
                     collect_idents(value, out);
@@ -793,8 +799,8 @@ pub(crate) fn reject_nested_yields(body: &Block, ctx: &str) -> Result<(), Compil
 }
 
 fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
-    match e {
-        Expr::Block(b) => {
+    match &e.kind {
+        ExprKind::Block(b) => {
             for s in &b.stmts {
                 match s {
                     Stmt::Yield { pos, .. } => return Err(sem(
@@ -817,53 +823,55 @@ fn reject_yields_in_expr(e: &Expr, ctx: &str) -> Result<(), CompileError> {
             }
             reject_yields_in_expr(&b.tail, ctx)
         }
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => reject_yields_in_expr(expr, ctx),
-        Expr::Binary { lhs, rhs, .. } => {
+        ExprKind::Unary { expr, .. } | ExprKind::Cast { expr, .. } => {
+            reject_yields_in_expr(expr, ctx)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
             reject_yields_in_expr(lhs, ctx)?;
             reject_yields_in_expr(rhs, ctx)
         }
-        Expr::If { cond, then, els } => {
+        ExprKind::If { cond, then, els } => {
             reject_yields_in_expr(cond, ctx)?;
             reject_yields_in_expr(then, ctx)?;
             reject_yields_in_expr(els, ctx)
         }
-        Expr::Field { base, .. } => reject_yields_in_expr(base, ctx),
-        Expr::Call { func, args } => {
+        ExprKind::Field { base, .. } => reject_yields_in_expr(base, ctx),
+        ExprKind::Call { func, args } => {
             reject_yields_in_expr(func, ctx)?;
             args.iter().try_for_each(|a| reject_yields_in_expr(a, ctx))
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        ExprKind::MethodCall { receiver, args, .. } => {
             reject_yields_in_expr(receiver, ctx)?;
             args.iter().try_for_each(|a| reject_yields_in_expr(a, ctx))
         }
-        Expr::Index { base, index } => {
+        ExprKind::Index { base, index } => {
             reject_yields_in_expr(base, ctx)?;
             reject_yields_in_expr(index, ctx)
         }
-        Expr::Slice { base, hi, lo } => {
+        ExprKind::Slice { base, hi, lo } => {
             reject_yields_in_expr(base, ctx)?;
             reject_yields_in_expr(hi, ctx)?;
             reject_yields_in_expr(lo, ctx)
         }
-        Expr::StructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. } => fields
             .iter()
             .try_for_each(|fi| reject_yields_in_expr(&fi.value, ctx)),
-        Expr::Tuple(items) | Expr::Array(items) => {
+        ExprKind::Tuple(items) | ExprKind::Array(items) => {
             items.iter().try_for_each(|i| reject_yields_in_expr(i, ctx))
         }
-        Expr::Match { scrutinee, arms } => {
+        ExprKind::Match { scrutinee, arms } => {
             reject_yields_in_expr(scrutinee, ctx)?;
             arms.iter()
                 .try_for_each(|arm| reject_yields_in_expr(&arm.body, ctx))
         }
-        Expr::Some(inner) => reject_yields_in_expr(inner, ctx),
-        Expr::Try(inner) => reject_yields_in_expr(inner, ctx),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Path(_)
-        | Expr::IncludeHex(_)
-        | Expr::ArrayRepeat { .. }
-        | Expr::None => Ok(()),
+        ExprKind::Some(inner) => reject_yields_in_expr(inner, ctx),
+        ExprKind::Try(inner) => reject_yields_in_expr(inner, ctx),
+        ExprKind::Literal(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Path(_)
+        | ExprKind::IncludeHex(_)
+        | ExprKind::ArrayRepeat { .. }
+        | ExprKind::None => Ok(()),
     }
 }
 
@@ -876,8 +884,8 @@ pub(crate) fn reject_shadowing(
     defs: &HashMap<String, usize>,
     ctx: &str,
 ) -> Result<(), CompileError> {
-    match e {
-        Expr::Block(b) => {
+    match &e.kind {
+        ExprKind::Block(b) => {
             for s in &b.stmts {
                 match s {
                     Stmt::Let {
@@ -898,7 +906,7 @@ pub(crate) fn reject_shadowing(
             }
             reject_shadowing(&b.tail, defs, ctx)
         }
-        Expr::Match { scrutinee, arms } => {
+        ExprKind::Match { scrutinee, arms } => {
             reject_shadowing(scrutinee, defs, ctx)?;
             for arm in arms {
                 check_pattern_shadow(&arm.pattern, defs, ctx, Pos::default())?;
@@ -906,48 +914,50 @@ pub(crate) fn reject_shadowing(
             }
             Ok(())
         }
-        Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => reject_shadowing(expr, defs, ctx),
-        Expr::Binary { lhs, rhs, .. } => {
+        ExprKind::Unary { expr, .. } | ExprKind::Cast { expr, .. } => {
+            reject_shadowing(expr, defs, ctx)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
             reject_shadowing(lhs, defs, ctx)?;
             reject_shadowing(rhs, defs, ctx)
         }
-        Expr::If { cond, then, els } => {
+        ExprKind::If { cond, then, els } => {
             reject_shadowing(cond, defs, ctx)?;
             reject_shadowing(then, defs, ctx)?;
             reject_shadowing(els, defs, ctx)
         }
-        Expr::Field { base, .. } => reject_shadowing(base, defs, ctx),
-        Expr::Call { func, args } => {
+        ExprKind::Field { base, .. } => reject_shadowing(base, defs, ctx),
+        ExprKind::Call { func, args } => {
             reject_shadowing(func, defs, ctx)?;
             args.iter().try_for_each(|a| reject_shadowing(a, defs, ctx))
         }
-        Expr::MethodCall { receiver, args, .. } => {
+        ExprKind::MethodCall { receiver, args, .. } => {
             reject_shadowing(receiver, defs, ctx)?;
             args.iter().try_for_each(|a| reject_shadowing(a, defs, ctx))
         }
-        Expr::Index { base, index } => {
+        ExprKind::Index { base, index } => {
             reject_shadowing(base, defs, ctx)?;
             reject_shadowing(index, defs, ctx)
         }
-        Expr::Slice { base, hi, lo } => {
+        ExprKind::Slice { base, hi, lo } => {
             reject_shadowing(base, defs, ctx)?;
             reject_shadowing(hi, defs, ctx)?;
             reject_shadowing(lo, defs, ctx)
         }
-        Expr::StructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. } => fields
             .iter()
             .try_for_each(|fi| reject_shadowing(&fi.value, defs, ctx)),
-        Expr::Tuple(items) | Expr::Array(items) => items
+        ExprKind::Tuple(items) | ExprKind::Array(items) => items
             .iter()
             .try_for_each(|i| reject_shadowing(i, defs, ctx)),
-        Expr::Some(inner) => reject_shadowing(inner, defs, ctx),
-        Expr::Try(inner) => reject_shadowing(inner, defs, ctx),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Path(_)
-        | Expr::IncludeHex(_)
-        | Expr::ArrayRepeat { .. }
-        | Expr::None => Ok(()),
+        ExprKind::Some(inner) => reject_shadowing(inner, defs, ctx),
+        ExprKind::Try(inner) => reject_shadowing(inner, defs, ctx),
+        ExprKind::Literal(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Path(_)
+        | ExprKind::IncludeHex(_)
+        | ExprKind::ArrayRepeat { .. }
+        | ExprKind::None => Ok(()),
     }
 }
 

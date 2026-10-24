@@ -73,10 +73,18 @@ backends. The stages, in order:
    SROA-duplicated multiply into one physical multiplier, inserting each shared
    wire just before its first reader.
 
-**Gotcha when adding an AST `Expr` / `Pattern` / `TypeRef` variant:** every stage
-above matches it exhaustively, and so do `pipeline_desugar`, `multiplex_desugar`,
-`include_expand`, `functional`, and `elaborate`. A new variant needs an arm in
-each — rustc's non-exhaustive-match errors enumerate exactly where.
+**Gotcha when adding an AST `ExprKind` / `Pattern` / `TypeRef` variant:** every
+stage above matches it exhaustively, and so do `pipeline_desugar`,
+`multiplex_desugar`, `include_expand`, `functional`, and `elaborate`. A new
+variant needs an arm in each — rustc's non-exhaustive-match errors enumerate
+exactly where.
+
+**Expression positions:** an `ast::Expr` is `{ kind: ExprKind, pos: Pos }` (a
+binary operation is positioned at its operator). Equality and `Debug` ignore
+`pos`, so the `.ast` goldens record shape only. A pass that rebuilds a user's
+expression keeps its `pos` (`Expr::new(kind, e.pos)`); a synthesized one uses
+`Expr::from(kind)` (default `Pos`), and diagnostics fall back to the enclosing
+statement's position for it (`functional::located`).
 
 ## Skills (submodules)
 

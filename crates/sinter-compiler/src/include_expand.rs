@@ -2,8 +2,8 @@
 //! array repeat `[value; N]` (DESIGN §6.6).
 //!
 //! A source-to-source pass, run before checking/elaboration: each
-//! [`Expr::IncludeHex`] is read from disk (relative to the source directory) and
-//! replaced with an [`Expr::Array`] of literal words — so the rest of the compiler
+//! [`ExprKind::IncludeHex`] is read from disk (relative to the source directory) and
+//! replaced with an [`ExprKind::Array`] of literal words — so the rest of the compiler
 //! (checking, the `rom` data path, elaboration) handles it exactly like an inline
 //! array literal, and the emitted SystemVerilog stays self-contained (no runtime
 //! `$readmemh`, no external data file — DESIGN §9.7).
@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use sinter_syntax::ast::{Expr, FieldInit, Item, MatchArm, Program, Stmt};
+use sinter_syntax::ast::{Expr, ExprKind, FieldInit, Item, MatchArm, Program, Stmt};
 
 use crate::error::CompileError;
 
@@ -101,21 +101,22 @@ impl Expander<'_> {
 
     fn expr(&self, e: &mut Expr, ctx: &str) -> Result<(), CompileError> {
         let x = self;
-        match e {
-            Expr::IncludeHex(path) => {
-                *e = load_hex_array(path, self.base, ctx)?;
+        let pos = e.pos;
+        match &mut e.kind {
+            ExprKind::IncludeHex(path) => {
+                *e = Expr::new(load_hex_array(path, self.base, ctx)?, pos);
                 Ok(())
             }
-            Expr::ArrayRepeat { value, len } => {
+            ExprKind::ArrayRepeat { value, len } => {
                 x.expr(value, ctx)?;
-                let n = match len.as_ref() {
-                    Expr::Ident(name) => self.consts.get(name).copied().ok_or_else(|| {
+                let n = match &len.kind {
+                    ExprKind::Ident(name) => self.consts.get(name).copied().ok_or_else(|| {
                         err(
                             ctx,
                             format!("`[value; {name}]` needs a `const` with a literal value"),
                         )
                     })?,
-                    other => literal_of(other).ok_or_else(|| {
+                    _ => literal_of(len).ok_or_else(|| {
                         err(
                             ctx,
                             "the length in `[value; N]` must be a literal or a `const`",
@@ -126,58 +127,60 @@ impl Expander<'_> {
                     .ok()
                     .filter(|&n| n <= MAX_REPEAT)
                     .ok_or_else(|| err(ctx, format!("`[value; {n}]` is too long")))?;
-                *e = Expr::Array(vec![(**value).clone(); n]);
+                *e = Expr::new(ExprKind::Array(vec![(**value).clone(); n]), pos);
                 Ok(())
             }
-            Expr::Unary { expr, .. } | Expr::Cast { expr, .. } => x.expr(expr, ctx),
-            Expr::Binary { lhs, rhs, .. } => {
+            ExprKind::Unary { expr, .. } | ExprKind::Cast { expr, .. } => x.expr(expr, ctx),
+            ExprKind::Binary { lhs, rhs, .. } => {
                 x.expr(lhs, ctx)?;
                 x.expr(rhs, ctx)
             }
-            Expr::If { cond, then, els } => {
+            ExprKind::If { cond, then, els } => {
                 x.expr(cond, ctx)?;
                 x.expr(then, ctx)?;
                 x.expr(els, ctx)
             }
-            Expr::Field { base: b, .. } => x.expr(b, ctx),
-            Expr::Call { func, args } => {
+            ExprKind::Field { base: b, .. } => x.expr(b, ctx),
+            ExprKind::Call { func, args } => {
                 x.expr(func, ctx)?;
                 args.iter_mut().try_for_each(|a| x.expr(a, ctx))
             }
-            Expr::MethodCall { receiver, args, .. } => {
+            ExprKind::MethodCall { receiver, args, .. } => {
                 x.expr(receiver, ctx)?;
                 args.iter_mut().try_for_each(|a| x.expr(a, ctx))
             }
-            Expr::Index { base: b, index } => {
+            ExprKind::Index { base: b, index } => {
                 x.expr(b, ctx)?;
                 x.expr(index, ctx)
             }
-            Expr::Slice { base: b, hi, lo } => {
+            ExprKind::Slice { base: b, hi, lo } => {
                 x.expr(b, ctx)?;
                 x.expr(hi, ctx)?;
                 x.expr(lo, ctx)
             }
-            Expr::StructLit { fields, .. } => fields
+            ExprKind::StructLit { fields, .. } => fields
                 .iter_mut()
                 .try_for_each(|FieldInit { value, .. }| x.expr(value, ctx)),
-            Expr::Tuple(items) | Expr::Array(items) => {
+            ExprKind::Tuple(items) | ExprKind::Array(items) => {
                 items.iter_mut().try_for_each(|i| x.expr(i, ctx))
             }
-            Expr::Match { scrutinee, arms } => {
+            ExprKind::Match { scrutinee, arms } => {
                 x.expr(scrutinee, ctx)?;
                 arms.iter_mut()
                     .try_for_each(|MatchArm { body, .. }| x.expr(body, ctx))
             }
-            Expr::Block(b) => x.block(b, ctx),
-            Expr::Some(inner) | Expr::Try(inner) => x.expr(inner, ctx),
-            Expr::None | Expr::Literal(_) | Expr::Ident(_) | Expr::Path(_) => Ok(()),
+            ExprKind::Block(b) => x.block(b, ctx),
+            ExprKind::Some(inner) | ExprKind::Try(inner) => x.expr(inner, ctx),
+            ExprKind::None | ExprKind::Literal(_) | ExprKind::Ident(_) | ExprKind::Path(_) => {
+                Ok(())
+            }
         }
     }
 }
 
 /// Read `path` (relative to `base`) as line-delimited hex and build an array
 /// literal of its words.
-fn load_hex_array(path: &str, base: Option<&Path>, ctx: &str) -> Result<Expr, CompileError> {
+fn load_hex_array(path: &str, base: Option<&Path>, ctx: &str) -> Result<ExprKind, CompileError> {
     let dir = base.ok_or_else(|| {
         err(
             ctx,
@@ -208,9 +211,9 @@ fn load_hex_array(path: &str, base: Option<&Path>, ctx: &str) -> Result<Expr, Co
                 format!("{}:{}: `{line}` is not a hex word", path, i + 1),
             )
         })?;
-        words.push(Expr::Literal(v));
+        words.push(Expr::from(ExprKind::Literal(v)));
     }
-    Ok(Expr::Array(words))
+    Ok(ExprKind::Array(words))
 }
 
 /// The longest array a repeat may expand to.
@@ -219,10 +222,10 @@ const MAX_REPEAT: usize = 1 << 16;
 /// The value of a literal, or of a width-suffixed literal (which the parser
 /// desugars to a `wrap` cast of one).
 fn literal_of(e: &Expr) -> Option<u128> {
-    match e {
-        Expr::Literal(v) => Some(*v),
-        Expr::Cast { expr, .. } => match expr.as_ref() {
-            Expr::Literal(v) => Some(*v),
+    match &e.kind {
+        ExprKind::Literal(v) => Some(*v),
+        ExprKind::Cast { expr, .. } => match &expr.kind {
+            ExprKind::Literal(v) => Some(*v),
             _ => None,
         },
         _ => None,
