@@ -113,8 +113,11 @@ struct ReadPort {
 }
 
 /// A memory write port, resolved: memory index, then enable / address / data.
+/// `lanes` is the enable's width: 1 writes the whole word, more is one bit
+/// per byte lane (MEM2).
 struct WritePort {
     mem: usize,
+    lanes: u32,
     we: Node,
     addr: Node,
     data: Node,
@@ -225,6 +228,7 @@ impl<'a> Simulator<'a> {
                 .filter_map(|w| {
                     Some(WritePort {
                         mem: *mem_index.get(w.mem.as_str())?,
+                        lanes: w.we.ty.width(),
                         we: node(&w.we),
                         addr: node(&w.addr),
                         data: node(&w.data),
@@ -326,11 +330,21 @@ impl<'a> Simulator<'a> {
         // Memory write ports: commit after the reads above, so they see the
         // pre-edge array.
         for w in &self.writes {
-            if w.we.eval(&self.env) != 0 {
-                let idx = w.addr.eval(&self.env) as usize;
-                let data = w.data.eval(&self.env);
-                if let Some(cell) = self.mem[w.mem].get_mut(idx) {
+            let we = w.we.eval(&self.env);
+            if we == 0 {
+                continue;
+            }
+            let idx = w.addr.eval(&self.env) as usize;
+            let data = w.data.eval(&self.env);
+            if let Some(cell) = self.mem[w.mem].get_mut(idx) {
+                if w.lanes == 1 {
                     *cell = data;
+                } else {
+                    // Replace only the enabled byte lanes.
+                    let keep = (0..w.lanes)
+                        .filter(|i| (we >> i) & 1 == 1)
+                        .fold(0u64, |m, i| m | (0xFF << (8 * i)));
+                    *cell = (*cell & !keep) | (data & keep);
                 }
             }
         }

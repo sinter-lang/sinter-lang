@@ -110,6 +110,9 @@ pub struct Mem {
     pub depth: usize,
     /// Address width = `log2(depth)` bits; read/write addresses are masked to it.
     pub addr_bits: u32,
+    /// Read ports (MEM2, DESIGN §9.6); each has its own [`MemRead`] and
+    /// read-data register.
+    pub read_ports: u32,
     /// Per-word reset/power-up contents (MEM1: all zero), length `depth`.
     pub reset: Vec<u64>,
 }

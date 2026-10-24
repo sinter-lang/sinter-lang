@@ -27,6 +27,8 @@ use crate::error::CompileError;
 
 /// The widest scalar the current backends support (`u64`-bounded evaluation).
 const MAX_WIDTH: u32 = 64;
+/// The most read ports a `mem` / `rom` may declare (MEM2, DESIGN §9.6).
+pub(crate) const MAX_READ_PORTS: u32 = 4;
 
 /// A resolved functional type. Unlike [`TypeRef`], named types are resolved to
 /// struct/enum kinds and array lengths are evaluated to constants.
@@ -63,6 +65,8 @@ enum FType {
         depth: u64,
         /// Whether the memory has a write port (`mem`) or is read-only (`rom`).
         writable: bool,
+        /// Read ports (MEM2, DESIGN §9.6); 1 unless written `mem<T, N, R>`.
+        ports: u32,
     },
 }
 
@@ -108,11 +112,15 @@ impl fmt::Display for FType {
                 elem,
                 depth,
                 writable,
-            } => write!(
-                f,
-                "{}<{elem}, {depth}>",
-                if *writable { "mem" } else { "rom" }
-            ),
+                ports,
+            } => {
+                let kind = if *writable { "mem" } else { "rom" };
+                if *ports == 1 {
+                    write!(f, "{kind}<{elem}, {depth}>")
+                } else {
+                    write!(f, "{kind}<{elem}, {depth}, {ports}>")
+                }
+            }
             FType::Option(t) => write!(f, "Option<{t}>"),
             FType::Array(t, n) => write!(f, "[{t}; {n}]"),
             FType::Tuple(ts) => {
@@ -415,6 +423,7 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                         elem,
                         depth,
                         writable,
+                        ..
                     } = &want
                     {
                         checker.check_mem_field_default(
@@ -554,13 +563,15 @@ fn resolve_type(
             read_ports,
             write_ports,
         } => {
-            // `mem` is 1R1W; `rom` is 1R0W. Anything else (multi-port) is deferred.
-            if *read_ports != 1 || *write_ports > 1 {
+            // `R` read ports (MEM2) and one write port (`mem`) or none (`rom`).
+            if !(1..=MAX_READ_PORTS).contains(read_ports) || *write_ports > 1 {
                 return Err(sem(
                     ctx,
                     pos,
-                    "only a 1-read / 1-write (1R1W) `mem` or 1-read / 0-write (1R0W) `rom` is \
-                     supported; multi-port memories are deferred (DESIGN §9.6/§9.7)",
+                    format!(
+                        "a memory has 1 to {MAX_READ_PORTS} read ports and at most one write \
+                         port (DESIGN §9.6)"
+                    ),
                 ));
             }
             let et = resolve_type(known, elem, ctx, pos)?;
@@ -585,6 +596,7 @@ fn resolve_type(
                 elem: Box::new(et),
                 depth: n,
                 writable: *write_ports == 1,
+                ports: *read_ports,
             }
         }
         TypeRef::Channel { .. } => {
@@ -1274,9 +1286,11 @@ impl Checker<'_> {
             elem,
             depth,
             writable,
+            ports,
         } = &recv
         {
-            return self.check_mem_method(elem, *depth, *writable, method, args, env, ctx, pos);
+            return self
+                .check_mem_method(elem, *depth, *writable, *ports, method, args, env, ctx, pos);
         }
         if let FType::Array(elem, n) = &recv {
             return self.check_array_method(elem, *n, method, args, env, ctx, pos);
@@ -1371,6 +1385,7 @@ impl Checker<'_> {
         elem: &FType,
         depth: u64,
         writable: bool,
+        ports: u32,
         method: &str,
         args: &[Expr],
         env: &Env,
@@ -1401,12 +1416,37 @@ impl Checker<'_> {
             let at = this.check_expr(e, env, hint.as_ref(), ctx, pos)?;
             this.require_scalar(&at, ctx, pos)
         };
+        // With several read ports (MEM2), the read addresses are an array of
+        // `ports` scalars, one per port.
+        let check_raddr = |this: &Self, e: &Expr| -> Result<(), CompileError> {
+            if ports == 1 {
+                return check_addr(this, e);
+            }
+            let all_literals = matches!(e, Expr::Array(items) if items.iter().all(|i| matches!(i, Expr::Literal(_))));
+            let hint = all_literals
+                .then(|| FType::Array(Box::new(FType::Uint(addr_bits)), u64::from(ports)));
+            match this.check_expr(e, env, hint.as_ref(), ctx, pos)? {
+                FType::Array(et, n) if n == u64::from(ports) && et.is_scalar() => Ok(()),
+                other => Err(sem(
+                    ctx,
+                    pos,
+                    format!(
+                        "a {ports}-read-port memory takes its read addresses as an array \
+                         `[uN; {ports}]`, not `{other}`"
+                    ),
+                )),
+            }
+        };
         match method {
-            // `value() -> T`: the current read-data register (last cycle's read).
-            // A pure accessor — reading it does not consume the read port.
+            // `value() -> T` (or `[T; R]` with R read ports): the current
+            // read-data register(s), last cycle's reads. A pure accessor.
             "value" => {
                 want_args(0)?;
-                Ok(elem.clone())
+                Ok(if ports == 1 {
+                    elem.clone()
+                } else {
+                    FType::Array(Box::new(elem.clone()), u64::from(ports))
+                })
             }
             // `next(…) -> Self`: the transition, threaded into the tail. A writable
             // `mem` takes `(raddr, we, waddr, wdata)`; a read-only `rom` takes just
@@ -1414,24 +1454,64 @@ impl Checker<'_> {
             "next" => {
                 if writable {
                     want_args(4)?;
-                    check_addr(self, &args[0])?;
-                    self.check_expr(&args[1], env, Some(&FType::Uint(1)), ctx, pos)?;
+                    check_raddr(self, &args[0])?;
+                    self.check_write_enable(&args[1], elem, env, ctx, pos)?;
                     check_addr(self, &args[2])?;
                     self.check_expr(&args[3], env, Some(elem), ctx, pos)?;
                 } else {
                     want_args(1)?;
-                    check_addr(self, &args[0])?;
+                    check_raddr(self, &args[0])?;
                 }
                 Ok(FType::Mem {
                     elem: Box::new(elem.clone()),
                     depth,
                     writable,
+                    ports,
                 })
             }
             _ => Err(sem(
                 ctx,
                 pos,
                 format!("a memory has no method `{method}` (only `value`/`next`)"),
+            )),
+        }
+    }
+
+    /// Check a memory write enable: `u1` writes the whole word; `uB`, with `B`
+    /// the element's byte count, enables byte lanes (MEM2, DESIGN §9.6). A bare
+    /// literal 0 or 1 is the whole-word `u1`; write a mask with a suffix
+    /// (`0b0001_u4`).
+    fn check_write_enable(
+        &self,
+        we: &Expr,
+        elem: &FType,
+        env: &Env,
+        ctx: &str,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
+        let width = elem.scalar_width().unwrap_or(0);
+        let lanes = (width % 8 == 0 && width > 8).then_some(width / 8);
+        let hint = match we {
+            Expr::Literal(v) if *v <= 1 => Some(FType::Uint(1)),
+            Expr::Literal(_) => lanes.map(FType::Uint),
+            _ => None,
+        };
+        match self.check_expr(we, env, hint.as_ref(), ctx, pos)? {
+            FType::Uint(1) => Ok(()),
+            FType::Uint(n) if Some(n) == lanes => Ok(()),
+            other => Err(sem(
+                ctx,
+                pos,
+                match lanes {
+                    Some(b) => format!(
+                        "a memory write enable is `u1` (the whole word) or `u{b}` (one bit per \
+                         byte), not `{other}`"
+                    ),
+                    None => format!(
+                        "a memory write enable is `u1`, not `{other}` (byte enables need an \
+                         element a multiple of 8 bits wide)"
+                    ),
+                },
             )),
         }
     }
@@ -1605,6 +1685,7 @@ impl Checker<'_> {
                 elem,
                 depth,
                 writable,
+                ..
             } = fty
             {
                 if self.check_mem_field_value(&fi.value, elem, *depth, *writable, env, ctx, pos)? {

@@ -1,0 +1,9 @@
+# Directed checks for fn_mem2.snt. Reads appear one cycle after their address.
+ra, rb, be,     wa, wd,         expect.out_0, expect.out_1
+0,  0,  0b1111, 1,  0x11223344, 0,            0
+1,  0,  0b0001, 1,  0xAAAAAAAA, 0,            0
+1,  0,  0b1100, 1,  0xBBBBBBBB, 0x11223344,   0
+1,  1,  0,      0,  0,          0x112233AA,   0
+1,  2,  0b1111, 2,  0xCAFEF00D, 0xBBBB33AA,   0xBBBB33AA
+2,  1,  0,      0,  0,          0xBBBB33AA,   0
+0,  0,  0,      0,  0,          0xCAFEF00D,   0xBBBB33AA

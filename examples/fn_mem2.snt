@@ -1,0 +1,17 @@
+// MEM2 (DESIGN §9.6): a memory with two read ports and byte-enable writes.
+//
+// `mem<u32, 16, 2>` has two read ports, so `next` takes both read addresses
+// as an array and `value()` returns both words (each a cycle after its
+// address, READ_FIRST like any `mem`). The write enable `be` is a u4 mask,
+// one bit per byte lane, so a write can update any subset of the word's bytes.
+struct Ram2 {
+    ram: mem<u32, 16, 2> = 0,
+}
+
+impl Ram2 {
+    #[clock(domain = sys)]
+    fn tick(self, ra: u4, rb: u4, be: u4, wa: u4, wd: u32) -> (Ram2, (u32, u32)) {
+        let rd = self.ram.value();
+        (Ram2 { ram: self.ram.next([ra, rb], be, wa, wd) }, (rd[0], rd[1]))
+    }
+}

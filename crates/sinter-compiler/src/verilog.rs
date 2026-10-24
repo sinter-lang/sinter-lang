@@ -299,6 +299,37 @@ fn emit_comb(out: &mut String, m: &Module) {
     let _ = writeln!(out, "    end");
 }
 
+/// A byte-enable write (MEM2, DESIGN §9.6): one `if` per lane in the write
+/// process, the form Yosys maps onto a byte-enable block RAM. The enable and
+/// data are first named (`__<mem>_we` / `__<mem>_wdata`) because a bit- or
+/// part-select of an arbitrary expression is not legal SystemVerilog.
+fn emit_masked_write(out: &mut String, w: &crate::ir::MemWrite, lanes: u32) {
+    let we = format!("__{}_we", w.mem);
+    let data = format!("__{}_wdata", w.mem);
+    let _ = writeln!(
+        out,
+        "    // Memory write port: {} ({lanes} byte lanes)",
+        w.mem
+    );
+    let _ = writeln!(out, "    logic {} {we};", net_type(w.we.ty));
+    let _ = writeln!(out, "    logic {} {data};", net_type(w.data.ty));
+    let _ = writeln!(out, "    assign {we} = {};", expr(&w.we));
+    let _ = writeln!(out, "    assign {data} = {};", expr(&w.data));
+    let _ = writeln!(out, "    always_ff @(posedge clk) begin");
+    for i in 0..lanes {
+        let (hi, lo) = (8 * i + 7, 8 * i);
+        let _ = writeln!(out, "        if ({we}[{i}]) begin");
+        let _ = writeln!(
+            out,
+            "            {}[{}][{hi}:{lo}] <= {data}[{hi}:{lo}];",
+            w.mem,
+            expr(&w.addr)
+        );
+        let _ = writeln!(out, "        end");
+    }
+    let _ = writeln!(out, "    end");
+}
+
 /// Emit the memory write ports: one `always_ff` per write, kept separate from
 /// the async-reset state block so block-RAM inference survives. Non-blocking `<=`
 /// means the read in `always_comb` sees the pre-edge contents (READ_FIRST). Like
@@ -311,6 +342,11 @@ fn emit_comb(out: &mut String, m: &Module) {
 /// reset-release flag, drop the first post-reset write and break the oracle.)
 fn emit_mem_writes(out: &mut String, m: &Module) {
     for w in &m.mem_writes {
+        let lanes = w.we.ty.width();
+        if lanes > 1 {
+            emit_masked_write(out, w, lanes);
+            continue;
+        }
         let _ = writeln!(out, "    // Memory write port: {}", w.mem);
         let _ = writeln!(out, "    always_ff @(posedge clk) begin");
         let _ = writeln!(out, "        if ({}) begin", expr(&w.we));

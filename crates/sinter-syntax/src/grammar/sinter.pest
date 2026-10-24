@@ -218,9 +218,10 @@ f_typeref   = { f_option_ty | f_array_ty | f_tuple_ty | f_mem_ty | f_rom_ty | f_
 f_option_ty = { "Option" ~ "<" ~ f_typeref ~ ">" }
 f_array_ty  = { "[" ~ f_typeref ~ ";" ~ f_expr ~ "]" }
 f_tuple_ty  = { "(" ~ f_typeref ~ ("," ~ f_typeref)+ ~ ","? ~ ")" }
-f_mem_ty    = { "mem" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
+// `mem<T, N>` / `mem<T, N, R>`: R read ports (MEM2, DESIGN §9.6), default 1.
+f_mem_ty    = { "mem" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ("," ~ literal)? ~ ">" }
 // A `rom<T, N>` is a read-only memory (the `mem` machinery with no write port).
-f_rom_ty    = { "rom" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ">" }
+f_rom_ty    = { "rom" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ ("," ~ literal)? ~ ">" }
 // The fixed-capacity channel family (DESIGN §6.11 / §9.8). `fifo` (lossless,
 // CHAN1) and `ring` (overwrite-oldest, CHAN2) share the `<elem, depth>` shape of
 // `mem`; `flow` (CHAN2) is depth-1 newest-wins, so it names no capacity. The loss

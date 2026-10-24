@@ -961,17 +961,23 @@ fn parse_typeref(pair: Pair<Rule>) -> Result<TypeRef, ParseError> {
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         Rule::f_mem_ty | Rule::f_rom_ty => {
-            // `mem<T, N>` (1R1W) / `rom<T, N>` (read-only: 1R, 0W). Both reuse the
-            // memory type; the port counts distinguish them (and leave room for
-            // `mem<T, N, R, W>` later).
+            // `mem<T, N[, R]>` (R read ports, 1 write) / `rom<T, N[, R]>` (R read
+            // ports, no write). Both reuse the memory type; the port counts
+            // distinguish them (MEM2, DESIGN §9.6).
             let write_ports = u32::from(inner.as_rule() == Rule::f_mem_ty);
             let mut it = inner.into_inner();
             let elem = parse_typeref(next_pair(&mut it, "memory element type")?)?;
             let depth = parse_mem_depth(next_pair(&mut it, "memory depth")?)?;
+            let read_ports = match it.next() {
+                Some(r) => u32::try_from(literal_value(&r)?).map_err(|_| {
+                    ParseError::InvalidLiteral(r.as_str().to_string(), r.line_col().0)
+                })?,
+                None => 1,
+            };
             Ok(TypeRef::Mem {
                 elem: Box::new(elem),
                 depth: Box::new(depth),
-                read_ports: 1,
+                read_ports,
                 write_ports,
             })
         }

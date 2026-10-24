@@ -284,3 +284,101 @@ fn memory_array_is_zero_initialized_and_write_is_a_separate_block() {
         "separate write block:\n{sv}"
     );
 }
+
+// --- MEM2: read ports and byte enables (DESIGN §9.6) -----------------------
+
+const MEM2: &str = include_str!("../../../examples/fn_mem2.snt");
+
+#[test]
+fn each_read_port_has_its_own_read_register() {
+    let design = compile_str(MEM2).expect("compile");
+    let m = &design.modules[0];
+    assert_eq!(m.mems[0].read_ports, 2);
+    let rdata: Vec<_> = m.mem_reads.iter().map(|r| r.rdata.as_str()).collect();
+    assert_eq!(rdata, ["ram_rdata_0", "ram_rdata_1"]);
+    assert_eq!(m.mem_writes[0].we.ty.width(), 4, "a u4 byte-enable mask");
+}
+
+#[test]
+fn byte_enables_write_only_their_lanes() {
+    let design = compile_str(MEM2).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    let mut step = |ra: u64, be: u64, wd: u64| {
+        let out = sim.step(
+            &[("ra", ra), ("rb", 0), ("be", be), ("wa", 3), ("wd", wd)]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect::<HashMap<_, _>>(),
+        );
+        out["out_0"]
+    };
+    step(0, 0b1111, 0x0102_0304);
+    step(0, 0b0110, 0xFFFF_FFFF);
+    step(3, 0, 0);
+    assert_eq!(step(0, 0, 0), 0x01FF_FF04);
+}
+
+#[test]
+fn mem2_rejections() {
+    let wrap = |field: &str, next: &str| {
+        format!(
+            "struct S {{ m: {field} = 0, }}
+             impl S {{
+                 #[clock(domain = sys)]
+                 fn tick(self, a: u4, w: u32) -> S {{ S {{ m: {next} }} }}
+             }}"
+        )
+    };
+    compile_err(
+        &wrap("mem<u32, 16, 2>", "self.m.next(a, 1, a, w)"),
+        "takes its read addresses as an array `[uN; 2]`",
+    );
+    compile_err(
+        &wrap("mem<u32, 16, 2>", "self.m.next([a, a, a], 1, a, w)"),
+        "takes its read addresses as an array `[uN; 2]`",
+    );
+    compile_err(
+        &wrap("mem<u32, 16>", "self.m.next(a, 0b11_u2, a, w)"),
+        "a memory write enable is `u1` (the whole word) or `u4` (one bit per byte)",
+    );
+    compile_err(
+        &wrap("mem<u32, 16, 5>", "self.m.next(a, 1, a, w)"),
+        "a memory has 1 to 4 read ports",
+    );
+    compile_err(
+        &wrap("mem<u32, 16, 0>", "self.m.next(a, 1, a, w)"),
+        "a memory has 1 to 4 read ports",
+    );
+    compile_err(
+        "struct S { m: mem<u4, 16> = 0, }
+         impl S {
+             #[clock(domain = sys)]
+             fn tick(self, a: u4, w: u4) -> S { S { m: self.m.next(a, 0b11_u2, a, w) } }
+         }",
+        "byte enables need an element a multiple of 8 bits wide",
+    );
+}
+
+#[test]
+fn a_multi_port_rom_reads_several_words() {
+    let design = compile_str(
+        "struct S { t: rom<u8, 4, 2> = [10, 20, 30, 40], }
+         impl S {
+             #[clock(domain = sys)]
+             fn tick(self, a: u2, b: u2) -> (S, (u8, u8)) {
+                 let v = self.t.value();
+                 (S { t: self.t.next([a, b]) }, (v[0], v[1]))
+             }
+         }",
+    )
+    .expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    let inputs = |a: u64, b: u64| {
+        [("a".to_string(), a), ("b".to_string(), b)]
+            .into_iter()
+            .collect::<HashMap<_, _>>()
+    };
+    sim.step(&inputs(1, 3));
+    let out = sim.step(&inputs(0, 0));
+    assert_eq!((out["out_0"], out["out_1"]), (20, 40));
+}

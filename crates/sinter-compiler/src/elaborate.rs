@@ -72,6 +72,8 @@ enum Ty {
         elem: Box<Ty>,
         addr_bits: u32,
         writable: bool,
+        /// Read ports (MEM2, DESIGN §9.6).
+        ports: u32,
     },
 }
 
@@ -131,6 +133,8 @@ enum Val {
         elem: Box<Ty>,
         addr_bits: u32,
         writable: bool,
+        /// Read ports (MEM2).
+        ports: u32,
         pending: Option<Box<MemPending>>,
         /// Compile-time contents for a `rom` (per-word init); `None` for a `mem`
         /// (zero-init) and on runtime handles. Set only on the reset/default path.
@@ -152,7 +156,8 @@ enum Val {
 /// addresses are already masked to the memory's `addr_bits`.
 #[derive(Debug, Clone)]
 struct MemPending {
-    read_addr: ir::Expr,
+    /// One read address per read port.
+    read_addrs: Vec<ir::Expr>,
     write: Option<(ir::Expr, ir::Expr, ir::Expr)>,
 }
 
@@ -337,8 +342,11 @@ impl Elaborator<'_> {
         // handle below.
         let mems = self.mems_with_data(state_ty, tick.pos)?;
         let mut rdata_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for mem in &mems {
-            let name = format!("{}_rdata", mem.name);
+        for (mem, port) in mems
+            .iter()
+            .flat_map(|m| (0..m.read_ports).map(move |i| (m, i)))
+        {
+            let name = rdata_name(&mem.name, mem.read_ports, port);
             if seen.insert(name.clone(), ()).is_some() {
                 return Err(err(
                     &self.ctx,
@@ -575,19 +583,22 @@ impl Elaborator<'_> {
         // Memory transitions: a threaded `next()` schedules the read-data register
         // (`<m>_rdata <= mem[raddr]`, pre-write ⇒ READ_FIRST) and a `we`-gated
         // write; a memory threaded unchanged holds its read-data register.
-        let elem_of: HashMap<&str, Type> =
-            mems.iter().map(|m| (m.name.as_str(), m.elem_ty)).collect();
+        let mem_of: HashMap<&str, &ir::Mem> = mems.iter().map(|m| (m.name.as_str(), m)).collect();
         let mut mem_reads = Vec::new();
         let mut mem_writes = Vec::new();
         for (path, pending) in transitions {
-            let rdata = format!("{path}_rdata");
+            let (ty, ports) = mem_of
+                .get(path.as_str())
+                .map_or((Type::Uint(1), 1), |m| (m.elem_ty, m.read_ports));
             match pending {
                 Some(p) => {
-                    mem_reads.push(ir::MemRead {
-                        rdata,
-                        mem: path.clone(),
-                        addr: p.read_addr,
-                    });
+                    for (i, addr) in p.read_addrs.into_iter().enumerate() {
+                        mem_reads.push(ir::MemRead {
+                            rdata: rdata_name(&path, ports, i as u32),
+                            mem: path.clone(),
+                            addr,
+                        });
+                    }
                     // A `rom`'s `next()` has no write.
                     if let Some((we, addr, data)) = p.write {
                         mem_writes.push(ir::MemWrite {
@@ -599,9 +610,11 @@ impl Elaborator<'_> {
                     }
                 }
                 None => {
-                    // Idle this cycle: the read-data register holds its value.
-                    let ty = elem_of.get(path.as_str()).copied().unwrap_or(Type::Uint(1));
-                    reg_updates.push((rdata.clone(), typed(ir::ExprKind::Ident(rdata), ty)));
+                    // Idle this cycle: the read-data registers hold their values.
+                    for i in 0..ports {
+                        let rdata = rdata_name(&path, ports, i);
+                        reg_updates.push((rdata.clone(), typed(ir::ExprKind::Ident(rdata), ty)));
+                    }
                 }
             }
         }
@@ -1349,6 +1362,7 @@ impl Elaborator<'_> {
             elem,
             addr_bits,
             writable,
+            ports,
             ..
         } = &recv
         {
@@ -1358,6 +1372,7 @@ impl Elaborator<'_> {
                 &elem.clone(),
                 *addr_bits,
                 *writable,
+                *ports,
                 method,
                 args,
                 depth,
@@ -1829,6 +1844,7 @@ impl Elaborator<'_> {
         elem: &Ty,
         addr_bits: u32,
         writable: bool,
+        ports: u32,
         method: &str,
         args: &[Expr],
         depth: usize,
@@ -1837,11 +1853,16 @@ impl Elaborator<'_> {
         let elem_ty = elem
             .scalar()
             .ok_or_else(|| err(&self.ctx, pos, "memory element is not a scalar"))?;
-        match method {
-            "value" => Ok(Val::Scalar(
-                typed(ir::ExprKind::Ident(format!("{mem_name}_rdata")), elem_ty),
+        let port_value = |i: u32| {
+            Val::Scalar(
+                typed(ir::ExprKind::Ident(rdata_name(mem_name, ports, i)), elem_ty),
                 elem.fbits(),
-            )),
+            )
+        };
+        match method {
+            // One read-data register per port; an array of them with several.
+            "value" if ports == 1 => Ok(port_value(0)),
+            "value" => Ok(Val::Array((0..ports).map(port_value).collect())),
             "next" => {
                 if self.branch_depth.get() > 0 {
                     return Err(err(
@@ -1852,10 +1873,21 @@ impl Elaborator<'_> {
                          with the `we` argument and mux the address explicitly (MEM1)",
                     ));
                 }
-                let read_addr = self.mem_addr(env, &args[0], addr_bits, depth, pos)?;
+                let read_addrs = if ports == 1 {
+                    vec![self.mem_addr(env, &args[0], addr_bits, depth, pos)?]
+                } else {
+                    self.mem_addrs(env, &args[0], addr_bits, ports, depth, pos)?
+                };
                 // A writable `mem` also carries a `we`-gated write; a `rom` does not.
+                // `we` is `u1` (the whole word) or a byte-lane mask (MEM2).
                 let write = if writable {
-                    let we = self.lower_scalar(env, &args[1], Some(Type::Uint(1)), depth, pos)?;
+                    let lanes = elem_ty.width() / 8;
+                    let hint = match &args[1] {
+                        Expr::Literal(v) if *v > 1 => Some(Type::Uint(lanes)),
+                        Expr::Literal(_) => Some(Type::Uint(1)),
+                        _ => None,
+                    };
+                    let we = self.lower_scalar(env, &args[1], hint, depth, pos)?;
                     let write_addr = self.mem_addr(env, &args[2], addr_bits, depth, pos)?;
                     let data_val = self.lower(env, &args[3], Some(elem), depth, pos)?;
                     let (write_data, _) = scalar_parts(&data_val, &self.ctx, pos)?;
@@ -1868,7 +1900,8 @@ impl Elaborator<'_> {
                     elem: Box::new(elem.clone()),
                     addr_bits,
                     writable,
-                    pending: Some(Box::new(MemPending { read_addr, write })),
+                    ports,
+                    pending: Some(Box::new(MemPending { read_addrs, write })),
                     data: None,
                 })
             }
@@ -1882,6 +1915,48 @@ impl Elaborator<'_> {
 
     /// Lower a memory address: a scalar expression masked (a `Wrap` cast) to the
     /// memory's `addr_bits`, so both backends index in range identically.
+    /// Lower an array of `ports` read addresses (MEM2), each masked to the
+    /// address width as by [`Self::mem_addr`].
+    fn mem_addrs(
+        &self,
+        env: &Env,
+        e: &Expr,
+        addr_bits: u32,
+        ports: u32,
+        depth: usize,
+        pos: Pos,
+    ) -> Result<Vec<ir::Expr>, CompileError> {
+        let to = Type::Uint(addr_bits);
+        let hint = Ty::Array(Box::new(Ty::Scalar(to)), ports as usize);
+        let hint =
+            matches!(e, Expr::Array(items) if items.iter().all(|i| matches!(i, Expr::Literal(_))))
+                .then_some(hint);
+        let Val::Array(items) = self.lower(env, e, hint.as_ref(), depth, pos)? else {
+            return Err(err(
+                &self.ctx,
+                pos,
+                "memory read addresses must be an array",
+            ));
+        };
+        items
+            .iter()
+            .map(|v| {
+                let (a, _) = scalar_parts(v, &self.ctx, pos)?;
+                Ok(if a.ty == to {
+                    a
+                } else {
+                    typed(
+                        ir::ExprKind::Cast {
+                            expr: Box::new(a),
+                            mode: CastMode::Wrap,
+                        },
+                        to,
+                    )
+                })
+            })
+            .collect()
+    }
+
     fn mem_addr(
         &self,
         env: &Env,
@@ -2264,8 +2339,8 @@ impl Elaborator<'_> {
             TypeRef::Mem {
                 elem,
                 depth,
+                read_ports,
                 write_ports,
-                ..
             } => {
                 let et = self.resolve(elem, pos)?;
                 if et.scalar().is_none() {
@@ -2279,6 +2354,7 @@ impl Elaborator<'_> {
                     elem: Box::new(et),
                     addr_bits,
                     writable: *write_ports == 1,
+                    ports: *read_ports,
                 })
             }
             TypeRef::Channel { .. } => Err(err(
@@ -2321,7 +2397,9 @@ impl Elaborator<'_> {
             let default = self.default_val(&ty, f.default.as_ref(), f.pos)?;
             let mut mems = Vec::new();
             self.collect_mem_decls(&default, &f.name, &mut mems, f.pos)?;
-            out.extend(mems.into_iter().map(|m| format!("{}_rdata", m.name)));
+            out.extend(mems.into_iter().flat_map(|m| {
+                (0..m.read_ports).map(move |i| rdata_name(&m.name, m.read_ports, i))
+            }));
         }
         Ok(out)
     }
@@ -2460,12 +2538,14 @@ impl Elaborator<'_> {
                 elem,
                 addr_bits,
                 writable,
+                ports,
                 ..
             } => Val::Mem {
                 name: String::new(),
                 elem: elem.clone(),
                 addr_bits: *addr_bits,
                 writable: *writable,
+                ports: *ports,
                 pending: None,
                 data: None,
             },
@@ -2511,6 +2591,7 @@ impl Elaborator<'_> {
                     elem,
                     addr_bits,
                     writable,
+                    ports,
                     ..
                 },
             ) => {
@@ -2526,6 +2607,7 @@ impl Elaborator<'_> {
                     elem: elem.clone(),
                     addr_bits: *addr_bits,
                     writable: *writable,
+                    ports: *ports,
                     pending: None,
                     data: Some(data),
                 })
@@ -2539,6 +2621,7 @@ impl Elaborator<'_> {
                     elem,
                     addr_bits,
                     writable,
+                    ports,
                     ..
                 },
             ) => Ok(Val::Mem {
@@ -2546,6 +2629,7 @@ impl Elaborator<'_> {
                 elem: elem.clone(),
                 addr_bits: *addr_bits,
                 writable: *writable,
+                ports: *ports,
                 pending: None,
                 data: None,
             }),
@@ -2656,6 +2740,7 @@ impl Elaborator<'_> {
                 elem,
                 addr_bits,
                 data,
+                ports,
                 ..
             } => {
                 let elem_ty = elem
@@ -2670,6 +2755,7 @@ impl Elaborator<'_> {
                     elem_ty,
                     depth,
                     addr_bits: *addr_bits,
+                    read_ports: *ports,
                     reset,
                 });
                 Ok(())
@@ -2737,12 +2823,14 @@ impl Elaborator<'_> {
                 elem,
                 addr_bits,
                 writable,
+                ports,
                 ..
             } => Val::Mem {
                 name: path.to_string(),
                 elem: elem.clone(),
                 addr_bits: *addr_bits,
                 writable: *writable,
+                ports: *ports,
                 pending: None,
                 data: None,
             },
@@ -2881,6 +2969,16 @@ fn sign_change(e: ir::Expr, to: Type, sat: bool) -> ir::Expr {
         resize(unsigned, to, CastMode::Wrap)
     } else {
         resize(unsigned, to, CastMode::Sat)
+    }
+}
+
+/// The read-data register of read port `port` of memory `mem` with `ports`
+/// read ports: `<m>_rdata` for a single port, else `<m>_rdata_<i>` (MEM2).
+fn rdata_name(mem: &str, ports: u32, port: u32) -> String {
+    if ports == 1 {
+        format!("{mem}_rdata")
+    } else {
+        format!("{mem}_rdata_{port}")
     }
 }
 

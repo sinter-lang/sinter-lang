@@ -205,6 +205,13 @@ const EXAMPLES: &[Example] = &[
         name: "fn_dot3_multiplex",
         source: include_str!("../../../examples/fn_dot3_multiplex.snt"),
     },
+    // MEM2 (DESIGN §9.6): a `mem<u32, 16, 2>` with two read ports and a u4
+    // byte-enable write mask. The random stimulus covers partial writes and
+    // same-cycle read/write collisions on both ports.
+    Example {
+        name: "fn_mem2",
+        source: include_str!("../../../examples/fn_mem2.snt"),
+    },
     // Sign-changing casts (DESIGN §6.3): `uN` <-> `iN` in `wrap` and `sat`
     // modes at narrower / equal / wider widths. The random `u`/`s` stimulus hits
     // both clamp branches; co-simulated sim vs Verilog bit-for-bit.
@@ -551,6 +558,11 @@ const DIRECTED: &[Directed] = &[
         name: "fn_counter",
         source: include_str!("../../../examples/fn_counter.snt"),
         csv: include_str!("../../../examples/fn_counter.csv"),
+    },
+    Directed {
+        name: "fn_mem2",
+        source: include_str!("../../../examples/fn_mem2.snt"),
+        csv: include_str!("../../../examples/fn_mem2.csv"),
     },
     Directed {
         name: "fn_signcast",

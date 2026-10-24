@@ -43,7 +43,9 @@ After `clk` and `rst_n`, ports appear in this order:
    order.
 2. **Register outputs** (`<register>_q`): the current value of each register
    under a **`pub`** field of the state struct, in field order. A `pub`
-   memory field contributes its read-data register (`<mem>_rdata_q`).
+   memory field contributes its read-data register (`<mem>_rdata_q`), or one
+   per read port (`<mem>_rdata_0_q`, `<mem>_rdata_1_q`, …) for a
+   `mem<T, N, R>` with `R > 1`.
    Private fields are internal: they are registers in the module but not
    ports (they still appear in `sinter sim --vcd` waveforms).
 3. **Extra outputs** (`out`, `out_*`): the leaves of the second element when

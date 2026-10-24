@@ -5,6 +5,17 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Multi-port and byte-enable memories** (MEM2, DESIGN §9.6):
+  `mem<T, N, R>` / `rom<T, N, R>` declare `R` read ports (1–4). With `R > 1`,
+  `next` takes the read addresses as an array and `value()` returns an array
+  of words. A memory's write enable may be a `uB` mask, one bit per byte
+  lane, as well as `u1`. Yosys maps both onto block or distributed RAM
+  (`examples/fn_mem2.snt`).
+
 ## [0.3.0] — unreleased
 
 ### Added
