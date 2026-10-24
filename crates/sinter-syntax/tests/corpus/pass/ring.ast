@@ -8,6 +8,7 @@ Program {
                 name: "Trace",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "r",
                         ty: Channel {

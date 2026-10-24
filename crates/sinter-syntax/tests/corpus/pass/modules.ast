@@ -100,6 +100,7 @@ Program {
                 name: "Top",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Public,
                         name: "seg",
                         ty: Scalar(
@@ -118,6 +119,7 @@ Program {
                         },
                     },
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "count",
                         ty: Scalar(

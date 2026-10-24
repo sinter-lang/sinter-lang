@@ -160,8 +160,10 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   - **Multiplex** (M1, §3.2 / §9.5) — `multiplex fn`: time-folded, one shared
     multiplier via operand-hoist + IR multiply-CSE (`multiplex_desugar.rs` +
     `ir_cse.rs`).
-  - **Memory** (MEM1, §9.6) — `mem<T, N>` 1R1W synchronous block RAM,
-    `value()` / `next(raddr, we, waddr, wdata)`, READ_FIRST, zero-init.
+  - **Memory** (MEM1–MEM2, §9.6) — `mem<T, N, R>` synchronous block RAM with
+    `R` read ports (array `raddr` / `value()` when `R > 1`) and a `u1` or
+    byte-lane-mask write enable, `value()` / `next(raddr, we, waddr, wdata)`,
+    READ_FIRST, zero-init.
   - **ROM** (ROM1, §9.7) — `rom<T, N>` read-only, `value()` / `next(raddr)`,
     contents from an inline array literal or `include_hex!("f.hex")`.
   - **Option** (O1–O2, §6.5 / §9.4) — `Option<T>`, `Some` / `None`, `match`, and
@@ -172,7 +174,10 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
     template (`front()` / `is_full()` / `is_empty()` / `len()` / `next(push, pop)`,
     differing only in the `pushf` / `shiftf` flags), and the depth-1 newest-wins
     `flow<T>` (`value()` / `next(push)`, no pop) erases to an `Option<T>` register.
-    The loss policy is in the type, never a call-site flag.
+    The loss policy is in the type, never a call-site flag. A `fifo` is pushed
+    through its `Sender` view (`Push<T>` token, CHAN3), and a deep one (depth ≥ 64
+    or `#[storage(bram)]`) is a `mem`-backed ring buffer that is cycle-identical to
+    the register queue (CHAN4).
   - **Bit manipulation** (BIT1–BIT2, §6.13 / §9.10) — a **literal**-amount `<<` /
     `>>` (widen / narrow, arithmetic for signed), bit-slice `x[hi:lo]`, and concat
     `a @ b`, all lowered to existing IR shift / cast / or nodes; plus a **runtime**
@@ -222,11 +227,9 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   the functional surface. Both surfaces share the AST's `Expr`.
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
-directional `Sender`/`Receiver` views + deep BRAM-backed FIFO (CHAN3–4, §6.11 /
-§9.8); the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a
+the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a
 `#[faults(mode)]` attribute or build-time file list; FLT1b ships the global knob
 only) and the `assert_static!` / `unreachable!()` SMT-prover bucket;
-byte-enable / multi-port `mem` (the BRAM register-file / sub-word-store axis, §9.6);
 elastic `Stream<T>`
 (per-stage ready/valid + skid buffers),
 clock-domain phantom types (§6.7), multi-port / dual-clock / non-scalar-element

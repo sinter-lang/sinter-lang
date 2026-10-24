@@ -1,0 +1,24 @@
+// CHAN4 (DESIGN §9.8): a block-RAM `fifo` behaves exactly like a register one.
+//
+// Both queues get the same pushes and pops every cycle; `#[storage(..)]`
+// picks their storage (a `fifo` of depth 64 or more defaults to BRAM). Their
+// fronts and lengths must always match, which tests/channel.rs checks over
+// many random cycles and the oracle co-simulates against the Verilog.
+struct Twin {
+    #[storage(regs)]
+    pub regs: fifo<u8, 4>,
+    #[storage(bram)]
+    pub bram: fifo<u8, 4>,
+}
+
+impl Twin {
+    #[clock(domain = sys)]
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Twin, (Option<u8>, Option<u8>)) {
+        let a = self.regs.sender().offer(incoming);
+        let b = self.bram.sender().offer(incoming);
+        (
+            Twin { regs: self.regs.next(a, take), bram: self.bram.next(b, take) },
+            (self.regs.front(), self.bram.front()),
+        )
+    }
+}

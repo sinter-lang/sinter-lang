@@ -8,6 +8,7 @@ Program {
                 name: "Counter",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "value",
                         ty: Scalar(

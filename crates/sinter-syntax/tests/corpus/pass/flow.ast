@@ -8,6 +8,7 @@ Program {
                 name: "Sampler",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "latest",
                         ty: Channel {

@@ -8,6 +8,7 @@ Program {
                 name: "Sample",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "gain",
                         ty: Fixed {
@@ -26,6 +27,7 @@ Program {
                         },
                     },
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "bias",
                         ty: Fixed {
@@ -44,6 +46,7 @@ Program {
                         },
                     },
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "raw",
                         ty: Scalar(

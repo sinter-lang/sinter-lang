@@ -89,12 +89,23 @@ struct Mono {
     n: usize,
     /// Bit width of the occupancy counter — enough to hold `0..=N`.
     cbits: u32,
+    /// A `fifo` held in block RAM (CHAN4) rather than registers.
+    bram: bool,
 }
 
+/// The depth from which a `fifo` defaults to block-RAM storage (CHAN4).
+const BRAM_FIFO_DEPTH: usize = 64;
+
 /// Whether `program` mentions a channel type anywhere (a field, a signature,
-/// or a `let` annotation).
+/// or a `let` annotation) or has a `#[storage(..)]` field.
 pub fn has_channel(program: &Program) -> bool {
-    let mut found = false;
+    // A `#[storage(..)]` field brings the desugar in too, so a misplaced one
+    // is reported rather than ignored.
+    let storage = program.items.iter().any(|it| {
+        matches!(it, Item::Struct(s)
+            if s.fields.iter().any(|f| f.attrs.iter().any(|a| a.name == "storage")))
+    });
+    let mut found = storage;
     let mut probe = program.clone();
     // The visitor only reads; `Ok` keeps walking.
     let _ = for_each_type(&mut probe, &mut |t| {
@@ -119,6 +130,7 @@ fn type_has_channel(t: &TypeRef) -> bool {
 pub fn source_names(program: &Program) -> Vec<(String, String)> {
     let mut monos: BTreeMap<String, Mono> = BTreeMap::new();
     let mut probe = program.clone();
+    let _ = rewrite_fifo_fields(&mut probe, &mut monos);
     let _ = for_each_type(&mut probe, &mut |t| rewrite_type(t, &mut monos));
     let fifos: Vec<(String, usize)> = monos
         .values()
@@ -182,6 +194,7 @@ pub fn desugar_channels(program: &Program) -> Result<Program, CompileError> {
     //    brings its views and push token with it.
     let mut out = program.clone();
     let mut monos: BTreeMap<String, Mono> = BTreeMap::new();
+    rewrite_fifo_fields(&mut out, &mut monos)?;
     for_each_type(&mut out, &mut |t| rewrite_type(t, &mut monos))?;
     if monos.is_empty() {
         return Ok(program.clone());
@@ -222,6 +235,68 @@ pub fn desugar_channels(program: &Program) -> Result<Program, CompileError> {
         out.items.extend(parsed.items);
     }
     Ok(out)
+}
+
+/// Rewrite each `fifo` struct field to its register- or BRAM-backed struct
+/// (CHAN4): `#[storage(regs)]` / `#[storage(bram)]` choose, and otherwise a
+/// depth of at least [`BRAM_FIFO_DEPTH`] means BRAM. Both behave identically.
+fn rewrite_fifo_fields(
+    program: &mut Program,
+    monos: &mut BTreeMap<String, Mono>,
+) -> Result<(), CompileError> {
+    for it in &mut program.items {
+        let Item::Struct(s) = it else { continue };
+        for f in &mut s.fields {
+            let storage = storage_attr(f)?;
+            let TypeRef::Channel {
+                kind: ChannelKind::Fifo,
+                elem,
+                depth,
+            } = &f.ty
+            else {
+                if storage.is_some() {
+                    return Err(sem(
+                        f.pos,
+                        "`#[storage(..)]` applies only to a `fifo` field",
+                    ));
+                }
+                continue;
+            };
+            let mut m = build_mono(ChannelKind::Fifo, elem, depth, f.pos)?;
+            if let Some(bram) = storage {
+                m = with_storage(m, bram);
+            }
+            f.ty = TypeRef::Named(m.name.clone());
+            monos.entry(m.name.clone()).or_insert(m);
+        }
+    }
+    Ok(())
+}
+
+/// A field's `#[storage(regs | bram)]`: `Some(true)` for BRAM.
+fn storage_attr(f: &sinter_syntax::ast::StructField) -> Result<Option<bool>, CompileError> {
+    let Some(attr) = f.attrs.iter().find(|a| a.name == "storage") else {
+        return Ok(None);
+    };
+    match attr.args.as_slice() {
+        [arg] if arg.value.is_none() && arg.key == "regs" => Ok(Some(false)),
+        [arg] if arg.value.is_none() && arg.key == "bram" => Ok(Some(true)),
+        _ => Err(sem(
+            f.pos,
+            "`#[storage(..)]` takes `regs` or `bram`, e.g. `#[storage(bram)]`",
+        )),
+    }
+}
+
+/// `m` re-targeted at register (`false`) or block-RAM (`true`) storage.
+fn with_storage(m: Mono, bram: bool) -> Mono {
+    let name = format!(
+        "{}Fifo_{}_{}",
+        if bram { "B" } else { "" },
+        mangle(&m.elem_src),
+        m.n
+    );
+    Mono { name, bram, ..m }
 }
 
 /// Replace `t` (and any channel type inside it) with its synthesized struct
@@ -392,7 +467,9 @@ fn mono_for(kind: ChannelKind, elem_src: String, n: usize) -> Mono {
     // Bits to hold the occupancy `0..=N` (e.g. N=16 -> 0..=16 needs 5 bits).
     let cbits = u32::BITS - (n as u32).leading_zeros();
     let e = mangle(&elem_src);
+    let bram = kind == ChannelKind::Fifo && n >= BRAM_FIFO_DEPTH;
     let name = match kind {
+        ChannelKind::Fifo if bram => format!("BFifo_{e}_{n}"),
         ChannelKind::Fifo => format!("Fifo_{e}_{n}"),
         ChannelKind::Ring => format!("Ring_{e}_{n}"),
         ChannelKind::Flow => format!("Flow_{e}"),
@@ -406,6 +483,7 @@ fn mono_for(kind: ChannelKind, elem_src: String, n: usize) -> Mono {
         elem_src,
         n,
         cbits,
+        bram,
     }
 }
 
@@ -473,6 +551,7 @@ fn gen_source(m: &Mono) -> String {
     match m.kind {
         // Lossless: refuse a word when there is no room (a guarded hold — live
         // data is never overwritten), and retire the head only on a real pop.
+        ChannelKind::Fifo if m.bram => gen_bram_fifo_source(m),
         ChannelKind::Fifo => gen_queue_source(
             m,
             &QueuePolicy {
@@ -508,6 +587,7 @@ fn gen_view_source(m: &Mono) -> String {
         elem_src: ts,
         n,
         cbits,
+        ..
     } = m;
     let push = format!("Push_{}", mangle(ts));
     match kind {
@@ -666,6 +746,105 @@ impl {name} {{
         {name} {{
             data: [{data_next}],
             count: count2,
+        }}
+    }}
+}}
+"
+    )
+}
+
+/// Generate a block-RAM `fifo<T, N>` (CHAN4) that behaves exactly like the
+/// register `fifo`, every cycle.
+///
+/// All words live in a `mem<T, N>` ring buffer from `rd` (the oldest) for
+/// `count` words. Because the RAM's read has a cycle of latency, the oldest
+/// word is kept in the `out` register (what `front()` shows) and the
+/// second-oldest is prefetched: it is the RAM's read data, except in the cycle
+/// after it was pushed (its RAM write hasn't been readable yet), when the `byp`
+/// register holds it instead. Each cycle computes the next oldest word from
+/// those and re-establishes the prefetch:
+///
+/// - on a pop, read the slot after the new second-oldest (`rd + 2`);
+///   otherwise re-read the second-oldest (`rd + 1`);
+/// - if this cycle's push becomes the second-oldest (pushing onto one word, or
+///   onto two while popping), hold it in `byp` for the next cycle.
+///
+/// When a case has no second-oldest word, the read is unused. A differential
+/// test (`tests/channel.rs`) checks it against the register `fifo` every cycle.
+fn gen_bram_fifo_source(m: &Mono) -> String {
+    let Mono {
+        name,
+        elem_src: ts,
+        n,
+        cbits,
+        ..
+    } = m;
+    let n = *n;
+    let abits = n.trailing_zeros();
+    let e = mangle(ts);
+    format!(
+        "\
+struct {name} {{
+    ram: mem<{ts}, {n}> = 0,
+    rd: u{abits} = 0,
+    count: u{cbits} = 0,
+    out: {ts} = 0,
+    byp: {ts} = 0,
+    byp_valid: u1 = 0,
+}}
+
+impl {name} {{
+    fn front(self) -> Option<{ts}> {{
+        if self.count == 0 {{ None }} else {{ Some(self.out) }}
+    }}
+    fn is_empty(self) -> u1 {{
+        if self.count == 0 {{ 1 }} else {{ 0 }}
+    }}
+    fn is_full(self) -> u1 {{
+        if self.count == {n} {{ 1 }} else {{ 0 }}
+    }}
+    fn len(self) -> u{cbits} {{
+        self.count
+    }}
+    fn sender(self) -> Sender_{e}_{n} {{
+        Sender_{e}_{n} {{ full: self.is_full(), count: self.count }}
+    }}
+    fn receiver(self) -> Receiver_{e}_{n} {{
+        Receiver_{e}_{n} {{ head: self.front(), count: self.count }}
+    }}
+    fn next(self, push_tok: Push_{e}, pop: u1) -> {name} {{
+        let push: Option<{ts}> = push_tok.v;
+        let popf: u1 = if self.count == 0 {{ 0 }} else {{ pop }};
+        let hp: u1 = match push {{ Some(_) => 1, None => 0 }};
+        let space: u1 = if self.count == {n} {{ 0 }} else {{ 1 }};
+        let pushf: u1 = hp & (space | popf);
+        let pv: {ts} = match push {{ Some(v) => v, None => 0 }};
+        // The second-oldest word, wherever it is.
+        let second: {ts} = if self.byp_valid == 1 {{ self.byp }} else {{ self.ram.value() }};
+        let wr: u{abits} = (self.rd + self.count) as u{abits} wrap;
+        let count2: u{cbits} = if pushf == 1 {{
+            if popf == 1 {{ self.count }} else {{ (self.count + 1) as u{cbits} wrap }}
+        }} else {{
+            if popf == 1 {{ (self.count - 1) as u{cbits} wrap }} else {{ self.count }}
+        }};
+        let out2: {ts} = if popf == 1 {{
+            if self.count >= 2 {{ second }} else {{ pv }}
+        }} else {{
+            if self.count == 0 {{ pv }} else {{ self.out }}
+        }};
+        let take_push: u1 = pushf == 1 & ((popf == 1 & self.count == 2) | (popf == 0 & self.count == 1));
+        let raddr: u{abits} = if popf == 1 {{
+            (self.rd + 2) as u{abits} wrap
+        }} else {{
+            (self.rd + 1) as u{abits} wrap
+        }};
+        {name} {{
+            ram: self.ram.next(raddr, pushf, wr, pv),
+            rd: if popf == 1 {{ (self.rd + 1) as u{abits} wrap }} else {{ self.rd }},
+            count: count2,
+            out: out2,
+            byp: if take_push == 1 {{ pv }} else {{ self.byp }},
+            byp_valid: take_push,
         }}
     }}
 }}

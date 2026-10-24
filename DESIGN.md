@@ -1417,18 +1417,20 @@ emitter — so CHAN1 is a near-mechanical clone of the landed MEM1 path.
 | **CHAN1** | ✅ Single-owner **lossless** `fifo<T, N>` (scalar `T` ≤ 64 b, power-of-two `N`): `next(push: Option<T>, pop: u1)` + pure `front()`/`is_empty()`/`is_full()`/`len()`. Register-backed desugar, SROA-flattened, `Static(0)` combinational `front()`, READ_FIRST same-cycle push+pop, empty/zero reset. `next()` barred from `if`/`match` arms (single-driver); reads unrestricted. | a producer→queue→consumer example (`fn_fifo.snt`) round-trips the §7.4 oracle bit-for-bit |
 | **CHAN2** | ✅ **Lossy** `ring<T, N>` (overwrite-oldest) on the same desugar, loss policy fixed by the type: one shared queue template parameterized by `pushf` (a `ring` always accepts) and `shiftf` (a full ring retires its oldest word), so `ring` costs no state a `fifo` does not. Plus `flow<T>` (depth-1 newest-wins): `value()` / `next(push)`, no pop, erased to an `Option<T>` register. | ✅ `fn_ring.snt` (overwrite-oldest) + `fn_flow.snt` (newest-wins) oracle-pass bit-for-bit; `fifo` goldens unchanged |
 | **CHAN3** | ✅ Pure directional `Sender<T, N>` / `Receiver<T, N>` views + the §3.1 connection rule: a `fifo` push is a `Push<T>` token only a `Sender` makes, so an ungated push is a **type error** (where "lossless" earns compile-time teeth for the wired graph). | ✅ `fn_fifo_views.snt` oracle-passes; a cross-module producer/consumer compiles and runs; a raw `Option` push is rejected at type-check |
-| **CHAN4** | Deep **BRAM-backed opaque** `fifo` IR primitive (guarded out of SROA, new side-vector + Verilog emitter + sim path); `front()` becomes a registered `Static(1)` first-word-fall-through read. Gated on depth. | a deep FIFO oracle-passes accounting for the 1-cycle read latency |
+| **CHAN4** | ✅ Deep **BRAM-backed** `fifo` storage, chosen by depth (≥ 64) or `#[storage(regs \| bram)]`, as a desugar onto `mem<T, N>`: no new IR, no new latency, cycle-for-cycle identical to the register `fifo`. | ✅ a differential test matches the register `fifo` on 140k random cycles; `fn_fifo_bram.snt` oracle-passes; a 512 × 32 `fifo` maps to 1 block RAM + 261 LUTs instead of 67k LUTs |
 
 #### CHAN3 / CHAN4 surface (proposed, v0.4)
 
-**CHAN4 — deep FIFOs are a storage choice, not a new type.** A `fifo<T, N>`
+**CHAN4 — deep FIFOs are a storage choice, not a new type (realized).** A `fifo<T, N>`
 whose storage would be large is held in block RAM instead of registers, and
 behaves **identically, cycle for cycle**: the same `front()` / `len()` /
 `is_full()` / `is_empty()` values every cycle and the same `next(push, pop)`
 rules, so no design changes and no new latency appears. The BRAM version
 keeps the oldest word in an output register and prefetches the next one
-through the RAM's registered read, with a bypass for a word written in the
-same cycle it is needed. It is a source-to-source desugar onto `mem<T, N>`
+through the RAM's registered read: on a pop it reads the slot after the new
+second-oldest, and otherwise re-reads the second-oldest. A bypass register
+covers the one case the RAM can't: the cycle after a push that became the
+second-oldest, before its write is readable. It is a source-to-source desugar onto `mem<T, N>`
 (the CHAN1 mechanism), so it needs no new IR or backend code.
 
 The compiler uses BRAM when `N ≥ 64`. `#[storage(regs)]` or

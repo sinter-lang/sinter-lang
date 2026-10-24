@@ -76,7 +76,8 @@ The language features the RV32 cores showed were missing.
       shrank from 5.2k to 2.2k LUTs.
 - [x] Byte-enable `mem` writes (§9.6), and RV32 byte / halfword loads and
       stores (`LB` / `LH` / `LBU` / `LHU` / `SB` / `SH`) in both cores.
-- [ ] BRAM-backed deep FIFO (CHAN4, §9.8).
+- [x] BRAM-backed deep FIFO (CHAN4, §9.8): a storage choice, cycle-for-cycle
+      identical to the register `fifo`.
 - [x] Directional `Sender` / `Receiver` channel views (CHAN3, §6.11), with a
       `Push<T>` token so a lossless `fifo` can't be overfilled.
 

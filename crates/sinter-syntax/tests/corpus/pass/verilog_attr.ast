@@ -42,6 +42,7 @@ Program {
                 name: "UartTx",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "busy",
                         ty: Scalar(

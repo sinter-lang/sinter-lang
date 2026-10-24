@@ -442,3 +442,103 @@ fn views_cross_module_boundaries() {
     assert_eq!(step(0, 0), (1, 7));
     assert_eq!(step(0, 0), (0, 0));
 }
+
+// --- CHAN4: block-RAM fifo storage -----------------------------------------
+
+/// A design holding a register fifo and a BRAM fifo of depth `n`, fed the same
+/// pushes and pops, exposing both fronts and lengths.
+fn twin_source(n: u32, bram_attr: &str) -> String {
+    format!(
+        "struct Twin {{
+             #[storage(regs)]
+             pub regs: fifo<u8, {n}>,
+             {bram_attr}
+             pub bram: fifo<u8, {n}>,
+         }}
+         impl Twin {{
+             #[clock(domain = sys)]
+             fn tick(self, incoming: Option<u8>, take: u1) -> (Twin, (Option<u8>, Option<u8>, u1)) {{
+                 let a = self.regs.sender().offer(incoming);
+                 let b = self.bram.sender().offer(incoming);
+                 let same_len: u1 = if self.regs.len() == self.bram.len() {{ 1 }} else {{ 0 }};
+                 (
+                     Twin {{ regs: self.regs.next(a, take), bram: self.bram.next(b, take) }},
+                     (self.regs.front(), self.bram.front(), same_len),
+                 )
+             }}
+         }}"
+    )
+}
+
+/// Drive both queues with the same random traffic for `cycles` cycles and
+/// require identical fronts and lengths every cycle. `push_pct` / `pop_pct`
+/// bias the traffic so the queues also spend time full and empty.
+fn assert_twins_agree(src: &str, cycles: usize, push_pct: u64, pop_pct: u64) {
+    let design = compile_str(src).expect("compile");
+    let m = &design.modules[0];
+    assert!(
+        m.mems.iter().any(|mem| mem.name.starts_with("bram")),
+        "the bram fifo uses a mem"
+    );
+    let mut sim = Simulator::new(m);
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut rand = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    for k in 0..cycles {
+        let push = rand() % 100 < push_pct;
+        let pop = rand() % 100 < pop_pct;
+        let out = sim.step(
+            &[
+                ("incoming_is_some".to_string(), u64::from(push)),
+                ("incoming_payload".to_string(), rand() & 0xFF),
+                ("take".to_string(), u64::from(pop)),
+            ]
+            .into_iter()
+            .collect::<HashMap<_, _>>(),
+        );
+        let regs = (out["out_0_is_some"], out["out_0_payload"]);
+        let bram = (out["out_1_is_some"], out["out_1_payload"]);
+        assert_eq!(regs.0, bram.0, "cycle {k}: front validity differs");
+        if regs.0 == 1 {
+            assert_eq!(regs.1, bram.1, "cycle {k}: front word differs");
+        }
+        assert_eq!(out["out_2"], 1, "cycle {k}: lengths differ");
+    }
+}
+
+#[test]
+fn a_bram_fifo_matches_a_register_fifo_every_cycle() {
+    for (push, pop) in [(50, 50), (80, 30), (30, 80), (95, 95)] {
+        assert_twins_agree(&twin_source(4, "#[storage(bram)]"), 20_000, push, pop);
+    }
+}
+
+#[test]
+fn a_deep_fifo_defaults_to_bram() {
+    // No attribute on the second field: depth 64 means BRAM.
+    let src = twin_source(64, "");
+    for (push, pop) in [(50, 50), (70, 40), (40, 70)] {
+        assert_twins_agree(&src, 20_000, push, pop);
+    }
+}
+
+#[test]
+fn storage_attribute_rejections() {
+    compile_err(
+        "struct Q { #[storage(bram)] pub v: u8 = 0, }
+         impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { v: self.v } } }",
+        "`#[storage(..)]` applies only to a `fifo` field",
+    );
+    compile_err(
+        "struct Q { #[storage(flash)] pub q: fifo<u8, 4>, }
+         impl Q {
+             #[clock(domain = sys)]
+             fn tick(self) -> Q { Q { q: self.q.next(self.q.sender().no_push(), 0) } }
+         }",
+        "`#[storage(..)]` takes `regs` or `bram`",
+    );
+}

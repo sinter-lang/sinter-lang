@@ -26,6 +26,7 @@ Program {
                 name: "S",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "regs",
                         ty: Array {
@@ -54,6 +55,7 @@ Program {
                         },
                     },
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "hist",
                         ty: Array {

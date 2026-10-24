@@ -136,6 +136,13 @@ const EXAMPLES: &[Example] = &[
         name: "fn_fifo_views",
         source: include_str!("../../../examples/fn_fifo_views.snt"),
     },
+    // CHAN4: a register fifo and a BRAM fifo (a `mem` ring buffer with a
+    // prefetched second word and a bypass) fed the same traffic. The oracle
+    // checks the BRAM version's Verilog matches its model bit-for-bit.
+    Example {
+        name: "fn_fifo_bram",
+        source: include_str!("../../../examples/fn_fifo_bram.snt"),
+    },
     Example {
         name: "fn_ring",
         source: include_str!("../../../examples/fn_ring.snt"),

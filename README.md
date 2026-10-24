@@ -24,10 +24,13 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 - **Modules**: multi-file `mod` / `use` with `pub` visibility (Rust-2018 layout).
 - **Staged functions**: `pipeline fn` (free-running, valid bubbles, global stall)
   and `multiplex fn` (time-folded onto one shared multiplier).
-- **Storage**: `mem<T, N>` 1R1W block RAM, `rom<T, N>` (inline or
-  `include_hex!`), runtime-indexed `[T; N]` register files.
-- **Validity & channels**: `Option<T>` + `?`, and the register-backed
-  `fifo<T, N>` / `ring<T, N>` / `flow<T>` channel family.
+- **Storage**: `mem<T, N, R>` block RAM with `R` read ports and byte-enable
+  writes, `rom<T, N, R>` (inline or `include_hex!`), runtime-indexed
+  `[T; N]` register files.
+- **Validity & channels**: `Option<T>` + `?`, and the `fifo<T, N>` /
+  `ring<T, N>` / `flow<T>` channel family. A `fifo` is pushed through its
+  `Sender` view, so it can't be overfilled, and a deep one (depth ≥ 64, or
+  `#[storage(bram)]`) lives in block RAM.
 - **Bit manipulation**: `x[hi:lo]` slices, `a @ b` concat, constant and runtime
   (barrel) shifts.
 - **Faults**: sim-only `assert!` / `debug_assert!` with a static inlined

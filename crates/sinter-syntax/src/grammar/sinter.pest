@@ -153,7 +153,7 @@ const_item = { vis? ~ "const" ~ ident ~ ":" ~ f_typeref ~ "=" ~ f_expr ~ ";" }
 
 // `[pub] struct Name { [pub] field: Type [= reset], ... }` — inline reset values.
 struct_item  = { attr* ~ vis? ~ "struct" ~ ident ~ "{" ~ (struct_field ~ ("," ~ struct_field)* ~ ","?)? ~ "}" }
-struct_field = { vis? ~ ident ~ ":" ~ f_typeref ~ ("=" ~ f_expr)? }
+struct_field = { attr* ~ vis? ~ ident ~ ":" ~ f_typeref ~ ("=" ~ f_expr)? }
 
 // `[pub] enum Name { Variant [= disc], ... }` with an optional `#[encoding(...)]`.
 // Variants are as visible as the enum, so they carry no per-variant `pub`.

@@ -697,6 +697,7 @@ pub(crate) fn self_field(field: &str) -> Expr {
 /// A struct field of the given type defaulting to `0`.
 pub(crate) fn zero_field(name: &str, ty: TypeRef) -> StructField {
     StructField {
+        attrs: Vec::new(),
         vis: Visibility::Private,
         name: name.to_string(),
         ty,

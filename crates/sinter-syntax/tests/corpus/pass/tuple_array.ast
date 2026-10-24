@@ -8,6 +8,7 @@ Program {
                 name: "Pair",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "lanes",
                         ty: Array {

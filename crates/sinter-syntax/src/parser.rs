@@ -668,6 +668,10 @@ fn parse_struct(pair: Pair<Rule>) -> Result<StructItem, ParseError> {
 fn parse_struct_field(pair: Pair<Rule>) -> Result<StructField, ParseError> {
     let pos = pos_of(&pair);
     let mut inner = pair.into_inner();
+    let mut attrs = Vec::new();
+    while inner.peek().map(|p| p.as_rule()) == Some(Rule::attr) {
+        attrs.push(parse_attr(next_pair(&mut inner, "field attribute")?)?);
+    }
     let vis = take_vis(&mut inner);
     let name = next_ident(&mut inner, "field name")?;
     let ty = parse_typeref(next_pair(&mut inner, "field type")?)?;
@@ -676,6 +680,7 @@ fn parse_struct_field(pair: Pair<Rule>) -> Result<StructField, ParseError> {
         None => None,
     };
     Ok(StructField {
+        attrs,
         vis,
         name,
         ty,

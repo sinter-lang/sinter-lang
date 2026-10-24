@@ -8,6 +8,7 @@ Program {
                 name: "S",
                 fields: [
                     StructField {
+                        attrs: [],
                         vis: Private,
                         name: "last",
                         ty: Option(

@@ -24,6 +24,11 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 - **Channel views** (CHAN3, DESIGN §6.11 / §9.8): `q.sender()` /
   `q.receiver()` return `Sender<T, N>` / `Receiver<T, N>` views of a `fifo`,
   usable as ordinary values across modules (`examples/fn_fifo_views.snt`).
+- **Block-RAM FIFOs** (CHAN4, DESIGN §9.8): a `fifo` of depth 64 or more,
+  or one marked `#[storage(bram)]`, is held in block RAM and behaves
+  cycle-for-cycle like the register version. `#[storage(regs)]` forces
+  registers. A 512 × 32 `fifo` now synthesizes to one block RAM and 261 LUTs
+  instead of 67,634 LUTs. Struct fields can carry attributes.
 
 ### Changed
 

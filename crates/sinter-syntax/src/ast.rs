@@ -474,6 +474,8 @@ pub struct StructItem {
 /// A field of a [`StructItem`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructField {
+    /// Attributes preceding the field, e.g. `#[storage(bram)]` on a `fifo`.
+    pub attrs: Vec<Attr>,
     /// Visibility (DESIGN §10) — fields are private by default.
     pub vis: Visibility,
     /// The field name.
