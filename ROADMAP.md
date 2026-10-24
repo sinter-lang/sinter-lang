@@ -82,7 +82,9 @@ The language features the RV32 cores showed were missing. Release: tag
 - [x] Directional `Sender` / `Receiver` channel views (CHAN3, §6.11), with a
       `Push<T>` token so a lossless `fifo` can't be overfilled.
 
-## v0.5 — clock domains
+## v0.5 — clock domains ✅
+
+Release: tag `v0.5.0` on the "release: v0.5.0" commit.
 
 - [x] CLK1: several clock domains in one design, with the domain rule checked
       (§6.7 / §9.14).

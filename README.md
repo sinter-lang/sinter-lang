@@ -9,9 +9,9 @@ correctness oracle.
 See [`DESIGN.md`](DESIGN.md) for the full language design (the source of truth)
 and [`CLAUDE.md`](CLAUDE.md) for the coding standards every change must follow.
 
-> **Status: v0.4 — experimental, pre-1.0.** The language and CLI may still
+> **Status: v0.5 — experimental, pre-1.0.** The language and CLI may still
 > change incompatibly between releases. Sinter is usable today for small-to-medium
-> **single-clock** datapaths and controllers that you instantiate from
+> datapaths and controllers, on one clock or several, that you instantiate from
 > hand-written Verilog and verify with your own testbench.
 
 **Implemented** — every feature below lowers to both backends and passes the
@@ -31,6 +31,11 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
   `ring<T, N>` / `flow<T>` channel family. A `fifo` is pushed through its
   `Sender` view, so it can't be overfilled, and a deep one (depth ≥ 64, or
   `#[storage(bram)]`) lives in block RAM.
+- **Clock domains**: `#[domain(d)]` state fields with one
+  `#[clock(domain = d, period = p)]` tick per domain; reading another
+  domain's register is a compile error. Crossings go through `sync`,
+  `pulse`, `mailbox`, or a dual-clock `async_fifo`, and the simulator and
+  Verilator replay the same multi-clock edge schedule.
 - **Bit manipulation**: `x[hi:lo]` slices, `a @ b` concat, constant and runtime
   (barrel) shifts.
 - **Faults**: sim-only `assert!` / `debug_assert!` with a static inlined
@@ -41,8 +46,8 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
   simulation, and the oracle checks it against the real module
   (`examples/verilog_acc/`).
 - **RV32I cores**: [`examples/rv32/`](examples/rv32/README.md) has a
-  fetch-ahead core and a 5-stage pipelined core (word-only loads and
-  stores), each a few hundred lines of Sinter. Both are checked against a
+  fetch-ahead core and a 5-stage pipelined core implementing all of RV32I,
+  each a few hundred lines of Sinter. Both are checked against a
   reference instruction-set simulator and through the oracle.
 
 **Known limitations** (designed in `DESIGN.md`, not yet implemented):
@@ -51,8 +56,11 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 - Foreign Verilog bindings (EXT1) take scalar ports and default parameters
   only. Clock-generating modules (PLLs) still belong in a hand-written Verilog
   top level.
-- No BRAM-backed deep FIFOs, byte-enable / multi-port memories, elastic
-  ready/valid `Stream<T>`, or `Sender` / `Receiver` channel views.
+- No elastic ready/valid `Stream<T>`, and no dual-clock `mem` as a
+  user-visible type (only inside `async_fifo`).
+- Clocks have fixed integer periods: no derived or related clocks, clock
+  gating, or multi-domain `pipeline` / `multiplex` functions. The fault
+  latch (`--faults`) and `.pins` board tops are single-clock only.
 - No editor support (LSP / syntax highlighting) and no package / dependency
   layer yet.
 
@@ -86,7 +94,7 @@ fully static Linux binaries for `x86_64` and `aarch64`. They have no runtime
 dependencies, so they run on any distro, including Alpine.
 
 ```sh
-SINTER_VERSION=v0.4.0
+SINTER_VERSION=v0.5.0
 mkdir -p ~/.local/bin
 curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
     | tar -xz -C ~/.local/bin sinter
@@ -102,7 +110,7 @@ Each tarball has a matching `.sha256` file alongside it.
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
 
 # Reproducible builds: pin to a release tag (v0.1.1+) or a specific commit.
-cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --tag v0.4.0 --locked
+cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --tag v0.5.0 --locked
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --rev <sha> --locked
 
 # Updating a git-installed copy to a newer commit needs --force.
@@ -133,7 +141,7 @@ is pinned so builds are reproducible.
 
 ```dockerfile
 # --- Sinter HDL compiler ---------------------------------------------------
-ARG SINTER_VERSION=v0.4.0
+ARG SINTER_VERSION=v0.5.0
 RUN curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
         | tar -xz -C /usr/local/bin sinter \
     && sinter --version
@@ -148,7 +156,7 @@ GitHub SSH key.
 ```dockerfile
 # --- Sinter HDL compiler (build stage) -------------------------------------
 FROM rust:1-slim-bookworm AS sinter
-ARG SINTER_REF=v0.4.0
+ARG SINTER_REF=v0.5.0
 RUN cargo install --locked --root /opt/sinter \
         --git https://github.com/sinter-lang/sinter-lang.git --tag ${SINTER_REF} \
         sinter-lang
