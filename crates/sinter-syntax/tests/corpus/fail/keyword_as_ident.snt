@@ -1,9 +1,6 @@
 // Reserved words may not be used as identifiers. Here `let` is a keyword, so it
-// cannot name a port. (`in` / `out` / `reg` / `module` are contextual: they are
-// keywords only where the legacy `module` rules use them.)
+// cannot name a parameter.
 //~ ERROR syntax error
-module bad {
-    in let: u1;
-    out b: u1;
-    b = let;
+fn bad(let: u1) -> u1 {
+    let
 }

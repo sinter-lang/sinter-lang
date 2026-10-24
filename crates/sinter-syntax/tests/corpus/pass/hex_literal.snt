@@ -1,11 +1,11 @@
 // Hexadecimal (`0x`) and decimal integer literals. Both fold to the same
 // untyped `Literal` value in the AST; width is resolved later from context.
-module masks {
-    in a: u16;
-    out b: u16;
+struct Masks {
+    saved: u16 = 0xBEEF,
+}
 
-    reg saved: u16 = 0xBEEF;
-
-    saved <= a & 0x00FF;
-    b = saved + 16;
+impl Masks {
+    fn step(self, a: u16) -> (Masks, u16) {
+        (Masks { saved: a & 0x00FF }, (self.saved + 16) as u16 wrap)
+    }
 }

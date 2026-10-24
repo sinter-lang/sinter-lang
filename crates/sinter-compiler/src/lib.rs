@@ -1,7 +1,7 @@
 //! `sinter-compiler`: semantic checks and backends for the Sinter HDL.
 //!
-//! Pipeline: `sinter-syntax` parses `.snt` into an AST; [`check`] turns that
-//! into a typed [`ir::Design`]; the backends lower the IR to a Rust simulator
+//! Pipeline: `sinter-syntax` parses `.snt` into an AST; [`functional`] type-checks
+//! it and [`elaborate`] lowers it to a typed [`ir::Design`]; the backends lower the IR to a Rust simulator
 //! ([`sim`]), portable SystemVerilog ([`verilog`]), and a Verilator testbench
 //! harness ([`verilator`]). The shared [`eval`] semantics keep the simulator
 //! and the Verilog in bit-for-bit agreement (DESIGN §7.4).
@@ -12,7 +12,6 @@
 pub mod board;
 pub mod cdc_desugar;
 pub mod channel_desugar;
-pub mod check;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
@@ -38,11 +37,9 @@ pub use ir::{Design, Module};
 
 /// Parse and check Sinter source, returning the typed design.
 ///
-/// Both surfaces are lowered to the same IR: the legacy `module` surface via
-/// [`check`], and the functional surface (DESIGN §2.1) via
-/// [`functional::check_functional`] (type checking) then [`elaborate`]
-/// (lowering its `#[clock]` transition root to an [`ir::Module`]). A functional
-/// source with no transition root yields no module.
+/// The source is type-checked by [`functional::check_functional`], then
+/// [`elaborate`] lowers its `#[clock]` transition root to an [`ir::Module`]
+/// (DESIGN §2.1). A source with no transition root yields no module.
 ///
 /// # Errors
 /// Returns a [`CompileError`] on a parse or semantic error.
@@ -103,7 +100,7 @@ pub fn compile_project_faults(
 /// [`pipeline_desugar`], `multiplex fn`s (§3.2) via [`multiplex_desugar`]. A
 /// `multiplex` design additionally runs the IR-level multiply-CSE pass
 /// ([`ir_cse`]) so its shared multiply becomes one physical multiplier. A program
-/// with no staged color is passed through untouched (byte-identical legacy path).
+/// with no staged color is passed through untouched.
 fn compile_program(
     program: sinter_syntax::ast::Program,
     base: Option<&std::path::Path>,
@@ -160,7 +157,9 @@ fn compile_lowered(
         program
     };
     functional::check_functional(&program)?;
-    let mut design = check::check_program(&program)?;
+    let mut design = Design {
+        modules: Vec::new(),
+    };
     if let Some(mut module) = elaborate::elaborate(&program)? {
         // `#[verilog(src = "...")]` paths resolve against the source directory,
         // like `include_hex!` (DESIGN §6.15).

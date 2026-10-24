@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use crate::ast::{Item, ModItem, Module, Pos, Program, Visibility};
+use crate::ast::{Item, ModItem, Pos, Program, Visibility};
 use crate::parser::{parse_program_in, ParseError};
 
 /// An error from loading a multi-file project.
@@ -51,7 +51,7 @@ pub enum LoadError {
     },
 }
 
-/// A loaded module: its items, submodules, and (root only) any legacy modules.
+/// A loaded module: its items and submodules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleTree {
     /// The module name (the root takes its file stem).
@@ -60,9 +60,6 @@ pub struct ModuleTree {
     pub vis: Visibility,
     /// Non-`mod` functional items in this module (including `use` imports).
     pub items: Vec<Item>,
-    /// Legacy `module` declarations in this file. The functional module tree does
-    /// not nest these; they appear only where written (typically the root).
-    pub modules: Vec<Module>,
     /// Resolved submodules (inline `mod` bodies and loaded `mod foo;` files).
     pub children: Vec<ModuleTree>,
     /// The source file this module came from (inline modules share the parent's).
@@ -154,7 +151,7 @@ fn build_tree(
     pos: Pos,
     files: &mut Vec<SourceFile>,
 ) -> Result<ModuleTree, LoadError> {
-    let Program { modules, items } = program;
+    let Program { items } = program;
     let mut tree_items = Vec::new();
     let mut children: Vec<ModuleTree> = Vec::new();
     for item in items {
@@ -175,7 +172,6 @@ fn build_tree(
         name,
         vis,
         items: tree_items,
-        modules,
         children,
         source: source.to_string(),
         pos,
@@ -201,10 +197,7 @@ fn load_mod(
     match body {
         Some(items) => {
             // Inline module: no file of its own.
-            let program = Program {
-                modules: Vec::new(),
-                items,
-            };
+            let program = Program { items };
             build_tree(name, vis, program, decl_source, &child_dir, pos, files)
         }
         None => {

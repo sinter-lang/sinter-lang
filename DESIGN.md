@@ -105,14 +105,12 @@ either fields of the returned state or extra tuple elements (a combinational
 sub-step uses the §2.3 `(new_state, outputs)` form, e.g.
 `fn step(self, cmd) -> (Digit, u1)`). The **unique** `#[clock(domain = …)]`
 function is the design's synthesizable top, and is what the physical pin map
-(§7.6) resolves against. The Verilog-style `module { in/out/reg }` construct in
-the current grammar is the legacy MVP surface, slated to migrate onto this form.
+(§7.6) resolves against. (The Verilog-style `module { in/out/reg }` form of
+the first MVP was removed in v0.6; this is the only surface.)
 **Which state is an output (SETTLED, v0.3):** the `pub` fields of the clock-root
 state struct are the module's register outputs (`<field>_q` ports); private
 fields are internal registers. So `pub` means "visible outside" both across
 source modules (§10) and at the hardware boundary.
-Its keywords (`module`, `in`, `out`, `reg`) are **contextual**: reserved only
-inside the legacy rules, ordinary identifiers on the functional surface.
 
 ### 2.2 Two function colors at the base level
 
@@ -1281,8 +1279,7 @@ reads, lookups, guarded results). Settled surface:
 
 - **Syntax (Rust-style):** the type `Option<T>`; the constructors `Some(x)` and
   `None`; `match o { Some(v) => …, None => … }`; (O2) the `?` operator.
-  `Option` / `Some` / `None` are reserved keywords (program-wide, including the
-  otherwise-frozen legacy `module` surface, since both share one identifier rule).
+  `Option` / `Some` / `None` are reserved keywords.
 - **`T` is any concrete type** — scalar, fixed-point, `struct`, `enum`, tuple, or
   array. `Option<T>` **erases** to a 2-leaf aggregate `(is_some: u1, payload: T)`,
   reusing the existing SROA / flatten / mux machinery, so nothing in the IR,
@@ -1780,10 +1777,6 @@ impl Debounce {
 - **Pin maps unaffected (§7.6).** A `.pins` file still resolves against the
   single elaborated top; multi-file spreads the *sources* feeding that top, not
   the top itself. The dotted/indexed `set_io` paths are unchanged.
-- **Legacy `module` form excluded.** The frozen Verilog-like `module` surface
-  stays single-file; modules apply to the functional surface only. (This also
-  keeps the `mod` keyword clear of the legacy `module` keyword, which is being
-  retired.)
 - **Name resolution generalizes the F1 tables.** The existing symbol tables
   extend to module-qualified resolution; nothing in the type / width / cast
   machinery changes.
@@ -1802,8 +1795,8 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   `#[clock(domain = …)]` function is the synthesizable top (§2.1).
 - Surface syntax = state `struct` (nestable) with inline reset values
   (`field: T = expr`) + a `self`-taking transition method; combinational
-  sub-steps return a `(new_state, outputs)` tuple (§2.1, §2.3). The legacy
-  `module` form migrates onto this. Canonical artifact:
+  sub-steps return a `(new_state, outputs)` tuple (§2.1, §2.3). The MVP's
+  `module` form was removed in v0.6. Canonical artifact:
   `examples/go_board_counter.snt`.
 - Single-driver rule generalized to registers, write-ports, and instances.
 - Acyclic per-cycle combinational graph; feedback only through registers.

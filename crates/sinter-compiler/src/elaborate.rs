@@ -1,8 +1,7 @@
 //! Functional surface (DESIGN §2.1) — **F2/F3: elaboration to the IR**.
 //!
-//! Lowers a type-checked functional design to the same flat [`ir::Module`] the
-//! legacy `module` surface produces, so the simulator, Verilog backend, and
-//! conformance oracle are reused unchanged.
+//! Lowers a type-checked functional design to a flat [`ir::Module`], which the
+//! simulator, Verilog backend, and conformance oracle consume.
 //!
 //! The technique is **symbolic inlining + scalar replacement of aggregates
 //! (SROA)**. Every value is a `Val` tree whose leaves are scalar IR
@@ -43,7 +42,7 @@ use crate::ir;
 const MAX_INLINE_DEPTH: usize = 256;
 
 /// All IR scalar widths must fit `eval`'s `u64` (DESIGN §6.2). Mirrors
-/// `check::MAX_WIDTH` / `functional::MAX_WIDTH`.
+/// `functional::MAX_WIDTH`.
 const MAX_WIDTH: u32 = 64;
 
 /// A resolved functional type.

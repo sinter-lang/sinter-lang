@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
 use sinter_compiler::{compile_str, verilog};
 
-const COUNTER: &str = include_str!("../../../examples/counter.snt");
-const ACCUMULATOR: &str = include_str!("../../../examples/accumulator.snt");
+const COUNTER: &str = include_str!("../../../examples/fn_counter.snt");
+const ACCUMULATOR: &str = include_str!("../../../examples/fn_accumulator.snt");
 
 fn only_module(src: &str) -> sinter_compiler::Module {
     let design = compile_str(src).expect("should compile");
@@ -20,7 +20,7 @@ fn counter_counts_when_enabled() {
     for expected in 0u64..10 {
         let inputs = HashMap::from([("en".to_string(), 1u64)]);
         let out = sim.step(&inputs);
-        assert_eq!(out["count"], expected, "cycle {expected}");
+        assert_eq!(out["value_q"], expected, "cycle {expected}");
     }
 }
 
@@ -33,9 +33,9 @@ fn counter_holds_when_disabled() {
         sim.step(&HashMap::from([("en".to_string(), 1u64)]));
     }
     let held = sim.step(&HashMap::from([("en".to_string(), 0u64)]));
-    assert_eq!(held["count"], 3);
+    assert_eq!(held["value_q"], 3);
     let still = sim.step(&HashMap::from([("en".to_string(), 0u64)]));
-    assert_eq!(still["count"], 3);
+    assert_eq!(still["value_q"], 3);
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn counter_wraps_at_eight_bits() {
     let mut sim = Simulator::new(&m);
     let mut last = 0;
     for _ in 0..260 {
-        last = sim.step(&HashMap::from([("en".to_string(), 1u64)]))["count"];
+        last = sim.step(&HashMap::from([("en".to_string(), 1u64)]))["value_q"];
     }
     // 260 enabled cycles: the sampled value is (260 - 1) mod 256 = 3.
     assert_eq!(last, (260 - 1) % 256);
@@ -61,7 +61,7 @@ fn accumulator_adds_signed_input() {
         out = sim.step(&HashMap::from([
             ("valid".to_string(), 1u64),
             ("x".to_string(), neg_one),
-        ]))["sum"];
+        ]))["sum_q"];
     }
     // Sampled on the 4th cycle: acc has been decremented three times → -3.
     assert_eq!(out as u16 as i16, -3);
@@ -72,7 +72,7 @@ fn verilog_emission_is_well_formed() {
     let m = only_module(COUNTER);
     let sv = verilog::emit_module(&m);
     assert!(sv.starts_with("`default_nettype none"));
-    assert!(sv.contains("module counter ("));
+    assert!(sv.contains("module Counter ("));
     assert!(sv.contains("input  wire         clk,"));
     assert!(sv.contains("input  wire         rst_n,"));
     assert!(sv.contains("always_ff @(posedge clk or negedge rst_n)"));
@@ -99,73 +99,4 @@ fn reference_trace_has_expected_length() {
     let trace = run_reference(&m, &stim);
     // One u64 (8 bytes) per output per cycle; counter has a single output.
     assert_eq!(trace.len(), 32 * 8);
-}
-
-// --- Error paths -----------------------------------------------------------
-
-#[test]
-fn rejects_double_driven_register() {
-    let src = "module m { in a: u1; out o: u1; reg r: u1 = 0; r <= a; r <= a; o = r; }";
-    assert!(compile_str(src).is_err());
-}
-
-#[test]
-fn rejects_undriven_register() {
-    let src = "module m { in a: u1; out o: u1; reg r: u1 = 0; o = r; }";
-    let err = compile_str(src).unwrap_err().to_string();
-    assert!(err.contains("no next-state"), "got: {err}");
-}
-
-#[test]
-fn rejects_undriven_output() {
-    let src = "module m { in a: u1; out o: u1; }";
-    let err = compile_str(src).unwrap_err().to_string();
-    assert!(err.contains("never driven"), "got: {err}");
-}
-
-#[test]
-fn rejects_combinational_cycle() {
-    // Wires are declare-before-use, so a mutual reference (which would form a
-    // combinational cycle) is unrepresentable: `p` cannot name `q` yet.
-    let src = "module m { in a: u4; out o: u4; let p: u4 = q + a; let q: u4 = p + a; o = q; }";
-    let err = compile_str(src).unwrap_err().to_string();
-    assert!(err.contains("unknown name `q`"), "got: {err}");
-}
-
-#[test]
-fn rejects_self_referential_wire() {
-    let src = "module m { in a: u4; out o: u4; let p: u4 = p + a; o = p; }";
-    let err = compile_str(src).unwrap_err().to_string();
-    assert!(err.contains("unknown name `p`"), "got: {err}");
-}
-
-#[test]
-fn forward_wire_chain_evaluates_in_order() {
-    // Declare-before-use still allows ordinary chains.
-    let src = "module m { in a: u8; out o: u8; let p: u8 = a + 1; let q: u8 = p + 1; o = q; }";
-    let design = compile_str(src).expect("should compile");
-    let module = &design.modules[0];
-    let mut sim = Simulator::new(module);
-    let out = sim.step(&HashMap::from([("a".to_string(), 10u64)]));
-    assert_eq!(out["o"], 12);
-}
-
-#[test]
-fn rejects_narrowing_literal() {
-    let src = "module m { in a: u1; out o: u4; o = 99; }";
-    let err = compile_str(src).unwrap_err().to_string();
-    assert!(err.contains("does not fit"), "got: {err}");
-}
-
-#[test]
-fn rejects_type_mismatch() {
-    let src = "module m { in a: u8; in b: u4; out o: u8; o = a + b; }";
-    let err = compile_str(src).unwrap_err().to_string();
-    assert!(err.contains("type mismatch"), "got: {err}");
-}
-
-#[test]
-fn rejects_assigning_input() {
-    let src = "module m { in a: u8; out o: u8; a = o; o = a; }";
-    assert!(compile_str(src).is_err());
 }

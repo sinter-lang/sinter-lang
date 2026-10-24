@@ -1,0 +1,17 @@
+// A signed accumulator.
+//
+// When `valid` is high, the signed input `x` is added into `sum`; otherwise it
+// holds. The 17-bit sum wraps back to 16 bits through an explicit
+// `as i16 wrap` cast (DESIGN §6.3).
+struct Accumulator {
+    pub sum: i16 = 0,
+}
+
+impl Accumulator {
+    #[clock(domain = sys)]
+    fn tick(self, valid: u1, x: i16) -> Accumulator {
+        Accumulator {
+            sum: if valid == 1 { (self.sum + x) as i16 wrap } else { self.sum },
+        }
+    }
+}

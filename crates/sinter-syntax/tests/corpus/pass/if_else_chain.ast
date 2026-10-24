@@ -1,79 +1,112 @@
 Program {
-    modules: [
-        Module {
-            name: "priority",
-            clock_domain: "sys",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "a",
-                    ty: Uint(
-                        1,
-                    ),
-                    pos: Pos {
-                        line: 4,
-                        col: 5,
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "priority",
+                params: [
+                    Typed {
+                        name: "a",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 13,
+                        },
                     },
-                },
-                Port {
-                    dir: In,
-                    name: "b",
-                    ty: Uint(
-                        1,
-                    ),
-                    pos: Pos {
-                        line: 5,
-                        col: 5,
+                    Typed {
+                        name: "b",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 20,
+                        },
                     },
-                },
-                Port {
-                    dir: Out,
-                    name: "sel",
-                    ty: Uint(
+                ],
+                ret: Scalar(
+                    Uint(
                         8,
                     ),
-                    pos: Pos {
-                        line: 6,
-                        col: 5,
-                    },
-                },
-            ],
-            regs: [],
-            lets: [],
-            assigns: [
-                Assign {
-                    target: "sel",
-                    kind: Drive,
-                    value: If {
-                        cond: Ident(
-                            "a",
-                        ),
-                        then: Literal(
-                            1,
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: If {
+                        cond: Binary {
+                            op: Eq,
+                            lhs: Ident(
+                                "a",
+                            ),
+                            rhs: Literal(
+                                1,
+                            ),
+                        },
+                        then: Block(
+                            Block {
+                                stmts: [],
+                                tail: Literal(
+                                    1,
+                                ),
+                                pos: Pos {
+                                    line: 4,
+                                    col: 15,
+                                },
+                            },
                         ),
                         els: If {
-                            cond: Ident(
-                                "b",
+                            cond: Binary {
+                                op: Eq,
+                                lhs: Ident(
+                                    "b",
+                                ),
+                                rhs: Literal(
+                                    1,
+                                ),
+                            },
+                            then: Block(
+                                Block {
+                                    stmts: [],
+                                    tail: Literal(
+                                        2,
+                                    ),
+                                    pos: Pos {
+                                        line: 4,
+                                        col: 36,
+                                    },
+                                },
                             ),
-                            then: Literal(
-                                2,
-                            ),
-                            els: Literal(
-                                0,
+                            els: Block(
+                                Block {
+                                    stmts: [],
+                                    tail: Literal(
+                                        0,
+                                    ),
+                                    pos: Pos {
+                                        line: 4,
+                                        col: 47,
+                                    },
+                                },
                             ),
                         },
                     },
                     pos: Pos {
-                        line: 8,
-                        col: 5,
+                        line: 3,
+                        col: 33,
                     },
                 },
-            ],
-            pos: Pos {
-                line: 3,
-                col: 1,
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
             },
-        },
+        ),
     ],
-    items: [],
 }

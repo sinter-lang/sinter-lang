@@ -2,13 +2,7 @@
 // pins down the associativity and nesting the grammar produces:
 //   `|` < `^` < `&` < `==`/`!=` < `<`/`>`/`<=`/`>=` < `+`/`-`.
 // The expected tree groups arithmetic tightest and `|` loosest.
-module precedence {
-    in a: u8;
-    in b: u8;
-    in c: u8;
-    out r: u1;
-
-    let mixed = a + b == c & a | b ^ c;
-
-    r = mixed;
+fn precedence(a: u8, b: u8, c: u9, d: u1, e: u1, f: u1) -> u1 {
+    let mixed = a + b == c & d | e ^ f;
+    mixed
 }

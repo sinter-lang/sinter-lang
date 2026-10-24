@@ -1,14 +1,5 @@
 // The three unary operators: logical not (`!`), bitwise complement (`~`), and
 // arithmetic negation (`-`). Stacked prefixes apply right-to-left.
-module unaries {
-    in flag: u1;
-    in word: u8;
-    in val: i8;
-    out a: u1;
-    out b: u8;
-    out c: i8;
-
-    a = !flag;
-    b = ~word;
-    c = - -val;
+fn unaries(flag: u1, word: u8, val: i8) -> (u1, u8, i8) {
+    (!flag, ~word, - -val)
 }

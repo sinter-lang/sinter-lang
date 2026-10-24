@@ -32,9 +32,8 @@ fn loads_rust_2018_module_tree() {
     let names: Vec<&str> = root.children.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["alpha", "beta", "inline"]);
 
-    // The root keeps its non-`mod` items (the `Top` struct) and no legacy modules.
+    // The root keeps its non-`mod` items (the `Top` struct).
     assert_eq!(root.items.len(), 1, "root should keep the Top struct");
-    assert!(root.modules.is_empty());
 
     // `alpha`'s child `gamma` is loaded from the `alpha/` subdirectory.
     let alpha = child(&root, "alpha");

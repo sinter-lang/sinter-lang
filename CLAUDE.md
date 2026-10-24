@@ -62,8 +62,7 @@ backends. The stages, in order:
 3. **staged-color desugars** — `pipeline_desugar` then `multiplex_desugar` rewrite
    `pipeline fn` / `multiplex fn` into a synthesized instance `struct` + `advance`
    method, so the rest of the pipeline treats them as ordinary functional items.
-4. **type checking** — `functional::check_functional` (functional surface) +
-   `check::check_program` (legacy `module` + single-driver / acyclicity).
+4. **type checking** — `functional::check_functional`.
 5. **`elaborate`** — lower the `#[clock]` transition root to an `ir::Module` by
    symbolic inlining + SROA (scalar-replacement of aggregates). Memories/ROMs are
    held opaque (`ir::Mem`, never SROA-flattened). Each non-trivial `let` / call
@@ -142,11 +141,11 @@ devcontainer / CI where `oss-cad-suite` provides Yosys and Verilator.
 
 ## Implementation status
 
-Both source surfaces lower to one IR (`ir::Design` / `Module`) and pass the §7.4
-oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named ones
-(`counter`, `accumulator`) are the legacy `module` form.
+Every example lowers to one IR (`ir::Design` / `Module`) and passes the §7.4
+oracle. (The original `module { in / out / reg }` surface was removed in v0.6;
+the functional surface is the only one.)
 
-- **Functional surface** (DESIGN §2.1 — the primary, actively-developed surface):
+- **Functional surface** (DESIGN §2.1):
   `struct` state + `impl` transition methods + a `#[clock]` root, with `enum` /
   `match`, tuples, arrays, `uN` / `iN` and fixed-point types, and mode-named
   width-fixing casts (`as T wrap` / `sat` / `round`). Type-checked in
@@ -237,10 +236,6 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   domain `w`'s tick, read by its `#[domain]` tick). These attributes are
   compiler-only. Shipped: `sync`, `pulse` (CLK2), `mailbox` (CLK3), and
   `async_fifo` (CLK4).
-- **Legacy `module` surface** — the original minimal synchronous core (clocked
-  `uN` / `iN` registers, combinational next-state, single-driver + acyclicity).
-  **Frozen**: keep its goldens and the oracle bit-for-bit stable; put new work on
-  the functional surface. Both surfaces share the AST's `Expr`.
 
 Designed in `DESIGN.md` but **not yet implemented** (keep new work faithful to it):
 the fault **FLT2** tier (§6.12 / §9.9) — per-file fault enable (a

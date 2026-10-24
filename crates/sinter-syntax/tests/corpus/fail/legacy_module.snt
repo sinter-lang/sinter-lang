@@ -1,0 +1,10 @@
+// The legacy `module { in / out / reg }` form was removed in v0.6; write a
+// state struct with a `#[clock]` transition method instead.
+//~ ERROR syntax error
+module counter {
+    in en: u1;
+    out count: u8;
+    reg value: u8 = 0;
+    value <= if en { value + 1 } else { value };
+    count = value;
+}

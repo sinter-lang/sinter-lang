@@ -9,10 +9,10 @@ use pest::iterators::Pair;
 use pest::Parser as _;
 
 use crate::ast::{
-    Assign, AssignKind, Attr, AttrArg, AttrValue, BinOp, Block, CastMode, CdcKind, ChannelKind,
-    ConstItem, Dir, EnumItem, EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item,
-    LetBinding, MatchArm, ModItem, Module, Param, PathQualifier, Pattern, Port, Pos, Program, Reg,
-    Stmt, StructField, StructItem, Type, TypeRef, UnaryOp, UseItem, UsePath, Visibility,
+    Attr, AttrArg, AttrValue, BinOp, Block, CastMode, CdcKind, ChannelKind, ConstItem, EnumItem,
+    EnumVariant, Expr, FieldInit, FnColor, Func, ImplItem, Item, MatchArm, ModItem, Param,
+    PathQualifier, Pattern, Pos, Program, Stmt, StructField, StructItem, Type, TypeRef, UnaryOp,
+    UseItem, UsePath, Visibility,
 };
 
 /// The `pest`-generated parser and `Rule` enum. Isolated in a submodule so the
@@ -82,17 +82,15 @@ fn parse_unit(source: &str) -> Result<Program, ParseError> {
         .next()
         .ok_or_else(|| ParseError::Syntax("empty input".into()))?;
 
-    let mut modules = Vec::new();
     let mut items = Vec::new();
     for pair in program.into_inner() {
         match pair.as_rule() {
-            Rule::module => modules.push(parse_module(pair)?),
             Rule::item => items.push(parse_item(pair)?),
             Rule::EOI => {}
             other => return Err(unexpected(other, "program")),
         }
     }
-    Ok(Program { modules, items })
+    Ok(Program { items })
 }
 
 fn pos_of(pair: &Pair<Rule>) -> Pos {
@@ -108,154 +106,12 @@ fn unexpected(rule: Rule, ctx: &str) -> ParseError {
     ParseError::Syntax(format!("unexpected {rule:?} while parsing {ctx}"))
 }
 
-fn parse_module(pair: Pair<Rule>) -> Result<Module, ParseError> {
-    let pos = pos_of(&pair);
-    let mut clock_domain = "sys".to_string();
-    let mut name = String::new();
-    let mut ports = Vec::new();
-    let mut regs = Vec::new();
-    let mut lets = Vec::new();
-    let mut assigns = Vec::new();
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::clock_attr => {
-                // `#[clock(domain = NAME)]` — the single inner ident is NAME.
-                let dom = inner
-                    .into_inner()
-                    .next()
-                    .ok_or_else(|| ParseError::Syntax("malformed clock attribute".into()))?;
-                clock_domain = dom.as_str().to_string();
-            }
-            Rule::kw_module => {}
-            Rule::ident => name = inner.as_str().to_string(),
-            Rule::port_decl => ports.push(parse_port(inner)?),
-            Rule::reg_decl => regs.push(parse_reg(inner)?),
-            Rule::let_decl => lets.push(parse_let(inner)?),
-            Rule::assign_stmt => assigns.push(parse_assign(inner)?),
-            other => return Err(unexpected(other, "module body")),
-        }
-    }
-
-    Ok(Module {
-        name,
-        clock_domain,
-        ports,
-        regs,
-        lets,
-        assigns,
-        pos,
-    })
-}
-
-fn parse_port(pair: Pair<Rule>) -> Result<Port, ParseError> {
-    let pos = pos_of(&pair);
-    let mut inner = pair.into_inner();
-    let dir = match inner.next().map(|p| p.as_str()) {
-        Some("in") => Dir::In,
-        Some("out") => Dir::Out,
-        _ => return Err(ParseError::Syntax("malformed port direction".into())),
-    };
-    let name = next_ident(&mut inner, "port name")?;
-    let ty = parse_type(&next_pair(&mut inner, "port type")?)?;
-    Ok(Port { dir, name, ty, pos })
-}
-
-fn parse_reg(pair: Pair<Rule>) -> Result<Reg, ParseError> {
-    let pos = pos_of(&pair);
-    let mut inner = pair.into_inner();
-    // Skip the leading `reg` keyword token.
-    next_pair(&mut inner, "`reg` keyword")?;
-    let name = next_ident(&mut inner, "register name")?;
-    let ty = parse_type(&next_pair(&mut inner, "register type")?)?;
-    let init = parse_expr(next_pair(&mut inner, "register init")?)?;
-    Ok(Reg {
-        name,
-        ty,
-        init,
-        pos,
-    })
-}
-
-fn parse_let(pair: Pair<Rule>) -> Result<LetBinding, ParseError> {
-    let pos = pos_of(&pair);
-    let mut inner = pair.into_inner();
-    let name = next_ident(&mut inner, "let name")?;
-    // An optional type annotation precedes the value expression.
-    let next = next_pair(&mut inner, "let value")?;
-    let (ty, value_pair) = if next.as_rule() == Rule::ty {
-        (
-            Some(parse_type(&next)?),
-            next_pair(&mut inner, "let value")?,
-        )
-    } else {
-        (None, next)
-    };
-    let value = parse_expr(value_pair)?;
-    Ok(LetBinding {
-        name,
-        ty,
-        value,
-        pos,
-    })
-}
-
-fn parse_assign(pair: Pair<Rule>) -> Result<Assign, ParseError> {
-    let pos = pos_of(&pair);
-    let mut inner = pair.into_inner();
-    let target = next_ident(&mut inner, "assignment target")?;
-    let kind = match next_pair(&mut inner, "assignment operator")?.as_str() {
-        "<=" => AssignKind::NextState,
-        "=" => AssignKind::Drive,
-        other => {
-            return Err(ParseError::Syntax(format!(
-                "unknown assignment operator `{other}`"
-            )))
-        }
-    };
-    let value = parse_expr(next_pair(&mut inner, "assignment value")?)?;
-    Ok(Assign {
-        target,
-        kind,
-        value,
-        pos,
-    })
-}
-
-fn parse_type(pair: &Pair<Rule>) -> Result<Type, ParseError> {
-    let text = pair.as_str();
-    let (line, _) = pair.line_col();
-    let (kind, digits) = text.split_at(1);
-    let width: u32 = digits
-        .parse()
-        .map_err(|_| ParseError::InvalidType(text.to_string(), line))?;
-    if width == 0 {
-        return Err(ParseError::InvalidType(text.to_string(), line));
-    }
-    match kind {
-        "u" => Ok(Type::Uint(width)),
-        "i" => Ok(Type::Int(width)),
-        _ => Err(ParseError::InvalidType(text.to_string(), line)),
-    }
-}
-
 // --- Expressions -----------------------------------------------------------
 
 fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     match pair.as_rule() {
-        Rule::expr => parse_expr(first_inner(pair, "expr")?),
-        Rule::or_expr
-        | Rule::xor_expr
-        | Rule::and_expr
-        | Rule::eq_expr
-        | Rule::rel_expr
-        | Rule::add_expr => fold_binary(pair),
-        Rule::unary => parse_unary(pair),
-        Rule::primary => parse_primary(pair),
-        Rule::if_expr => parse_if(pair),
         Rule::literal => parse_literal(&pair),
         Rule::ident => Ok(Expr::Ident(pair.as_str().to_string())),
-        // Functional surface (the legacy chain is left exactly as above).
         Rule::f_expr => parse_expr(first_inner(pair, "f_expr")?),
         Rule::f_concat
         | Rule::f_or
@@ -267,7 +123,6 @@ fn parse_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         | Rule::f_add
         | Rule::f_mul => fold_binary(pair),
         Rule::f_cast => parse_fcast(pair),
-        // `f_unary` has the same `unary_op* ~ operand` shape as the legacy unary.
         Rule::f_unary => parse_unary(pair),
         Rule::f_postfix => parse_fpostfix(pair),
         Rule::f_primary => parse_expr(first_inner(pair, "f_primary")?),
@@ -334,31 +189,6 @@ fn parse_unary(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         };
     }
     Ok(expr)
-}
-
-fn parse_primary(pair: Pair<Rule>) -> Result<Expr, ParseError> {
-    parse_expr(first_inner(pair, "primary")?)
-}
-
-fn parse_if(pair: Pair<Rule>) -> Result<Expr, ParseError> {
-    let mut inner = pair.into_inner();
-    let cond = parse_expr(next_pair(&mut inner, "if condition")?)?;
-    let then = parse_block(next_pair(&mut inner, "if then-branch")?)?;
-    let els_pair = next_pair(&mut inner, "if else-branch")?;
-    let els = match els_pair.as_rule() {
-        Rule::if_expr => parse_if(els_pair)?,
-        Rule::block_expr => parse_block(els_pair)?,
-        other => return Err(unexpected(other, "if else-branch")),
-    };
-    Ok(Expr::If {
-        cond: Box::new(cond),
-        then: Box::new(then),
-        els: Box::new(els),
-    })
-}
-
-fn parse_block(pair: Pair<Rule>) -> Result<Expr, ParseError> {
-    parse_expr(first_inner(pair, "block")?)
 }
 
 /// A literal expression. A width-suffixed literal (`63_u7`, `0x80_i8`) asserts

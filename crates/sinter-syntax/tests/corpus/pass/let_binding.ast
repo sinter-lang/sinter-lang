@@ -1,102 +1,110 @@
 Program {
-    modules: [
-        Module {
-            name: "adder",
-            clock_domain: "sys",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "a",
-                    ty: Uint(
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "adder",
+                params: [
+                    Typed {
+                        name: "a",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 10,
+                        },
+                    },
+                    Typed {
+                        name: "b",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 17,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
                         8,
                     ),
-                    pos: Pos {
-                        line: 4,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: In,
-                    name: "b",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 5,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: Out,
-                    name: "sum",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 6,
-                        col: 5,
-                    },
-                },
-            ],
-            regs: [],
-            lets: [
-                LetBinding {
-                    name: "widened",
-                    ty: Some(
-                        Uint(
-                            8,
+                ),
+                body: Block {
+                    stmts: [
+                        Let {
+                            pattern: Binding(
+                                "widened",
+                            ),
+                            ty: Some(
+                                Scalar(
+                                    Uint(
+                                        9,
+                                    ),
+                                ),
+                            ),
+                            value: Binary {
+                                op: Add,
+                                lhs: Ident(
+                                    "a",
+                                ),
+                                rhs: Ident(
+                                    "b",
+                                ),
+                            },
+                            pos: Pos {
+                                line: 4,
+                                col: 5,
+                            },
+                        },
+                        Let {
+                            pattern: Binding(
+                                "doubled",
+                            ),
+                            ty: None,
+                            value: Binary {
+                                op: Add,
+                                lhs: Ident(
+                                    "widened",
+                                ),
+                                rhs: Ident(
+                                    "widened",
+                                ),
+                            },
+                            pos: Pos {
+                                line: 5,
+                                col: 5,
+                            },
+                        },
+                    ],
+                    tail: Cast {
+                        expr: Ident(
+                            "doubled",
                         ),
-                    ),
-                    value: Binary {
-                        op: Add,
-                        lhs: Ident(
-                            "a",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
                         ),
-                        rhs: Ident(
-                            "b",
-                        ),
+                        mode: Wrap,
                     },
                     pos: Pos {
-                        line: 8,
-                        col: 5,
+                        line: 3,
+                        col: 30,
                     },
                 },
-                LetBinding {
-                    name: "doubled",
-                    ty: None,
-                    value: Binary {
-                        op: Add,
-                        lhs: Ident(
-                            "widened",
-                        ),
-                        rhs: Ident(
-                            "widened",
-                        ),
-                    },
-                    pos: Pos {
-                        line: 9,
-                        col: 5,
-                    },
+                pos: Pos {
+                    line: 3,
+                    col: 1,
                 },
-            ],
-            assigns: [
-                Assign {
-                    target: "sum",
-                    kind: Drive,
-                    value: Ident(
-                        "doubled",
-                    ),
-                    pos: Pos {
-                        line: 11,
-                        col: 5,
-                    },
-                },
-            ],
-            pos: Pos {
-                line: 3,
-                col: 1,
             },
-        },
+        ),
     ],
-    items: [],
 }

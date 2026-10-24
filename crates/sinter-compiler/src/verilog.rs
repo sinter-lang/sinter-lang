@@ -10,8 +10,7 @@
 //! are sign/zero-extended to the result width with `w'($signed(e))` / `w'(e)`,
 //! casts resize the same way, shifts use concatenation / arithmetic `>>>` — so
 //! Verilog's context-determined sizing can never silently change a width away
-//! from `eval`. (On the legacy same-width `module` path no extension is added,
-//! so its emission is unchanged.)
+//! from `eval`. (A same-width operand gets no extension.)
 
 use std::fmt::Write as _;
 
@@ -571,7 +570,7 @@ fn expr(e: &Expr) -> String {
 }
 
 /// Extend operand `e` to `w` bits: sign-extend a signed operand, zero-extend an
-/// unsigned one. A no-op when `e` is already `w` bits wide (the legacy path).
+/// unsigned one. A no-op when `e` is already `w` bits wide.
 fn ext(e: &Expr, w: u32) -> String {
     if e.ty.width() == w {
         expr(e)

@@ -67,9 +67,6 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 To use the emitted SystemVerilog from your own Verilog (port names, reset,
 timing), see [`docs/generated-verilog.md`](docs/generated-verilog.md).
 
-The legacy `module { reg …; }` surface (`counter.snt`, `accumulator.snt`) is
-frozen; new designs should use the functional surface.
-
 ## Workspace layout
 
 | Crate | Role |
@@ -179,13 +176,13 @@ Working inside this repository (devcontainer or any machine with Rust +
 
 ```sh
 # Parse and type-check a source file.
-cargo run -p sinter-lang -- check examples/counter.snt
+cargo run -p sinter-lang -- check examples/fn_counter.snt
 
 # Emit SystemVerilog + a Verilator C++ harness into ./build.
-cargo run -p sinter-lang -- build examples/counter.snt
+cargo run -p sinter-lang -- build examples/fn_counter.snt
 
 # Run the cycle-accurate reference simulator over a deterministic stimulus.
-cargo run -p sinter-lang -- sim examples/counter.snt --cycles 16
+cargo run -p sinter-lang -- sim examples/fn_counter.snt --cycles 16
 
 # ... or over directed CSV vectors, checking expected outputs, and dump a
 # VCD waveform (open it in GTKWave or Surfer).

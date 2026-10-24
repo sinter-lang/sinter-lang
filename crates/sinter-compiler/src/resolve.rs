@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 
 use sinter_syntax::ast::{
-    Block, Expr, Func, ImplItem, Item, ModItem, Module, PathQualifier, Pattern, Pos, Program, Stmt,
+    Block, Expr, Func, ImplItem, Item, ModItem, PathQualifier, Pattern, Pos, Program, Stmt,
     TypeRef, UseItem, UsePath, Visibility,
 };
 use sinter_syntax::ModuleTree;
@@ -56,8 +56,6 @@ struct ModInfo {
     locals: HashMap<String, LocalItem>,
     /// Definition items (`const`/`struct`/`enum`/`impl`/`fn`), cloned for rewrite.
     defs: Vec<Item>,
-    /// Legacy `module` declarations carried through verbatim.
-    legacy: Vec<Module>,
     /// Raw `use` declarations, resolved in a later pass.
     use_decls: Vec<UseItem>,
     /// Imported name → canonical, filled by [`Resolver::resolve_uses`].
@@ -165,21 +163,6 @@ impl Resolver {
             }
         }
 
-        // The legacy `module` form is single-file only (DESIGN §10); a submodule
-        // file holding one would flatten to a duplicate top-level Verilog module.
-        if !path.is_empty() {
-            if let Some(m) = tree.modules.first() {
-                return Err(CompileError::semantic(
-                    &tree.source,
-                    m.pos,
-                    format!(
-                        "legacy `module {}` is not allowed in a submodule (functional surface only)",
-                        m.name
-                    ),
-                ));
-            }
-        }
-
         // A submodule and an item cannot share a name in one parent, or the path
         // `parent::name` would be ambiguous (and `walk_modules` would shadow the
         // item with the module).
@@ -202,7 +185,6 @@ impl Resolver {
                 children,
                 locals,
                 defs,
-                legacy: tree.modules.clone(),
                 use_decls,
                 uses: HashMap::new(),
                 source: tree.source.clone(),
@@ -399,17 +381,15 @@ impl Resolver {
 
     fn flatten(&self) -> Result<Program, CompileError> {
         let mut items = Vec::new();
-        let mut modules = Vec::new();
         for path in &self.order {
             let info = &self.mods[path];
-            modules.extend(info.legacy.iter().cloned());
             for def in &info.defs {
                 let mut d = def.clone();
                 self.rewrite_item(&mut d, path, &info.source)?;
                 items.push(d);
             }
         }
-        Ok(Program { modules, items })
+        Ok(Program { items })
     }
 
     fn rewrite_item(&self, item: &mut Item, cur: &[String], src: &str) -> Result<(), CompileError> {

@@ -99,7 +99,7 @@ Release: tag `v0.5.0` on the "release: v0.5.0" commit.
       now, §4.4); the compiler keeps its pest parser and editors get a
       tree-sitter grammar (§7.1). §3.5 is deferred past 1.0 and changes no
       1.0 syntax.
-- [ ] Remove the legacy `module` surface.
+- [x] Remove the legacy `module` surface.
 - [ ] **Diagnostics: expression positions**: carets point at the offending
       expression rather than the enclosing statement or block (expressions
       carry no `Pos` today). Moved up from v0.9 with the §7.1 decision.

@@ -7,6 +7,14 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 
 ## [Unreleased]
 
+### Removed
+
+- **The legacy `module { in …; out …; reg …; }` surface.** Write a state
+  struct with a `#[clock]` transition method instead (DESIGN §2.1); a
+  `module` declaration is now a syntax error. `examples/counter.snt` is
+  gone (`fn_counter.snt` is the same design), and `accumulator.snt` became
+  `fn_accumulator.snt`.
+
 ### Changed
 
 - `gen` is a reserved word, for generator functions (`gen fn`, DESIGN §4.4),

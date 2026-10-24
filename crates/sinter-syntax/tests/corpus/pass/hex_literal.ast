@@ -1,89 +1,137 @@
 Program {
-    modules: [
-        Module {
-            name: "masks",
-            clock_domain: "sys",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "a",
-                    ty: Uint(
-                        16,
-                    ),
-                    pos: Pos {
-                        line: 4,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: Out,
-                    name: "b",
-                    ty: Uint(
-                        16,
-                    ),
-                    pos: Pos {
-                        line: 5,
-                        col: 5,
-                    },
-                },
-            ],
-            regs: [
-                Reg {
-                    name: "saved",
-                    ty: Uint(
-                        16,
-                    ),
-                    init: Literal(
-                        48879,
-                    ),
-                    pos: Pos {
-                        line: 7,
-                        col: 5,
-                    },
-                },
-            ],
-            lets: [],
-            assigns: [
-                Assign {
-                    target: "saved",
-                    kind: NextState,
-                    value: Binary {
-                        op: And,
-                        lhs: Ident(
-                            "a",
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "Masks",
+                fields: [
+                    StructField {
+                        attrs: [],
+                        vis: Private,
+                        name: "saved",
+                        ty: Scalar(
+                            Uint(
+                                16,
+                            ),
                         ),
-                        rhs: Literal(
-                            255,
+                        default: Some(
+                            Literal(
+                                48879,
+                            ),
                         ),
+                        pos: Pos {
+                            line: 4,
+                            col: 5,
+                        },
                     },
-                    pos: Pos {
-                        line: 9,
-                        col: 5,
-                    },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
                 },
-                Assign {
-                    target: "b",
-                    kind: Drive,
-                    value: Binary {
-                        op: Add,
-                        lhs: Ident(
-                            "saved",
-                        ),
-                        rhs: Literal(
-                            16,
-                        ),
-                    },
-                    pos: Pos {
-                        line: 10,
-                        col: 5,
-                    },
-                },
-            ],
-            pos: Pos {
-                line: 3,
-                col: 1,
             },
-        },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Masks",
+                methods: [
+                    Func {
+                        attrs: [],
+                        vis: Private,
+                        color: Comb,
+                        name: "step",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 8,
+                                    col: 13,
+                                },
+                            },
+                            Typed {
+                                name: "a",
+                                ty: Scalar(
+                                    Uint(
+                                        16,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 8,
+                                    col: 19,
+                                },
+                            },
+                        ],
+                        ret: Tuple(
+                            [
+                                Named(
+                                    "Masks",
+                                ),
+                                Scalar(
+                                    Uint(
+                                        16,
+                                    ),
+                                ),
+                            ],
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: Tuple(
+                                [
+                                    StructLit {
+                                        name: "Masks",
+                                        fields: [
+                                            FieldInit {
+                                                name: "saved",
+                                                value: Binary {
+                                                    op: And,
+                                                    lhs: Ident(
+                                                        "a",
+                                                    ),
+                                                    rhs: Literal(
+                                                        255,
+                                                    ),
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    Cast {
+                                        expr: Binary {
+                                            op: Add,
+                                            lhs: Field {
+                                                base: Ident(
+                                                    "self",
+                                                ),
+                                                field: "saved",
+                                            },
+                                            rhs: Literal(
+                                                16,
+                                            ),
+                                        },
+                                        ty: Scalar(
+                                            Uint(
+                                                16,
+                                            ),
+                                        ),
+                                        mode: Wrap,
+                                    },
+                                ],
+                            ),
+                            pos: Pos {
+                                line: 8,
+                                col: 43,
+                            },
+                        },
+                        pos: Pos {
+                            line: 8,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 7,
+                    col: 1,
+                },
+            },
+        ),
     ],
-    items: [],
 }

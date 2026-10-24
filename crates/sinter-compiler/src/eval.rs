@@ -36,7 +36,7 @@ pub fn apply_binary(op: BinOp, l: u64, lty: Type, r: u64, rty: Type, result_ty: 
     match op {
         // Operands are extended to the (possibly wider) result type before the
         // op, so width-inferred `+`/`-` (DESIGN §6.2) is exact for signed
-        // operands too. A no-op on the legacy same-width path.
+        // operands too. A no-op when the widths already match.
         BinOp::Add => mask(ext(l, lty, w).wrapping_add(ext(r, rty, w)), w),
         BinOp::Sub => mask(ext(l, lty, w).wrapping_sub(ext(r, rty, w)), w),
         // Operands are extended to the (wider) product type, so signed and
@@ -152,7 +152,7 @@ pub fn apply_shr(v: u64, from: Type, to_w: u32, amount: u32) -> u64 {
 
 /// Extend a masked operand `v` of type `from` to a `to_w`-bit value, sign-
 /// extending signed operands and zero-extending unsigned ones. A no-op when the
-/// operand is already at least `to_w` bits wide (the legacy same-width path).
+/// operand is already at least `to_w` bits wide.
 fn ext(v: u64, from: Type, to_w: u32) -> u64 {
     let fw = from.width();
     if from.is_signed() && fw > 0 && fw < to_w && (v >> (fw - 1)) & 1 == 1 {

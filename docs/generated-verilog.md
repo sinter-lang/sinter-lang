@@ -164,9 +164,3 @@ don't appear in the emitted Verilog, and they get no `_q` ports.
 `sinter build` copies each binding's `src = "..."` file into the output
 directory beside the emitted module. Add both to your synthesis and simulation
 file lists.
-
-## The legacy `module` surface
-
-Designs written with the frozen `module { in …; out …; reg …; }` surface keep
-their declared port names exactly, after `clk` and `rst_n`. None of the
-flattening rules above apply to them.

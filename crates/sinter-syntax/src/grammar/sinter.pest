@@ -1,88 +1,31 @@
 // Sinter concrete grammar (.snt).
 //
-// This file is the normative PEG for the current language subset. Per DESIGN
-// §7.1 the formal grammar is the spec/conformance oracle; this PEG also happens
-// to be the literal parser for the MVP. Keep it the single source of truth for
-// surface syntax and grow it alongside DESIGN.md.
+// This file is the normative PEG for the language and also the compiler's
+// parser (DESIGN §7.1). Keep it the single source of truth for surface syntax
+// and grow it alongside DESIGN.md.
 //
-// Two surfaces coexist here:
-//   * the legacy `module { in/out/reg }` core (DESIGN calls it the legacy MVP
-//     surface, slated to migrate) — every rule below the "LEGACY" banner is
-//     frozen so the existing compiler/oracle path stays bit-for-bit identical;
-//   * the functional surface (DESIGN §2.1): `struct` state + `impl` transition
-//     methods + a `#[clock]` root — every `f_*` / `*_item` rule below the
-//     "FUNCTIONAL" banner. This surface currently parses only; semantic checks
-//     and lowering are a later milestone. See `examples/go_board_counter.snt`.
+// The language is the functional surface (DESIGN §2.1): `struct` state + `impl`
+// transition methods + a `#[clock]` root, plus free `fn`s, `enum`s, `const`s,
+// and `mod` / `use`. See `examples/go_board_counter.snt`.
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ ("//" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
 
-// A compilation unit is any mix of legacy modules and functional items.
-program = { SOI ~ (module | item)* ~ EOI }
+// A compilation unit is a sequence of items.
+program = { SOI ~ item* ~ EOI }
 
-// ===========================================================================
-// LEGACY surface — frozen. Do not change the parse of any pre-existing module.
-// ===========================================================================
-
-// A module optionally declares the clock domain it belongs to. Default: `sys`.
-clock_attr = { "#[" ~ "clock" ~ "(" ~ "domain" ~ "=" ~ ident ~ ")" ~ "]" }
-module     = { clock_attr? ~ kw_module ~ ident ~ "{" ~ body_item* ~ "}" }
-
-// The legacy surface's own keywords. They are contextual: reserved only where
-// these rules use them, and ordinary identifiers everywhere else (so a
-// functional-surface field may be called `out`).
-kw_module = @{ "module" ~ !(ASCII_ALPHANUMERIC | "_") }
-kw_in     = @{ "in" ~ !(ASCII_ALPHANUMERIC | "_") }
-kw_out    = @{ "out" ~ !(ASCII_ALPHANUMERIC | "_") }
-kw_reg    = @{ "reg" ~ !(ASCII_ALPHANUMERIC | "_") }
-
-body_item = _{ port_decl | reg_decl | let_decl | assign_stmt }
-
-// Interface ports. `in` feeds the cycle; `out` is driven combinationally.
-port_decl = { dir ~ ident ~ ":" ~ ty ~ ";" }
-dir       = { kw_in | kw_out }
-
-// A register: persistent state with a declared width and a reset value.
-reg_decl = { kw_reg ~ ident ~ ":" ~ ty ~ "=" ~ expr ~ ";" }
-
-// A combinational wire (single-assignment by construction).
-let_decl = { "let" ~ ident ~ (":" ~ ty)? ~ "=" ~ expr ~ ";" }
-
-// Assignments: `<=` schedules a register's next-state; `=` drives an output.
-assign_stmt = { ident ~ assign_op ~ expr ~ ";" }
-assign_op   = { "<=" | "=" }
-
-// Types: arbitrary-width unsigned (`uN`) and signed (`iN`).
-ty = @{ ("u" | "i") ~ ASCII_DIGIT+ }
-
-// Expression grammar, lowest precedence first.
-// Every binary operator is a captured rule so the parser can read it uniformly
-// as the alternating operand/op/operand sequence within each level.
-expr     = { or_expr }
-or_expr  = { xor_expr ~ (or_op ~ xor_expr)* }
-xor_expr = { and_expr ~ (xor_op ~ and_expr)* }
-and_expr = { eq_expr ~ (and_op ~ eq_expr)* }
-eq_expr  = { rel_expr ~ (eq_op ~ rel_expr)* }
-rel_expr = { add_expr ~ (rel_op ~ add_expr)* }
-add_expr = { unary ~ (add_op ~ unary)* }
-unary    = { unary_op* ~ primary }
-primary  = { if_expr | literal | ident | "(" ~ expr ~ ")" }
-
-if_expr    = { "if" ~ expr ~ block_expr ~ "else" ~ (if_expr | block_expr) }
-block_expr = { "{" ~ expr ~ "}" }
-
-// Binary/unary operators, shared by both surfaces.
+// Binary and unary operators.
 or_op    = { "|" }
 xor_op   = { "^" }
 and_op   = { "&" }
 eq_op    = { "==" | "!=" }
 rel_op   = { "<=" | ">=" | "<" | ">" }
-// Bit shifts (functional surface only, DESIGN §6.13 / §9.10, BIT1). `<<`/`>>`
-// must precede `<`/`>` at their level, but they live below `rel_op` (§f_shift)
-// so there is no clash with the comparison operators.
+// Bit shifts (DESIGN §6.13 / §9.10, BIT1). `<<`/`>>` must precede `<`/`>` at
+// their level, but they live below `rel_op` (§f_shift) so there is no clash
+// with the comparison operators.
 shift_op = { "<<" | ">>" }
-// Bit concatenation `a @ b` (functional surface only, DESIGN §6.13 / §9.10,
-// BIT1) — the width-additive join, MSB-first. The loosest binary operator.
+// Bit concatenation `a @ b` (DESIGN §6.13 / §9.10, BIT1) — the width-additive
+// join, MSB-first. The loosest binary operator.
 concat_op = { "@" }
 add_op   = { "+" | "-" }
 mul_op   = { "*" }
@@ -94,12 +37,6 @@ unary_op = { "!" | "~" | "-" }
 // (width assertion is a semantic concern; DESIGN §6.10). Untyped otherwise:
 // width is resolved from context. A `_` separator must sit *between two
 // digits* (so `1_` and `0b_1010` are rejected, unlike Rust).
-//
-// NOTE: this rule is shared with the legacy `module` surface. Extending it is a
-// strict, backward-compatible *superset*: every previously-valid literal parses
-// to the identical value, so the legacy parse path is unchanged on all existing
-// programs — the legacy surface simply now also accepts the binary/separator/
-// suffix forms. (Intentional; the legacy surface is slated to migrate anyway.)
 literal      = @{ literal_body ~ literal_suffix? }
 literal_body = {
       "0x" ~ ASCII_HEX_DIGIT ~ ("_"* ~ ASCII_HEX_DIGIT)*
@@ -112,10 +49,7 @@ literal_suffix = { "_" ~ ("u" | "i") ~ ASCII_DIGIT+ }
 // (it is a contextual keyword, matched only in parameter position), so it reads
 // as an ordinary identifier inside expressions (`self.value`).
 //
-// `Option` / `Some` / `None` (DESIGN §6.5) are reserved program-wide via this
-// shared atom — including the otherwise-frozen legacy `module` surface, since
-// both surfaces share `ident`. No shipped/legacy program uses them as
-// identifiers, so the goldens and the conformance oracle are unaffected.
+// `Option` / `Some` / `None` (DESIGN §6.5) are reserved program-wide.
 //
 // `gen` is reserved for generator functions (`gen fn`, DESIGN §4.4), which come
 // after 1.0; reserving it now keeps adding them from breaking 1.0 programs.
@@ -129,7 +63,7 @@ keyword = @{
 ident   = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // ===========================================================================
-// FUNCTIONAL surface (DESIGN §2.1) — parse-only for now.
+// Items (DESIGN §2.1)
 // ===========================================================================
 
 item = { use_item | mod_item | const_item | struct_item | enum_item | impl_item | fn_item }
@@ -249,9 +183,9 @@ f_async_fifo_ty = { "async_fifo" ~ "<" ~ f_typeref ~ "," ~ f_mem_depth ~ "," ~ i
 f_mem_depth = { literal | ident }
 f_scalar_ty = @{ ("u" | "i") ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 
-// Functional expression grammar, lowest precedence first. Mirrors the legacy
-// precedence but adds `as` casts, postfix (field/call/index), and the richer
-// primaries (struct literals, paths, match, tuples, arrays).
+// Expression grammar, lowest precedence first: the binary operators, `as`
+// casts, postfix (field / call / index), and the primaries (struct literals,
+// paths, match, tuples, arrays).
 f_expr = { f_concat }
 // Concatenation is the loosest binary operator: `a @ b` joins `a` (high bits)
 // and `b` (low bits) into a `u{wa+wb}` (DESIGN §6.13, BIT1).

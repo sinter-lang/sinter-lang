@@ -1,8 +1,6 @@
 // `if` is an expression, not a statement: it must always have an `else` branch
 // so it yields a value on every path. Omitting `else` is a syntax error.
 //~ ERROR syntax error
-module bad {
-    in a: u1;
-    out b: u8;
-    b = if a { 1 };
+fn bad(a: u1) -> u8 {
+    if a == 1 { 1 }
 }

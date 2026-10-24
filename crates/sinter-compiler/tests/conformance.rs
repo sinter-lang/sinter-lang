@@ -30,17 +30,13 @@ struct Example {
 
 const EXAMPLES: &[Example] = &[
     Example {
-        name: "counter",
-        source: include_str!("../../../examples/counter.snt"),
-    },
-    Example {
-        name: "accumulator",
-        source: include_str!("../../../examples/accumulator.snt"),
-    },
-    // Functional surface (DESIGN §2.1), lowered by F2 to the same IR.
-    Example {
         name: "fn_counter",
         source: include_str!("../../../examples/fn_counter.snt"),
+    },
+    // Signed arithmetic and a wrapping cast.
+    Example {
+        name: "fn_accumulator",
+        source: include_str!("../../../examples/fn_accumulator.snt"),
     },
     // Functional surface F3: enum/match, sub-state method, nested struct.
     Example {

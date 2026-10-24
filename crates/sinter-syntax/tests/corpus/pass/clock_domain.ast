@@ -1,52 +1,271 @@
 Program {
-    modules: [
-        Module {
-            name: "passthrough",
-            clock_domain: "video",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "pixel",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 5,
-                        col: 5,
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "Video",
+                fields: [
+                    StructField {
+                        attrs: [
+                            Attr {
+                                name: "domain",
+                                args: [
+                                    AttrArg {
+                                        key: "video",
+                                        value: None,
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 4,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Public,
+                        name: "pixel",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 4,
+                            col: 5,
+                        },
                     },
-                },
-                Port {
-                    dir: Out,
-                    name: "out_pixel",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 6,
-                        col: 5,
+                    StructField {
+                        attrs: [
+                            Attr {
+                                name: "domain",
+                                args: [
+                                    AttrArg {
+                                        key: "sys",
+                                        value: None,
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 6,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Public,
+                        name: "frames",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 6,
+                            col: 5,
+                        },
                     },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
                 },
-            ],
-            regs: [],
-            lets: [],
-            assigns: [
-                Assign {
-                    target: "out_pixel",
-                    kind: Drive,
-                    value: Ident(
-                        "pixel",
-                    ),
-                    pos: Pos {
-                        line: 8,
-                        col: 5,
-                    },
-                },
-            ],
-            pos: Pos {
-                line: 3,
-                col: 1,
             },
-        },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Video",
+                methods: [
+                    Func {
+                        attrs: [
+                            Attr {
+                                name: "clock",
+                                args: [
+                                    AttrArg {
+                                        key: "domain",
+                                        value: Some(
+                                            Ident(
+                                                "video",
+                                            ),
+                                        ),
+                                    },
+                                    AttrArg {
+                                        key: "period",
+                                        value: Some(
+                                            Literal(
+                                                3,
+                                            ),
+                                        ),
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 11,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Private,
+                        color: Comb,
+                        name: "tick_video",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 12,
+                                    col: 19,
+                                },
+                            },
+                            Typed {
+                                name: "p",
+                                ty: Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 12,
+                                    col: 25,
+                                },
+                            },
+                        ],
+                        ret: Named(
+                            "Video",
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: StructLit {
+                                name: "Video",
+                                fields: [
+                                    FieldInit {
+                                        name: "pixel",
+                                        value: Ident(
+                                            "p",
+                                        ),
+                                    },
+                                    FieldInit {
+                                        name: "frames",
+                                        value: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "frames",
+                                        },
+                                    },
+                                ],
+                            },
+                            pos: Pos {
+                                line: 12,
+                                col: 41,
+                            },
+                        },
+                        pos: Pos {
+                            line: 11,
+                            col: 5,
+                        },
+                    },
+                    Func {
+                        attrs: [
+                            Attr {
+                                name: "clock",
+                                args: [
+                                    AttrArg {
+                                        key: "domain",
+                                        value: Some(
+                                            Ident(
+                                                "sys",
+                                            ),
+                                        ),
+                                    },
+                                    AttrArg {
+                                        key: "period",
+                                        value: Some(
+                                            Literal(
+                                                7,
+                                            ),
+                                        ),
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 15,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Private,
+                        color: Comb,
+                        name: "tick_sys",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 16,
+                                    col: 17,
+                                },
+                            },
+                        ],
+                        ret: Named(
+                            "Video",
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: StructLit {
+                                name: "Video",
+                                fields: [
+                                    FieldInit {
+                                        name: "pixel",
+                                        value: Field {
+                                            base: Ident(
+                                                "self",
+                                            ),
+                                            field: "pixel",
+                                        },
+                                    },
+                                    FieldInit {
+                                        name: "frames",
+                                        value: Cast {
+                                            expr: Binary {
+                                                op: Add,
+                                                lhs: Field {
+                                                    base: Ident(
+                                                        "self",
+                                                    ),
+                                                    field: "frames",
+                                                },
+                                                rhs: Literal(
+                                                    1,
+                                                ),
+                                            },
+                                            ty: Scalar(
+                                                Uint(
+                                                    8,
+                                                ),
+                                            ),
+                                            mode: Wrap,
+                                        },
+                                    },
+                                ],
+                            },
+                            pos: Pos {
+                                line: 16,
+                                col: 32,
+                            },
+                        },
+                        pos: Pos {
+                            line: 15,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 10,
+                    col: 1,
+                },
+            },
+        ),
     ],
-    items: [],
 }

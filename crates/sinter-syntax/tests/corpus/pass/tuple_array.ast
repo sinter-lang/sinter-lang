@@ -1,5 +1,4 @@
 Program {
-    modules: [],
     items: [
         Struct(
             StructItem {

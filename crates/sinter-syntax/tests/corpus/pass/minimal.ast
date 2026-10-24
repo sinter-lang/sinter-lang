@@ -1,52 +1,116 @@
 Program {
-    modules: [
-        Module {
-            name: "wire",
-            clock_domain: "sys",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "a",
-                    ty: Uint(
-                        1,
-                    ),
-                    pos: Pos {
-                        line: 5,
-                        col: 5,
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "Wire",
+                fields: [
+                    StructField {
+                        attrs: [],
+                        vis: Public,
+                        name: "b",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 4,
+                            col: 5,
+                        },
                     },
+                ],
+                pos: Pos {
+                    line: 3,
+                    col: 1,
                 },
-                Port {
-                    dir: Out,
-                    name: "b",
-                    ty: Uint(
-                        1,
-                    ),
-                    pos: Pos {
-                        line: 6,
-                        col: 5,
-                    },
-                },
-            ],
-            regs: [],
-            lets: [],
-            assigns: [
-                Assign {
-                    target: "b",
-                    kind: Drive,
-                    value: Ident(
-                        "a",
-                    ),
-                    pos: Pos {
-                        line: 8,
-                        col: 5,
-                    },
-                },
-            ],
-            pos: Pos {
-                line: 4,
-                col: 1,
             },
-        },
+        ),
+        Impl(
+            ImplItem {
+                type_name: "Wire",
+                methods: [
+                    Func {
+                        attrs: [
+                            Attr {
+                                name: "clock",
+                                args: [
+                                    AttrArg {
+                                        key: "domain",
+                                        value: Some(
+                                            Ident(
+                                                "sys",
+                                            ),
+                                        ),
+                                    },
+                                ],
+                                pos: Pos {
+                                    line: 8,
+                                    col: 5,
+                                },
+                            },
+                        ],
+                        vis: Private,
+                        color: Comb,
+                        name: "tick",
+                        params: [
+                            SelfRef {
+                                pos: Pos {
+                                    line: 9,
+                                    col: 13,
+                                },
+                            },
+                            Typed {
+                                name: "a",
+                                ty: Scalar(
+                                    Uint(
+                                        1,
+                                    ),
+                                ),
+                                pos: Pos {
+                                    line: 9,
+                                    col: 19,
+                                },
+                            },
+                        ],
+                        ret: Named(
+                            "Wire",
+                        ),
+                        body: Block {
+                            stmts: [],
+                            tail: StructLit {
+                                name: "Wire",
+                                fields: [
+                                    FieldInit {
+                                        name: "b",
+                                        value: Ident(
+                                            "a",
+                                        ),
+                                    },
+                                ],
+                            },
+                            pos: Pos {
+                                line: 9,
+                                col: 34,
+                            },
+                        },
+                        pos: Pos {
+                            line: 8,
+                            col: 5,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 7,
+                    col: 1,
+                },
+            },
+        ),
     ],
-    items: [],
 }

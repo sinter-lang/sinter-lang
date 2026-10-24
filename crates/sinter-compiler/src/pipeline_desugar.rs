@@ -144,10 +144,7 @@ pub fn desugar_pipelines(program: &Program) -> Result<Program, CompileError> {
         }
     }
 
-    Ok(Program {
-        modules: program.modules.clone(),
-        items,
-    })
+    Ok(Program { items })
 }
 
 /// A single `let`-local of a pipeline body.

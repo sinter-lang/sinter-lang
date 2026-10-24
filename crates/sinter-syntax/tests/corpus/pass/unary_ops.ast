@@ -1,130 +1,105 @@
 Program {
-    modules: [
-        Module {
-            name: "unaries",
-            clock_domain: "sys",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "flag",
-                    ty: Uint(
-                        1,
-                    ),
-                    pos: Pos {
-                        line: 4,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: In,
-                    name: "word",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 5,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: In,
-                    name: "val",
-                    ty: Int(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 6,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: Out,
-                    name: "a",
-                    ty: Uint(
-                        1,
-                    ),
-                    pos: Pos {
-                        line: 7,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: Out,
-                    name: "b",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 8,
-                        col: 5,
-                    },
-                },
-                Port {
-                    dir: Out,
-                    name: "c",
-                    ty: Int(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 9,
-                        col: 5,
-                    },
-                },
-            ],
-            regs: [],
-            lets: [],
-            assigns: [
-                Assign {
-                    target: "a",
-                    kind: Drive,
-                    value: Unary {
-                        op: Not,
-                        expr: Ident(
-                            "flag",
-                        ),
-                    },
-                    pos: Pos {
-                        line: 11,
-                        col: 5,
-                    },
-                },
-                Assign {
-                    target: "b",
-                    kind: Drive,
-                    value: Unary {
-                        op: BitNot,
-                        expr: Ident(
-                            "word",
-                        ),
-                    },
-                    pos: Pos {
-                        line: 12,
-                        col: 5,
-                    },
-                },
-                Assign {
-                    target: "c",
-                    kind: Drive,
-                    value: Unary {
-                        op: Neg,
-                        expr: Unary {
-                            op: Neg,
-                            expr: Ident(
-                                "val",
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "unaries",
+                params: [
+                    Typed {
+                        name: "flag",
+                        ty: Scalar(
+                            Uint(
+                                1,
                             ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 12,
                         },
                     },
+                    Typed {
+                        name: "word",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 22,
+                        },
+                    },
+                    Typed {
+                        name: "val",
+                        ty: Scalar(
+                            Int(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 3,
+                            col: 32,
+                        },
+                    },
+                ],
+                ret: Tuple(
+                    [
+                        Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        Scalar(
+                            Int(
+                                8,
+                            ),
+                        ),
+                    ],
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: Tuple(
+                        [
+                            Unary {
+                                op: Not,
+                                expr: Ident(
+                                    "flag",
+                                ),
+                            },
+                            Unary {
+                                op: BitNot,
+                                expr: Ident(
+                                    "word",
+                                ),
+                            },
+                            Unary {
+                                op: Neg,
+                                expr: Unary {
+                                    op: Neg,
+                                    expr: Ident(
+                                        "val",
+                                    ),
+                                },
+                            },
+                        ],
+                    ),
                     pos: Pos {
-                        line: 13,
-                        col: 5,
+                        line: 3,
+                        col: 57,
                     },
                 },
-            ],
-            pos: Pos {
-                line: 3,
-                col: 1,
+                pos: Pos {
+                    line: 3,
+                    col: 1,
+                },
             },
-        },
+        ),
     ],
-    items: [],
 }

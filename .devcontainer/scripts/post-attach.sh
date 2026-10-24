@@ -10,4 +10,4 @@ echo "  just:      $(just --version 2>/dev/null || echo 'not found')"
 echo
 echo "Try:  just check        # fmt + clippy + test"
 echo "      just ci           # reproduce the CI pipeline"
-echo "      cargo run -p sinter-lang -- build examples/counter.snt --emit verilog"
+echo "      cargo run -p sinter-lang -- build examples/fn_counter.snt --emit verilog"

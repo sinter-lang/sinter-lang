@@ -11,8 +11,8 @@
 //! lets are evaluated in topological order — so the sim↔Verilog trace is
 //! unchanged; only the multiply *count* drops.
 //!
-//! It is run only for designs that contain a `multiplex fn` (so the legacy and
-//! pipeline lowerings stay byte-identical), but it is generic over the module.
+//! It is run only for designs that contain a `multiplex fn` (so other designs'
+//! lowerings stay byte-identical), but it is generic over the module.
 
 use std::collections::HashMap;
 

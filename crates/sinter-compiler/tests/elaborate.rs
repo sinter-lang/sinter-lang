@@ -84,24 +84,6 @@ fn fn_counter_wraps_at_the_declared_width() {
     assert_eq!(outs[257], 1);
 }
 
-#[test]
-fn fn_counter_matches_legacy_counter_module() {
-    // The functional counter must be bit-identical to the legacy `module`
-    // counter under the same stimulus — same source, two surfaces.
-    let fnc = compile_str(include_str!("../../../examples/fn_counter.snt")).expect("fn");
-    let leg = compile_str(include_str!("../../../examples/counter.snt")).expect("legacy");
-    let fm = &fnc.modules[0];
-    let lm = &leg.modules[0];
-
-    let mut fs = Simulator::new(fm);
-    let mut ls = Simulator::new(lm);
-    for en in [1u64, 1, 0, 1, 1, 1, 0, 0, 1] {
-        let f = fs.step(&input("en", en))["value_q"];
-        let l = ls.step(&input("en", en))["count"];
-        assert_eq!(f, l, "divergence at en={en}");
-    }
-}
-
 // --- F3: enums / match / sub-state methods / nested structs ----------------
 
 #[test]

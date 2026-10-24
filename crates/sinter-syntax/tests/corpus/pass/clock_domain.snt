@@ -1,9 +1,19 @@
-// An explicit clock-domain attribute. The `#[clock(domain = ...)]` name is
-// carried onto the module verbatim (here `video` instead of the default `sys`).
-#[clock(domain = video)]
-module passthrough {
-    in pixel: u8;
-    out out_pixel: u8;
+// Clock-domain attributes (DESIGN §6.7): `#[domain(d)]` tags a field and
+// `#[clock(domain = d, period = p)]` makes a method that domain's tick.
+struct Video {
+    #[domain(video)]
+    pub pixel: u8 = 0,
+    #[domain(sys)]
+    pub frames: u8 = 0,
+}
 
-    out_pixel = pixel;
+impl Video {
+    #[clock(domain = video, period = 3)]
+    fn tick_video(self, p: u8) -> Video {
+        Video { pixel: p, frames: self.frames }
+    }
+    #[clock(domain = sys, period = 7)]
+    fn tick_sys(self) -> Video {
+        Video { pixel: self.pixel, frames: (self.frames + 1) as u8 wrap }
+    }
 }

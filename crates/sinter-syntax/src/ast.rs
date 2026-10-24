@@ -1,9 +1,9 @@
 //! Abstract syntax tree for Sinter (`.snt`).
 //!
-//! The AST is intentionally small: it mirrors the minimal synchronous core in
-//! `DESIGN.md` (clocked modules with `uN`/`iN` registers, combinational
-//! next-state, single-driver + acyclicity). It carries source positions on
-//! statements so later passes can produce located diagnostics.
+//! A program is a list of [`Item`]s: the functional surface of DESIGN §2.1
+//! (`struct` state, `impl` transition methods, a `#[clock]` root, free `fn`s,
+//! `enum`s, `const`s, and `mod` / `use`). Items and statements carry source
+//! positions so later passes can produce located diagnostics.
 
 /// A source position (1-based line and column) for diagnostics.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -37,35 +37,11 @@ pub enum Visibility {
     Public,
 }
 
-/// A whole compilation unit: legacy modules and/or functional-surface items.
+/// A whole compilation unit: its items, in source order.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Program {
-    /// The legacy `module` declarations, in source order. The compiler's
-    /// current pipeline lowers only these.
-    pub modules: Vec<Module>,
-    /// The functional-surface items (`const`/`struct`/`enum`/`impl`/`fn`), in
-    /// source order. Parsed today; semantic checks and lowering are a later
-    /// milestone (DESIGN §2.1). These will eventually subsume `modules`.
+    /// The items (`const`/`struct`/`enum`/`impl`/`fn`/`mod`/`use`).
     pub items: Vec<Item>,
-}
-
-/// A hardware module: an interface plus its registers and combinational logic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Module {
-    /// The module name (also the emitted Verilog module / filename).
-    pub name: String,
-    /// The clock domain this module belongs to (defaults to `sys`).
-    pub clock_domain: String,
-    /// Interface ports, in declaration order.
-    pub ports: Vec<Port>,
-    /// Registers (persistent state), in declaration order.
-    pub regs: Vec<Reg>,
-    /// Combinational wire bindings, in declaration order.
-    pub lets: Vec<LetBinding>,
-    /// Assignments: register next-state (`<=`) and output drives (`=`).
-    pub assigns: Vec<Assign>,
-    /// Source position of the `module` keyword.
-    pub pos: Pos,
 }
 
 /// A scalar Sinter type: arbitrary-width unsigned or signed integer.
@@ -102,74 +78,13 @@ impl core::fmt::Display for Type {
     }
 }
 
-/// Port direction.
+/// Port direction (of a lowered module's ports).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dir {
     /// An input read each cycle.
     In,
     /// An output driven combinationally each cycle.
     Out,
-}
-
-/// An interface port.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Port {
-    /// Direction.
-    pub dir: Dir,
-    /// Port name.
-    pub name: String,
-    /// Declared type.
-    pub ty: Type,
-    /// Source position.
-    pub pos: Pos,
-}
-
-/// A register declaration with an explicit reset value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reg {
-    /// Register name.
-    pub name: String,
-    /// Declared type (its width bounds the stored value).
-    pub ty: Type,
-    /// Reset / initial value expression.
-    pub init: Expr,
-    /// Source position.
-    pub pos: Pos,
-}
-
-/// A combinational wire binding (`let`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LetBinding {
-    /// Wire name.
-    pub name: String,
-    /// Optional declared type; otherwise inferred.
-    pub ty: Option<Type>,
-    /// The driving expression.
-    pub value: Expr,
-    /// Source position.
-    pub pos: Pos,
-}
-
-/// The kind of an assignment statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssignKind {
-    /// `<=`: schedules a register's next-state value.
-    NextState,
-    /// `=`: drives an output port combinationally.
-    Drive,
-}
-
-/// An assignment statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Assign {
-    /// The name being assigned (a register for `<=`, an output for `=`).
-    pub target: String,
-    /// Assignment kind.
-    pub kind: AssignKind,
-    /// The right-hand side expression.
-    pub value: Expr,
-    /// Source position.
-    pub pos: Pos,
 }
 
 /// A unary operator.
@@ -257,8 +172,8 @@ pub enum Expr {
     },
     /// An `if cond { a } else { b }` value-producing conditional.
     ///
-    /// In the legacy module surface `then`/`els` are bare expressions; in the
-    /// functional surface they are [`Expr::Block`]s.
+    /// The parser makes `then` / `els` [`Expr::Block`]s; desugars may build
+    /// bare expressions.
     If {
         /// The 1-bit condition.
         cond: Box<Expr>,
@@ -366,11 +281,10 @@ pub enum Expr {
 }
 
 // ===========================================================================
-// Functional surface (DESIGN §2.1). Parsed today; semantic checks and lowering
-// are a later milestone. The canonical example is `examples/go_board_counter.snt`.
+// Items (DESIGN §2.1). The canonical example is `examples/go_board_counter.snt`.
 // ===========================================================================
 
-/// A top-level functional-surface item.
+/// A top-level item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     /// A `const` binding.
@@ -611,7 +525,7 @@ pub enum AttrValue {
 /// A type reference in the functional surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeRef {
-    /// A scalar integer type `uN` / `iN` (reuses the legacy [`Type`]).
+    /// A scalar integer type `uN` / `iN`.
     Scalar(Type),
     /// A fixed-point type `uI.F` / `iI.F` (DESIGN §6.1). For signed types the
     /// sign bit is the MSB of the `int_bits` field; total width = I + F.

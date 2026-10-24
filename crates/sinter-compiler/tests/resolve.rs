@@ -144,13 +144,6 @@ fn clock_root_outside_root_module_is_rejected() {
 }
 
 #[test]
-fn legacy_module_in_submodule_is_rejected() {
-    // Two submodule `module counter` blocks would flatten to duplicate Verilog
-    // modules (review #5).
-    reject("legacy_dup", "not allowed in a submodule");
-}
-
-#[test]
 fn submodule_and_item_name_collision_is_rejected() {
     // `mod x;` plus `fn x()` makes the path `x` ambiguous (review #3/#6/#9).
     reject("name_collision", "both a submodule and an item");

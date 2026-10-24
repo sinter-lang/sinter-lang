@@ -150,12 +150,11 @@ fn cmd_check(file: &Path) -> Result<()> {
         );
     }
     if modules.is_empty() {
-        // A functional-surface source (struct/impl/fn) is parsed and now
-        // type-checked (it reached here without error), but not yet lowered, so
-        // `check` finds no `module` to report (DESIGN §2.1; lowering is F2+).
+        // The source type-checked (it reached here without error) but has no
+        // `#[clock]` root, so there is no module to lower (DESIGN §2.1).
         info!(
-            "no `module` declarations in `{}`; the functional surface \
-             type-checks, but lowering to sim/Verilog is not yet implemented",
+            "`{}` type-checks, but has no `#[clock]` root, so there is no \
+             module to build or simulate",
             file.display()
         );
     }

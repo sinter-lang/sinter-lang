@@ -1,8 +1,6 @@
-// Zero-width types (`u0`/`i0`) are rejected: a register must hold at least one
+// Zero-width types (`u0`/`i0`) are rejected: a value must hold at least one
 // bit. The parser surfaces this as an `InvalidType` error, not a syntax error.
 //~ ERROR invalid type
-module bad {
-    in a: u0;
-    out b: u1;
-    b = a;
+fn bad(a: u0) -> u1 {
+    a
 }

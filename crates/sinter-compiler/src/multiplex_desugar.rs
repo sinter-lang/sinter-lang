@@ -112,10 +112,7 @@ pub fn desugar_multiplexes(program: &Program) -> Result<Program, CompileError> {
         }
     }
 
-    Ok(Program {
-        modules: program.modules.clone(),
-        items,
-    })
+    Ok(Program { items })
 }
 
 /// Reject a `multiplex fn` value named like a synthesized field/local (`ph` /

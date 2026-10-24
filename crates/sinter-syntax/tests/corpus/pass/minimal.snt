@@ -1,9 +1,12 @@
-// The smallest well-formed unit: one module with no clock attribute (so the
-// clock domain defaults to `sys`), a single input, and a single combinational
-// output drive.
-module wire {
-    in a: u1;
-    out b: u1;
+// The smallest well-formed design: one state struct with one field and a
+// `#[clock]` transition method.
+struct Wire {
+    pub b: u1 = 0,
+}
 
-    b = a;
+impl Wire {
+    #[clock(domain = sys)]
+    fn tick(self, a: u1) -> Wire {
+        Wire { b: a }
+    }
 }

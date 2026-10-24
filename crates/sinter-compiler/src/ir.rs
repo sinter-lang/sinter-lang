@@ -41,7 +41,7 @@ pub struct Module {
     /// registers of any [`MemRead`] (their next-state is the memory read).
     pub reg_updates: Vec<(String, Expr)>,
     /// Block-RAM memories (DESIGN §6.6/§6.9), held as opaque indexed arrays — not
-    /// SROA-flattened to registers. Empty on the legacy `module` path.
+    /// SROA-flattened to registers.
     pub mems: Vec<Mem>,
     /// Memory read ports: each drives a read-data register (in `regs`) from the
     /// pre-edge array contents.
@@ -311,9 +311,7 @@ pub enum ExprKind {
         /// Value when false.
         els: Box<Expr>,
     },
-    /// A mode-named cast to the node's own [`Type`] (DESIGN §6.3). Produced by
-    /// the functional surface's elaboration; the legacy `module` path never
-    /// emits one. `Wrap` resizes (sign/zero-extend when widening, truncate when
+    /// A mode-named cast to the node's own [`Type`] (DESIGN §6.3). `Wrap` resizes (sign/zero-extend when widening, truncate when
     /// narrowing); `Sat` saturates to the node type's range.
     Cast {
         /// The operand being converted (carries its own source type).

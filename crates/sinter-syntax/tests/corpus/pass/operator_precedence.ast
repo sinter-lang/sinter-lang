@@ -1,116 +1,149 @@
 Program {
-    modules: [
-        Module {
-            name: "precedence",
-            clock_domain: "sys",
-            ports: [
-                Port {
-                    dir: In,
-                    name: "a",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 6,
-                        col: 5,
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "precedence",
+                params: [
+                    Typed {
+                        name: "a",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 15,
+                        },
                     },
-                },
-                Port {
-                    dir: In,
-                    name: "b",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 7,
-                        col: 5,
+                    Typed {
+                        name: "b",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 22,
+                        },
                     },
-                },
-                Port {
-                    dir: In,
-                    name: "c",
-                    ty: Uint(
-                        8,
-                    ),
-                    pos: Pos {
-                        line: 8,
-                        col: 5,
+                    Typed {
+                        name: "c",
+                        ty: Scalar(
+                            Uint(
+                                9,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 29,
+                        },
                     },
-                },
-                Port {
-                    dir: Out,
-                    name: "r",
-                    ty: Uint(
+                    Typed {
+                        name: "d",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 36,
+                        },
+                    },
+                    Typed {
+                        name: "e",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 43,
+                        },
+                    },
+                    Typed {
+                        name: "f",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 5,
+                            col: 50,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
                         1,
                     ),
-                    pos: Pos {
-                        line: 9,
-                        col: 5,
-                    },
-                },
-            ],
-            regs: [],
-            lets: [
-                LetBinding {
-                    name: "mixed",
-                    ty: None,
-                    value: Binary {
-                        op: Or,
-                        lhs: Binary {
-                            op: And,
-                            lhs: Binary {
-                                op: Eq,
+                ),
+                body: Block {
+                    stmts: [
+                        Let {
+                            pattern: Binding(
+                                "mixed",
+                            ),
+                            ty: None,
+                            value: Binary {
+                                op: Or,
                                 lhs: Binary {
-                                    op: Add,
-                                    lhs: Ident(
-                                        "a",
-                                    ),
+                                    op: And,
+                                    lhs: Binary {
+                                        op: Eq,
+                                        lhs: Binary {
+                                            op: Add,
+                                            lhs: Ident(
+                                                "a",
+                                            ),
+                                            rhs: Ident(
+                                                "b",
+                                            ),
+                                        },
+                                        rhs: Ident(
+                                            "c",
+                                        ),
+                                    },
                                     rhs: Ident(
-                                        "b",
+                                        "d",
                                     ),
                                 },
-                                rhs: Ident(
-                                    "c",
-                                ),
+                                rhs: Binary {
+                                    op: Xor,
+                                    lhs: Ident(
+                                        "e",
+                                    ),
+                                    rhs: Ident(
+                                        "f",
+                                    ),
+                                },
                             },
-                            rhs: Ident(
-                                "a",
-                            ),
+                            pos: Pos {
+                                line: 6,
+                                col: 5,
+                            },
                         },
-                        rhs: Binary {
-                            op: Xor,
-                            lhs: Ident(
-                                "b",
-                            ),
-                            rhs: Ident(
-                                "c",
-                            ),
-                        },
-                    },
-                    pos: Pos {
-                        line: 11,
-                        col: 5,
-                    },
-                },
-            ],
-            assigns: [
-                Assign {
-                    target: "r",
-                    kind: Drive,
-                    value: Ident(
+                    ],
+                    tail: Ident(
                         "mixed",
                     ),
                     pos: Pos {
-                        line: 13,
-                        col: 5,
+                        line: 5,
+                        col: 63,
                     },
                 },
-            ],
-            pos: Pos {
-                line: 5,
-                col: 1,
+                pos: Pos {
+                    line: 5,
+                    col: 1,
+                },
             },
-        },
+        ),
     ],
-    items: [],
 }
