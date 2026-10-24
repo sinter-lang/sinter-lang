@@ -274,6 +274,14 @@ impl<'a> Simulator<'a> {
         self.slots.get(name).map(|&s| self.env[s])
     }
 
+    /// The current contents of memory `name` (a `mem` or `rom` field, by its
+    /// flattened path), or `None` for an unknown name.
+    #[must_use]
+    pub fn memory(&self, name: &str) -> Option<&[u64]> {
+        let i = self.module.mems.iter().position(|m| m.name == name)?;
+        self.mem.get(i).map(Vec::as_slice)
+    }
+
     /// Advance one cycle. `inputs` maps input-port names to values (masked to
     /// the port width here; missing inputs read 0). Returns the outputs sampled
     /// this cycle.

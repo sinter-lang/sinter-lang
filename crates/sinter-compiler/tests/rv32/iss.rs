@@ -3,11 +3,12 @@
 //! cores, and with the same memory map:
 //!
 //! - instruction ROM: 256 words, read at `pc[9:2]`;
-//! - data RAM: 256 words at `addr[9:2]`, LW / SW only;
-//! - output port: a store to an address with bit 31 set appends the stored
-//!   word to [`Iss::port`];
-//! - ECALL, EBREAK, and illegal instructions (including byte / halfword loads
-//!   and stores) halt with `pc` left at the halting instruction.
+//! - data RAM: 256 words at `addr[9:2]`, byte-addressed within a word by
+//!   `addr[1:0]` (all of RV32I's loads and stores);
+//! - output port: a store of any size to an address with bit 31 set appends
+//!   the whole source register to [`Iss::port`];
+//! - ECALL, EBREAK, illegal instructions, and misaligned halfword / word
+//!   accesses halt with `pc` left at the halting instruction.
 
 /// Words in the instruction ROM and in the data RAM.
 pub const WORDS: usize = 256;
@@ -102,17 +103,40 @@ impl Iss {
                     next = self.pc.wrapping_add(imm_b);
                 }
             }
-            0x03 if f3 == 2 => {
+            0x03 if matches!(f3, 0 | 1 | 2 | 4 | 5) => {
                 let addr = rs1.wrapping_add(imm_i);
-                let v = self.ram[((addr >> 2) as usize) % WORDS];
+                if misaligned(f3 & 3, addr) {
+                    self.halted = true;
+                    return;
+                }
+                let word = self.ram[((addr >> 2) as usize) % WORDS];
+                let v = word >> (8 * (addr & 3));
+                let v = match f3 {
+                    0 => v as u8 as i8 as i32 as u32,
+                    1 => v as u16 as i16 as i32 as u32,
+                    4 => v & 0xFF,
+                    5 => v & 0xFFFF,
+                    _ => v,
+                };
                 write(&mut self.regs, v);
             }
-            0x23 if f3 == 2 => {
+            0x23 if f3 <= 2 => {
                 let addr = rs1.wrapping_add(imm_s);
+                if misaligned(f3, addr) {
+                    self.halted = true;
+                    return;
+                }
                 if addr >> 31 == 1 {
                     self.port.push(rs2);
                 } else {
-                    self.ram[((addr >> 2) as usize) % WORDS] = rs2;
+                    let cell = &mut self.ram[((addr >> 2) as usize) % WORDS];
+                    let shift = 8 * (addr & 3);
+                    let mask: u32 = match f3 {
+                        0 => 0xFF,
+                        1 => 0xFFFF,
+                        _ => 0xFFFF_FFFF,
+                    } << shift;
+                    *cell = (*cell & !mask) | ((rs2 << shift) & mask);
                 }
             }
             0x13 if f3 != 1 && f3 != 5 => write(&mut self.regs, alu(f3, false, rs1, imm_i)),
@@ -131,6 +155,16 @@ impl Iss {
             }
         }
         self.pc = next;
+    }
+}
+
+/// Whether an access of size `size` (0 byte, 1 halfword, 2 word) at `addr`
+/// is misaligned.
+fn misaligned(size: u32, addr: u32) -> bool {
+    match size {
+        1 => addr & 1 != 0,
+        2 => addr & 3 != 0,
+        _ => false,
     }
 }
 

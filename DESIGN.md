@@ -1344,7 +1344,7 @@ and `SB` / `SH` need sub-word writes.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **MEM2** | `mem<T, N, R>` / `rom<T, N, R>` read ports, array `raddr` / `value()` for `R > 1`, `uB` byte-enable `we`. The RV32 cores move their register files into a `mem<u32, 32, 2>` and gain `LB` / `LH` / `LBU` / `LHU` / `SB` / `SH`. | Both cores pass the ISS suite (extended with byte / halfword programs) and the oracle, and synthesis maps their register files to block RAM |
+| **MEM2** | ✅ `mem<T, N, R>` / `rom<T, N, R>` read ports, array `raddr` / `value()` for `R > 1`, `uB` byte-enable `we`. Both RV32 cores gain `LB` / `LH` / `LBU` / `LHU` / `SB` / `SH` through byte-enabled data RAM. The pipelined core moves its register file into a `mem<u32, 32, 2>`, which halves its size; the fetch-ahead core keeps flip-flops because a synchronous register file would cost it a cycle per instruction. | ✅ Both cores pass the ISS suite (extended with byte / halfword and misaligned programs) and the oracle; the pipe's register file maps to distributed RAM |
 
 
 ### 9.7 ROM — ACTIVE milestone (ROM1)

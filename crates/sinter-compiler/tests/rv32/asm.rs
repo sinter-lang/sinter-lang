@@ -335,15 +335,27 @@ fn encode(ctx: &Ctx, m: &str, a: &[String]) -> Result<Vec<u32>, String> {
         "bgez" => branch_zero(5, false)?,
         "bgtz" => branch_zero(4, true)?,
         "blez" => branch_zero(5, true)?,
-        "lw" => {
+        "lb" | "lh" | "lw" | "lbu" | "lhu" => {
             expect_args(a, 2)?;
+            let f3 = match m {
+                "lb" => 0,
+                "lh" => 1,
+                "lw" => 2,
+                "lbu" => 4,
+                _ => 5,
+            };
             let (imm, rs1) = mem_operand(arg(a, 1)?)?;
-            vec![i_type(imm, rs1, 2, r(0)?, 0x03)?]
+            vec![i_type(imm, rs1, f3, r(0)?, 0x03)?]
         }
-        "sw" => {
+        "sb" | "sh" | "sw" => {
             expect_args(a, 2)?;
+            let f3 = match m {
+                "sb" => 0,
+                "sh" => 1,
+                _ => 2,
+            };
             let (imm, rs1) = mem_operand(arg(a, 1)?)?;
-            vec![s_type(imm, r(0)?, rs1, 2)?]
+            vec![s_type(imm, r(0)?, rs1, f3)?]
         }
         "addi" => alu_imm(0)?,
         "slti" => alu_imm(2)?,

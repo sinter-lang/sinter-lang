@@ -46,7 +46,7 @@ fn core_with(core: &str, name: &str, program: &[u32]) -> Module {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create dir");
     let root = format!("{core}.snt");
-    for f in [root.as_str(), "alu.snt", "decode.snt"] {
+    for f in [root.as_str(), "alu.snt", "decode.snt", "lsu.snt"] {
         std::fs::copy(example_dir().join(f), dir.join(f)).expect("copy core source");
     }
     let hex = asm::to_hex(program, WORDS).expect("program fits");
@@ -86,12 +86,17 @@ fn run_core(m: &Module, limit: usize, enable: impl Fn(usize) -> bool) -> (Outcom
         }
     }
     // The register file is internal (not `pub`), so read it from the simulator:
-    // the values held during the last cycle, as a `_q` output would show.
-    let outcome = Outcome {
-        port,
-        regs: (0..32)
+    // a `[u32; 32]` of registers (mini) holds the values of the last cycle, as a
+    // `_q` output would show; a `mem` (pipe) holds its contents.
+    let regs = match sim.memory("regs") {
+        Some(words) => words.iter().map(|&w| w as u32).collect(),
+        None => (0..32)
             .map(|i| sim.signal(&format!("regs_{i}")).unwrap_or(0) as u32)
             .collect(),
+    };
+    let outcome = Outcome {
+        port,
+        regs,
         pc: out["pc_q"] as u32,
         halted: out["halted_q"] == 1,
     };
@@ -239,7 +244,11 @@ fn test_programs_match_the_iss() {
     let mut paths: Vec<_> = std::fs::read_dir(programs_dir())
         .expect("read programs dir")
         .map(|e| e.expect("dir entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "s") && !p.ends_with("illegal.s"))
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "s")
+                && !p.ends_with("illegal.s")
+                && !p.ends_with("misaligned.s")
+        })
         .collect();
     paths.sort();
     assert!(
@@ -288,6 +297,23 @@ fn cycle_counts_are_plausible() {
         assert!(
             (steps..=2 * steps + 8).contains(&cycles),
             "`{core_name}`: {cycles} cycles for {steps} instructions"
+        );
+    }
+}
+
+#[test]
+fn a_misaligned_access_halts_and_fails_the_assert() {
+    let program = assemble_file(&programs_dir().join("misaligned.s"));
+    let (expected, steps) = run_iss(&program);
+    assert!(expected.halted);
+    assert_eq!(expected.port, [9]);
+    for core_name in CORES {
+        let core = core_with(core_name, "misaligned", &program);
+        let (got, asserts, _) = run_core(&core, 3 * steps + 8, |_| true);
+        assert_eq!(got, expected, "`{core_name}`");
+        assert_eq!(
+            asserts, 1,
+            "`{core_name}`: the misaligned-access assert fires once"
         );
     }
 }

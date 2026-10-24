@@ -71,8 +71,10 @@ land in a later 0.3.x.
 
 The language features the RV32 cores showed were missing.
 
-- [ ] Multi-read-port `mem` (§9.6), so a 2R1W register file lives in block RAM.
-- [ ] Byte-enable `mem` writes (§9.6), and RV32 byte / halfword loads and
+- [x] Multi-read-port `mem` (§9.6), so a 2R1W register file lives in block RAM.
+      The pipelined core's register file is a `mem<u32, 32, 2>` and the core
+      shrank from 5.2k to 2.2k LUTs.
+- [x] Byte-enable `mem` writes (§9.6), and RV32 byte / halfword loads and
       stores (`LB` / `LH` / `LBU` / `LHU` / `SB` / `SH`) in both cores.
 - [ ] BRAM-backed deep FIFO (CHAN4, §9.8).
 - [ ] Directional `Sender` / `Receiver` channel views (CHAN3, §6.11).

@@ -1,44 +1,48 @@
 // rv32 pipe: a classic 5-stage pipelined RV32I core (DESIGN §9.12, step 6).
 //
 //   IF   issue the instruction-ROM read for the next pc
-//   ID   decode the fetched word, read the register file
+//   ID   decode the fetched word, issue the register-file reads
 //   EX   ALU, branch / jump resolution, effective address
 //   MEM  data-RAM access (or the output port)
 //   WB   write the register file
 //
 // Each stage's inputs are explicit pipeline registers: the `id_*`, `ex`,
 // `ma` (memory access), and `wb` fields, each with its own valid bit. The
-// two synchronous RAMs fit the stages naturally: the instruction ROM's read
-// register is the IF/ID boundary, and the data RAM's is the MEM/WB boundary.
+// three synchronous RAMs fit the stages naturally: the instruction ROM's read
+// register is the IF/ID boundary, the register file's (a 2-read-port `mem`,
+// MEM2) is the ID/EX operand boundary, and the data RAM's is the MEM/WB
+// boundary.
 //
 // Hazards:
-//   - results are forwarded to EX from MEM and WB, and WB also bypasses into
-//     the ID-stage register-file read;
+//   - EX operands are forwarded from MEM, WB, and the last write-back. The
+//     last write covers the read-first case, where a register is written in
+//     the same cycle that ID issues its read;
 //   - a load followed immediately by a use stalls the pipeline one cycle;
 //   - taken branches and jumps resolve in EX and squash the one younger
 //     instruction in ID (a one-cycle penalty);
-//   - ECALL / EBREAK / an illegal instruction stops issue once it enters EX
-//     and halts the core when it retires.
+//   - ECALL / EBREAK / an illegal instruction stops issue once it enters EX,
+//     a misaligned access once EX computes its address; either halts the core
+//     when it retires.
 //
-// Same ISA subset, memory map, output port, and `run` clock enable as
-// mini.snt; it runs the same programs. `pc` is the pc of the most recently
-// retired instruction, so once halted it is the halting instruction's.
+// Same ISA, memory map, output port, and `run` clock enable as mini.snt; it
+// runs the same programs. `pc` is the pc of the most recently retired
+// instruction, so once halted it is the halting instruction's.
 
 mod alu;
 mod decode;
+mod lsu;
 
 use root::alu::*;
 use root::decode::*;
+use root::lsu::*;
 
-// The decoded instruction, as it travels from ID into EX.
+// The decoded instruction, as it travels from ID into EX. Its register
+// operands arrive separately, as the register file's read data.
 struct ExStage {
     pc: u32 = 0,
     rd: u5 = 0,
     rs1: u5 = 0,
     rs2: u5 = 0,
-    // Register operands as read (and WB-bypassed) in ID.
-    a: u32 = 0,
-    b: u32 = 0,
     imm: u32 = 0,
     f3: u3 = 0,
     alt: u1 = 0,
@@ -60,14 +64,20 @@ struct MaStage {
     pc: u32 = 0,
     rd: u5 = 0,
     result: u32 = 0,
+    // Store data replicated across the byte lanes, and the whole source
+    // register for the output port.
     store_data: u32 = 0,
+    port_data: u32 = 0,
     word: u8 = 0,
+    off: u2 = 0,
+    f3: u3 = 0,
     to_port: u1 = 0,
     load: u1 = 0,
     store: u1 = 0,
     writes: u1 = 0,
     halt: u1 = 0,
     illegal: u1 = 0,
+    misaligned: u1 = 0,
 }
 
 // An instruction in write-back. A load's value is the data RAM's read
@@ -77,10 +87,13 @@ struct WbStage {
     rd: u5 = 0,
     result: u32 = 0,
     word: u8 = 0,
+    off: u2 = 0,
+    f3: u3 = 0,
     load: u1 = 0,
     writes: u1 = 0,
     halt: u1 = 0,
     illegal: u1 = 0,
+    misaligned: u1 = 0,
 }
 
 struct Pipe {
@@ -88,7 +101,12 @@ struct Pipe {
     pub halted: u1 = 0,
     pub port: u32 = 0,
     pub port_count: u8 = 0,
-    regs: [u32; 32] = [0; 32],
+    // The register file: block / distributed RAM with two read ports.
+    regs: mem<u32, 32, 2> = 0,
+    // The most recent register-file write, forwarded to EX.
+    last_writes: u1 = 0,
+    last_rd: u5 = 0,
+    last_value: u32 = 0,
     // ID: the instruction ROM's read register holds the word at `id_pc`.
     id_pc: u32 = 0,
     id_valid: u1 = 0,
@@ -112,17 +130,26 @@ impl Pipe {
         // ---- WB --------------------------------------------------------------
         let wb = self.wb;
         let wb_live = self.wb_valid == 1;
-        let wb_value = if wb.load == 1 { self.dmem.value() } else { wb.result };
-        // A write-back that lands this cycle (bypassed into ID and EX).
+        let wb_value = if wb.load == 1 {
+            load_value(wb.f3, wb.off, self.dmem.value())
+        } else {
+            wb.result
+        };
+        // A write-back that lands this cycle (forwarded to EX).
         let wb_writes = wb_live & wb.writes == 1 & wb.rd != 0;
         let retire = go & wb_live;
         assert!(retire == 0 | wb.illegal == 0, "illegal instruction");
-        let regs = if go & wb_writes { self.regs.set(wb.rd, wb_value) } else { self.regs };
+        assert!(retire == 0 | wb.misaligned == 0, "misaligned access");
+        let rf_we = go & wb_writes;
 
         // ---- MEM -------------------------------------------------------------
         let ma = self.ma;
         let ma_live = self.ma_valid == 1;
-        let ram_we = go & ma_live & ma.store == 1 & ma.to_port == 0;
+        let ram_we: u4 = if go & ma_live & ma.store == 1 & ma.to_port == 0 {
+            store_lanes(ma.f3, ma.off)
+        } else {
+            0
+        };
         let to_port = go & ma_live & ma.store == 1 & ma.to_port == 1;
         // While stalled, re-read WB's word so its load value holds.
         let raddr = if go { ma.word } else { wb.word };
@@ -130,21 +157,28 @@ impl Pipe {
         // ---- EX --------------------------------------------------------------
         let ex = self.ex;
         let ex_live = self.ex_valid == 1;
-        // Forward from MEM (not a load: its value isn't read yet) or WB.
+        let rf = self.regs.value();
+        // Forward from MEM (not a load: its value isn't read yet), WB, or the
+        // last write-back; otherwise use the register file's read data.
         let ma_fwd = ma_live & ma.writes == 1 & ma.load == 0 & ma.rd != 0;
+        let last_fwd = self.last_writes == 1;
         let a = if ma_fwd & ma.rd == ex.rs1 {
             ma.result
         } else if wb_writes & wb.rd == ex.rs1 {
             wb_value
+        } else if last_fwd & self.last_rd == ex.rs1 {
+            self.last_value
         } else {
-            ex.a
+            rf[0]
         };
         let b = if ma_fwd & ma.rd == ex.rs2 {
             ma.result
         } else if wb_writes & wb.rd == ex.rs2 {
             wb_value
+        } else if last_fwd & self.last_rd == ex.rs2 {
+            self.last_value
         } else {
-            ex.b
+            rf[1]
         };
         let alu_out = alu(ex.f3, ex.alt, a, if ex.reg_op == 1 { b } else { ex.imm });
         let ex_pc4 = (ex.pc + 4) as u32 wrap;
@@ -158,6 +192,11 @@ impl Pipe {
             alu_out
         };
         let addr = (a + ex.imm) as u32 wrap;
+        let off: u2 = addr[1:0];
+        let ex_mis = (ex.load == 1 | ex.store == 1) & misaligned(ex.f3, off) == 1;
+        // A misaligned access becomes a halting instruction: no access, no
+        // write-back, and nothing younger issues.
+        let late_halt = ex_live & ex_mis;
         let taken = ex.branch == 1 & branch_taken(ex.f3, a, b) == 1;
         let redirect = ex_live & (ex.jal == 1 | ex.jalr == 1 | taken);
         let target = if ex.jalr == 1 { addr & 0xFFFF_FFFE } else { (ex.pc + ex.imm) as u32 wrap };
@@ -177,8 +216,8 @@ impl Pipe {
         let is_jal = opcode == OP_JAL;
         let is_jalr = opcode == OP_JALR & f3 == 0;
         let is_branch = opcode == OP_BRANCH & f3 != 2 & f3 != 3;
-        let is_load = opcode == OP_LOAD & f3 == 2;
-        let is_store = opcode == OP_STORE & f3 == 2;
+        let is_load = opcode == OP_LOAD & (f3 == 0 | f3 == 1 | f3 == 2 | f3 == 4 | f3 == 5);
+        let is_store = opcode == OP_STORE & (f3 == 0 | f3 == 1 | f3 == 2);
         let imm_shift_ok = if f3 == 1 { f7 == 0 } else { f7 == 0 | f7 == 0b0100000 };
         let is_imm = opcode == OP_IMM & (f3 == 0 | f3 == 2 | f3 == 3 | f3 == 4 | f3 == 6 | f3 == 7 | imm_shift_ok);
         let is_reg = opcode == OP_REG & (f7 == 0 | (f7 == 0b0100000 & (f3 == 0 | f3 == 5)));
@@ -197,14 +236,16 @@ impl Pipe {
         } else {
             imm_i(inst)
         };
-        // Register reads, bypassing this cycle's write-back.
-        let ra = if wb_writes & wb.rd == rs1 { wb_value } else { self.regs[rs1] };
-        let rb = if wb_writes & wb.rd == rs2 { wb_value } else { self.regs[rs2] };
 
         // Load-use: the instruction in ID reads what the load in EX will load.
         let load_use = id_live & ex_live & ex.load == 1 & ex.rd != 0 & (ex.rd == rs1 | ex.rd == rs2);
-        let stall = load_use & redirect == 0;
-        let issue = id_live & redirect == 0 & stall == 0;
+        let squash = redirect | late_halt;
+        let stall = load_use & squash == 0;
+        let issue = id_live & squash == 0 & stall == 0;
+
+        // Register-file reads: for the instruction entering EX next cycle, or
+        // EX's own operands again while the clock is disabled.
+        let rs = if go { [rs1, rs2] } else { [ex.rs1, ex.rs2] };
 
         // ---- IF --------------------------------------------------------------
         // The next word for ID: a redirect target, the same word again (stall
@@ -224,8 +265,6 @@ impl Pipe {
             rd: rd,
             rs1: rs1,
             rs2: rs2,
-            a: ra,
-            b: rb,
             imm: imm,
             f3: f3,
             alt: if is_reg | (is_imm & f3 == 5) { inst[30:30] } else { 0 },
@@ -245,32 +284,42 @@ impl Pipe {
             pc: ex.pc,
             rd: ex.rd,
             result: ex_result,
-            store_data: b,
+            store_data: store_data(ex.f3, b),
+            port_data: b,
             word: addr[9:2],
+            off: off,
+            f3: ex.f3,
             to_port: addr[31:31],
-            load: ex.load,
-            store: ex.store,
-            writes: ex.writes,
-            halt: ex.halt,
+            load: if ex_mis { 0 } else { ex.load },
+            store: if ex_mis { 0 } else { ex.store },
+            writes: if ex_mis { 0 } else { ex.writes },
+            halt: if ex_mis { 1 } else { ex.halt },
             illegal: ex.illegal,
+            misaligned: if ex_mis { 1 } else { 0 },
         };
         let next_wb = WbStage {
             pc: ma.pc,
             rd: ma.rd,
             result: ma.result,
             word: ma.word,
+            off: ma.off,
+            f3: ma.f3,
             load: ma.load,
             writes: ma.writes,
             halt: ma.halt,
             illegal: ma.illegal,
+            misaligned: ma.misaligned,
         };
 
         Pipe {
             pc: if retire { wb.pc } else { self.pc },
             halted: if retire & wb.halt == 1 { 1 } else { self.halted },
-            port: if to_port { ma.store_data } else { self.port },
+            port: if to_port { ma.port_data } else { self.port },
             port_count: if to_port { (self.port_count + 1) as u8 wrap } else { self.port_count },
-            regs: regs,
+            regs: self.regs.next(rs, rf_we, wb.rd, wb_value),
+            last_writes: if rf_we { 1 } else { self.last_writes },
+            last_rd: if rf_we { wb.rd } else { self.last_rd },
+            last_value: if rf_we { wb_value } else { self.last_value },
             id_pc: fetch,
             id_valid: if go & stall == 0 { 1 } else { self.id_valid },
             ex: if go & stall == 0 { next_ex } else { self.ex },
@@ -279,7 +328,7 @@ impl Pipe {
             ma_valid: if go { if ex_live { 1 } else { 0 } } else { self.ma_valid },
             wb: if go { next_wb } else { self.wb },
             wb_valid: if go { if ma_live { 1 } else { 0 } } else { self.wb_valid },
-            draining: if go & issue & (is_system | legal == 0) { 1 } else { self.draining },
+            draining: if go & ((issue & (is_system | legal == 0)) | late_halt) { 1 } else { self.draining },
             imem: self.imem.next(fetch[9:2]),
             dmem: self.dmem.next(raddr, ram_we, ma.word, ma.store_data),
         }

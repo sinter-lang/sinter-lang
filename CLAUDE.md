@@ -210,7 +210,7 @@ oracle. Examples named `fn_*.snt` exercise the functional surface; bare-named on
   model state. The oracle adds `src` to the Yosys / Verilator runs, so it checks
   the model against the real module (`examples/verilog_acc/`).
 - **RV32 cores** (§9.12 steps 5–6) — `examples/rv32/`: two root files sharing
-  `decode.snt` / `alu.snt` / `prog.hex`. `mini.snt` is the fetch-ahead core,
+  `decode.snt` / `alu.snt` / `lsu.snt` / `prog.hex`. `mini.snt` is the fetch-ahead core,
   `pipe.snt` the 5-stage pipeline. `tests/rv32.rs` carries a test-only RV32I
   assembler (`tests/rv32/asm.rs`) and reference ISS (`tests/rv32/iss.rs`) and
   runs every program in `tests/rv32/programs/*.s` on both cores. Regenerate

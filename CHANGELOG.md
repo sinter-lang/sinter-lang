@@ -15,6 +15,12 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   of words. A memory's write enable may be a `uB` mask, one bit per byte
   lane, as well as `u1`. Yosys maps both onto block or distributed RAM
   (`examples/fn_mem2.snt`).
+- **RV32: all of RV32I's loads and stores.** Both cores gain byte and halfword
+  loads and stores through byte-enabled data RAM (a shared `lsu.snt`).
+  Misaligned halfword / word accesses halt the core and fail a sim-only
+  assertion. The pipelined core's register file moved into a
+  `mem<u32, 32, 2>`, so it maps to distributed RAM: 2.2k LUTs instead of 5.2k.
+- `Simulator::memory(name)` reads a memory's current contents.
 
 ## [0.3.0] — unreleased
 

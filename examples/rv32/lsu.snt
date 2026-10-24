@@ -1,0 +1,44 @@
+// The load / store unit's datapath: byte lanes for stores, lane extraction and
+// sign / zero extension for loads, and alignment checks. `f3` is the load /
+// store funct3: its low two bits are the size (0 byte, 1 halfword, 2 word),
+// and for loads bit 2 selects zero extension (LBU / LHU). `off` is the byte
+// offset within the word, `addr[1:0]`.
+
+// The byte-enable mask of a store of `f3`'s size at offset `off`.
+pub fn store_lanes(f3: u3, off: u2) -> u4 {
+    let size: u2 = f3[1:0];
+    let base: u4 = if size == 0 { 0b0001 } else if size == 1 { 0b0011 } else { 0b1111 };
+    base << off
+}
+
+// A store's data, replicated so the enabled lanes see the right bytes.
+pub fn store_data(f3: u3, b: u32) -> u32 {
+    let size: u2 = f3[1:0];
+    if size == 0 {
+        b[7:0] @ b[7:0] @ b[7:0] @ b[7:0]
+    } else if size == 1 {
+        b[15:0] @ b[15:0]
+    } else {
+        b
+    }
+}
+
+// The value a load of `f3` at offset `off` produces from the RAM `word`.
+pub fn load_value(f3: u3, off: u2, word: u32) -> u32 {
+    let shifted = word >> (off @ 0b000_u3);
+    let byte: u8 = shifted[7:0];
+    let half: u16 = shifted[15:0];
+    match f3 {
+        0 => ((byte as i8 wrap) as i32 wrap) as u32 wrap,
+        1 => ((half as i16 wrap) as i32 wrap) as u32 wrap,
+        4 => byte as u32 wrap,
+        5 => half as u32 wrap,
+        _ => shifted,
+    }
+}
+
+// Whether an access of `f3`'s size at offset `off` is misaligned.
+pub fn misaligned(f3: u3, off: u2) -> u1 {
+    let size: u2 = f3[1:0];
+    (size == 1 & off[0:0] == 1) | (size == 2 & off != 0)
+}
