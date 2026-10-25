@@ -135,7 +135,9 @@ Release: tag `v0.7.0` on the "release: v0.7.0" commit.
       in every function and method, not just the first overall (parsing still
       stops at the first syntax error, §7.1).
 
-## v0.8 — tooling
+## v0.8 — tooling ✅
+
+Release: tag `v0.8.0` on the "release: v0.8.0" commit.
 
 - [x] tree-sitter grammar (`editors/tree-sitter-sinter/`) with highlight
       queries, tested against the parser corpus and every example (§7.1).
