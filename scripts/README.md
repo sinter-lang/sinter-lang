@@ -24,6 +24,7 @@ scripts/clippy.sh    # directly (works from any directory)
 | `clippy.sh` | `just clippy` | Clippy, all targets/features, warnings denied |
 | `test.sh` | `just test` | `cargo test --workspace` |
 | `conformance.sh` | `just conformance` | Yosys/Verilator conformance oracle |
+| `tree-sitter.sh` | `just tree-sitter [--check]` | Regenerate the editor grammar's parser (or check it is current) |
 | `fuzz.sh` | `just fuzz [N] [SEED]` | Random programs through the whole oracle (needs Yosys + Verilator) |
 | `build.sh` | `just build` | `cargo build --release` |
 | `doc.sh` | `just doc` | `cargo doc` (broken doc links denied) |

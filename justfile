@@ -58,6 +58,11 @@ test:
 conformance require="auto":
     scripts/conformance.sh {{ require }}
 
+# Regenerate the tree-sitter parser from grammar.js; `just tree-sitter --check`
+# fails if the committed one is stale (needs the tree-sitter CLI).
+tree-sitter *args:
+    scripts/tree-sitter.sh {{ args }}
+
 # Fuzz: put `programs` random programs from `seed` through the whole oracle
 # (needs Yosys + Verilator).
 fuzz programs="200" seed="1":

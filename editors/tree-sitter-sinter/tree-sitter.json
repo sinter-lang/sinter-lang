@@ -1,0 +1,22 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "sinter",
+      "camelcase": "Sinter",
+      "title": "Sinter",
+      "scope": "source.sinter",
+      "file-types": ["snt"],
+      "injection-regex": "^sinter$",
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.7.0",
+    "license": "MIT OR Apache-2.0",
+    "description": "Sinter HDL grammar for tree-sitter",
+    "links": {
+      "repository": "https://github.com/sinter-lang/sinter-lang"
+    }
+  }
+}

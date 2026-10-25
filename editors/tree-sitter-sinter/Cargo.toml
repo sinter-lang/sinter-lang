@@ -1,0 +1,24 @@
+[package]
+name = "tree-sitter-sinter"
+description = "Sinter grammar for tree-sitter (editor highlighting and structure)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+build = "bindings/rust/build.rs"
+include = ["bindings/rust/*", "grammar.js", "queries/*", "src/*", "tree-sitter.json"]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = { version = "0.1.9", default-features = false }
+
+[build-dependencies]
+cc = { version = "1.2", default-features = false }
+
+[dev-dependencies]
+tree-sitter = { version = "0.27.1", default-features = false, features = ["std"] }

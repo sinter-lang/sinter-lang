@@ -4,6 +4,7 @@ members = [
     "crates/sinter-syntax",
     "crates/sinter-compiler",
     "crates/sinter-lang",
+    "editors/tree-sitter-sinter",
 ]
 
 [workspace.package]

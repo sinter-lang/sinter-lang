@@ -5,6 +5,14 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **A tree-sitter grammar** (`editors/tree-sitter-sinter/`) with highlight
+  queries, for Neovim, Helix, Zed, and other tree-sitter editors; setup is in
+  its README. `cargo test` checks it parses every corpus case and example.
+
 ## [0.7.0] — unreleased
 
 ### Added

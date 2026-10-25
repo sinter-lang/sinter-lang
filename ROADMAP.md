@@ -137,8 +137,10 @@ Release: tag `v0.7.0` on the "release: v0.7.0" commit.
 
 ## v0.8 — tooling
 
-- [ ] tree-sitter grammar (`editors/tree-sitter-sinter/`) with highlight
-      queries, tested against the parser corpus (§7.1).
+- [x] tree-sitter grammar (`editors/tree-sitter-sinter/`) with highlight
+      queries, tested against the parser corpus and every example (§7.1).
+      The generated parser is committed; `just tree-sitter --check` keeps it
+      current.
 - [ ] VS Code syntax highlighting (`editors/vscode/`): a TextMate grammar and
       language configuration, packaged as a `.vsix`. A full LSP can follow
       1.0.

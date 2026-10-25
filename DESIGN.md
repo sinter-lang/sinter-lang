@@ -1056,6 +1056,11 @@ over a lossless tree stays possible after 1.0, since it changes no syntax.
 
 ### 7.3 LSP / editor integration
 
+**Realized (v0.8):** syntax highlighting, not yet an LSP.
+`editors/tree-sitter-sinter` is the tree-sitter grammar (§7.1, path 1), tested
+against the parser corpus and every example, with highlight queries for
+Neovim, Helix, and Zed.
+
 `rust-analyzer`-style language server for VS Code: incremental, error-tolerant,
 built on the frontend chosen in §7.1. Syntax highlighting via tree-sitter is the
 low-cost early win regardless of the deeper parser choice.

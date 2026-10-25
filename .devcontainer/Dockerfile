@@ -50,6 +50,25 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
         | bash -s -- --tag "${JUST_VERSION}" --to /usr/local/bin \
     && just --version
 
+# --- Editor tooling --------------------------------------------------------
+# Node.js packages the VS Code extension (editors/vscode, `vsce`). The
+# tree-sitter CLI regenerates the editor grammar's parser
+# (editors/tree-sitter-sinter, `just tree-sitter`); keep its version in sync
+# with scripts/tree-sitter.sh and the CI workflow.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+        -o /tmp/node.tar.xz \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && node --version
+ARG TREE_SITTER_VERSION=0.27.1
+RUN curl -fsSL "https://github.com/tree-sitter/tree-sitter/releases/download/v${TREE_SITTER_VERSION}/tree-sitter-linux-x64.gz" \
+        | gunzip > /usr/local/bin/tree-sitter \
+    && chmod +x /usr/local/bin/tree-sitter \
+    && tree-sitter --version
+
 # --- Non-root user ---------------------------------------------------------
 ARG USERNAME=vscode
 ARG USER_UID=1000

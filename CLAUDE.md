@@ -11,6 +11,7 @@ change — hand-written *and* compiler-generated — must follow.
 crates/sinter-syntax     grammar (.pest) + AST + parser + multi-file loader for `.snt`
 crates/sinter-compiler   semantic checks + elaboration + Verilog/Rust-sim/Verilator backends
 crates/sinter-lang       `sinter` CLI binary (published crate: sinter-lang)
+editors/tree-sitter-sinter  tree-sitter grammar + highlight queries (editors only)
 examples/                example `.snt` programs (also the oracle corpus)
 scripts/                 task scripts wrapped by the justfile (shared by dev shell + CI)
 .claude/skills/          coding-standard skills (git submodules; see below)
@@ -80,6 +81,12 @@ backends. The stages, in order:
 6. **`ir_cse::share_muls`** (multiplex only) — collapse the desugar's shared,
    SROA-duplicated multiply into one physical multiplier, inserting each shared
    wire just before its first reader.
+
+**When the surface syntax changes**, update the editor grammar too:
+`editors/tree-sitter-sinter/grammar.js` (then `just tree-sitter` and commit
+`src/`) and its `queries/highlights.scm`. `cargo test -p tree-sitter-sinter`
+parses every corpus `pass/` case and example and fails on any error node, so a
+new case or example it can't parse is caught.
 
 **Gotcha when adding an AST `ExprKind` / `Pattern` / `TypeRef` variant:** every
 stage above matches it exhaustively, and so do `pipeline_desugar`,
