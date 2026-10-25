@@ -2,7 +2,8 @@
 //!
 //! Subcommands:
 //! - `check` — parse and semantically check a `.snt` source.
-//! - `build` — emit SystemVerilog and a Verilator C++ harness per module.
+//! - `build` — emit SystemVerilog, a Verilator C++ harness, and a compiled Rust
+//!   simulator crate per module.
 //! - `sim`   — run the cycle-accurate reference model over random or directed
 //!   (CSV) stimulus, checking any expected outputs.
 
@@ -22,7 +23,9 @@ use sinter_compiler::pinmap::PinMap;
 use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
 use sinter_compiler::stimulus::{format_value, Stimulus};
 use sinter_compiler::vcd::VcdWriter;
-use sinter_compiler::{board, compile_project_faults, fault_latch, verilator, verilog, FaultMode};
+use sinter_compiler::{
+    board, compile_project_faults, fault_latch, rust_sim, verilator, verilog, FaultMode,
+};
 
 /// The Sinter HDL compiler.
 #[derive(Parser)]
@@ -39,7 +42,8 @@ enum Command {
         /// Path to a `.snt` source file.
         file: PathBuf,
     },
-    /// Emit backend artifacts (SystemVerilog and/or a Verilator harness).
+    /// Emit backend artifacts (SystemVerilog, a Verilator harness, a Rust
+    /// simulator crate).
     Build {
         /// Path to a `.snt` source file.
         file: PathBuf,
@@ -91,7 +95,9 @@ enum Emit {
     Verilog,
     /// Verilator C++ harness only.
     Harness,
-    /// Both.
+    /// A standalone Rust simulator crate, `<out>/<module>-sim/` (DESIGN §7.2).
+    Rust,
+    /// All of the above.
     All,
 }
 
@@ -189,6 +195,20 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
             fs::write(&path, verilator::emit_cpp_harness(m))
                 .with_context(|| format!("writing `{}`", path.display()))?;
             info!("wrote {}", path.display());
+        }
+        if matches!(emit, Emit::Rust | Emit::All) {
+            let name = rust_sim::crate_name(m);
+            let dir = out.join(&name);
+            for (rel, contents) in rust_sim::emit_crate(m, &name) {
+                let path = dir.join(rel);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("creating `{}`", parent.display()))?;
+                }
+                fs::write(&path, contents)
+                    .with_context(|| format!("writing `{}`", path.display()))?;
+            }
+            info!("wrote {}", dir.display());
         }
         // FLT1b: with `--faults`, emit the offline `code -> backtrace` fault table
         // alongside the SV so a latched `fault_code` can be decoded (DESIGN §6.12).

@@ -1034,6 +1034,13 @@ over a lossless tree stays possible after 1.0, since it changes no syntax.
    fixed-point throughout; emits **binary trace files** for field-by-field
    comparison. (Aligns with the user's existing `systemrs` TLM + Verilator trace
    methodology.)
+   **Realized (v0.7):** two forms share one arithmetic (`sim_runtime.rs`): the
+   interpreter behind `sinter sim` and the oracle, and `sinter build --emit
+   rust`, a standalone, dependency-free crate per design whose `step` is
+   straight-line code over the IR (`rust_sim.rs`), with typed `Inputs` /
+   `Outputs` for Rust testbenches (`docs/generated-rust.md`). The oracle runs
+   every case through both, so the compiled model is checked against the
+   interpreter and, through it, the Verilog.
 2. **Portable / host-compatible Verilog** backend. Fixed-point, `Option`,
    enums, and width-inferred wide intermediates all **erase to plain bit vectors
    + a few localparams** at the Verilog boundary. The type system is

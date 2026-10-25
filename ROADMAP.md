@@ -119,22 +119,32 @@ hold every value in a `u64`); wider values are post-1.0.
 - Values wider than 64 bits.
 - Native place-and-route (§7.5).
 
+## v0.7 — engine
+
+- [x] **Generated-Rust simulator** (DESIGN §7.2): `sinter build --emit rust`
+      produces a standalone crate with a typed `step()` API for Rust
+      testbenches, cross-checked against the interpreter (and so the Verilog)
+      on every oracle case. About 60× the interpreter's speed.
+- [ ] Program fuzzer: generate random valid `.snt` programs and run each
+      through the sim-vs-Verilog oracle.
+- [ ] **Diagnostics: multiple errors**: one run reports more than the first
+      semantic error (parsing still stops at the first syntax error, §7.1).
+
+## v0.8 — tooling
+
+- [ ] tree-sitter grammar (`editors/tree-sitter-sinter/`) with highlight
+      queries, tested against the parser corpus (§7.1).
+- [ ] VS Code syntax highlighting (`editors/vscode/`): a TextMate grammar and
+      language configuration, packaged as a `.vsix`. A full LSP can follow
+      1.0.
+- [ ] CI against more than one Yosys / Verilator version.
+
 ## v0.9 — release candidate
 
 - [ ] Language reference and tutorial written for users, separate from
-      DESIGN.md.
-- [ ] tree-sitter grammar + VS Code syntax highlighting (a full LSP can follow
-      1.0), tested against the parser corpus (§7.1).
-- [ ] **Diagnostics: multiple errors**: one run reports more than the first
-      semantic error (parsing still stops at the first syntax error, §7.1).
-- [ ] **Generated-Rust simulator** (DESIGN §7.2): `sinter build --emit rust`
-      producing a compiled, Verilator-class model with a `step()` API for
-      Rust testbenches, cross-checked against the interpreter and the Verilog.
-- [ ] Program fuzzer: generate random valid `.snt` programs and run each
-      through the sim-vs-Verilog oracle.
-- [ ] CI against more than one Yosys / Verilator version.
-- [ ] Publish `sinter-syntax`, `sinter-compiler`, `sinter-lang` to crates.io.
+      DESIGN.md: an mdBook under `docs/book/`, its examples compiled by a test.
 - [ ] Written stability / semver policy.
+- [ ] Publish `sinter-syntax`, `sinter-compiler`, `sinter-lang` to crates.io.
 
 ## 1.0 exit criteria
 

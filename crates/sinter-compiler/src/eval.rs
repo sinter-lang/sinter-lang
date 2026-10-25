@@ -3,7 +3,8 @@
 //! Both the constant-folder (reset values) and the cycle-accurate simulator
 //! call into these functions, and the Verilog backend is written to match them
 //! bit-for-bit. Centralizing the operator semantics here is what keeps the two
-//! lowerings in agreement (DESIGN §7.4).
+//! lowerings in agreement (DESIGN §7.4). The arithmetic itself is
+//! `sim_runtime.rs`'s, which the generated Rust simulator shares.
 //!
 //! Values are carried as `u64` bit patterns masked to their type's width. All
 //! widths are ≤ 64 (enforced by the checker), so arithmetic stays exact.
@@ -12,60 +13,66 @@ use std::collections::HashMap;
 
 use sinter_syntax::ast::{BinOp, CastMode, Type, UnaryOp};
 
-use crate::error::{mask, signed_value};
 use crate::ir::{Expr, ExprKind};
+use crate::sim_runtime as rt;
+
+/// A [`Type`] as the runtime's [`rt::Ty`].
+#[must_use]
+pub(crate) fn rt_ty(ty: Type) -> rt::Ty {
+    match ty {
+        Type::Uint(w) => rt::u(w),
+        Type::Int(w) => rt::i(w),
+    }
+}
+
+/// A unary operator as the runtime's [`rt::Un`].
+#[must_use]
+pub(crate) fn rt_un(op: UnaryOp) -> rt::Un {
+    match op {
+        UnaryOp::Not => rt::Un::Not,
+        UnaryOp::BitNot => rt::Un::BitNot,
+        UnaryOp::Neg => rt::Un::Neg,
+    }
+}
+
+/// A binary operator as the runtime's [`rt::Bin`].
+///
+/// # Panics
+/// On a shift or concatenation, which lower to their own IR nodes and never
+/// reach a `Binary` (DESIGN §6.13 / §9.10).
+#[must_use]
+pub(crate) fn rt_bin(op: BinOp) -> rt::Bin {
+    match op {
+        BinOp::Add => rt::Bin::Add,
+        BinOp::Sub => rt::Bin::Sub,
+        BinOp::Mul => rt::Bin::Mul,
+        BinOp::And => rt::Bin::And,
+        BinOp::Or => rt::Bin::Or,
+        BinOp::Xor => rt::Bin::Xor,
+        BinOp::Eq => rt::Bin::Eq,
+        BinOp::Ne => rt::Bin::Ne,
+        BinOp::Lt => rt::Bin::Lt,
+        BinOp::Gt => rt::Bin::Gt,
+        BinOp::Le => rt::Bin::Le,
+        BinOp::Ge => rt::Bin::Ge,
+        BinOp::Shl | BinOp::Shr | BinOp::Concat => {
+            unreachable!("shift/concat lower to ExprKind nodes, not a Binary op")
+        }
+    }
+}
 
 /// Apply a unary operator to a masked operand value.
 #[must_use]
 pub fn apply_unary(op: UnaryOp, v: u64, operand_ty: Type) -> u64 {
-    let w = operand_ty.width();
-    match op {
-        // Logical not on a 1-bit value.
-        UnaryOp::Not => u64::from(v == 0),
-        UnaryOp::BitNot => mask(!v, w),
-        UnaryOp::Neg => mask(v.wrapping_neg(), w),
-    }
+    rt::unary(rt_un(op), v, rt_ty(operand_ty))
 }
 
 /// Apply a binary operator. Arithmetic/bitwise results are masked to
-/// `result_ty`; comparisons yield a 1-bit `0`/`1`. Operand types are equal
-/// (enforced by the checker) and determine signed vs unsigned comparison.
+/// `result_ty`; comparisons yield a 1-bit `0`/`1`. Operand types determine
+/// signed vs unsigned comparison.
 #[must_use]
 pub fn apply_binary(op: BinOp, l: u64, lty: Type, r: u64, rty: Type, result_ty: Type) -> u64 {
-    let w = result_ty.width();
-    match op {
-        // Operands are extended to the (possibly wider) result type before the
-        // op, so width-inferred `+`/`-` (DESIGN §6.2) is exact for signed
-        // operands too. A no-op when the widths already match.
-        BinOp::Add => mask(ext(l, lty, w).wrapping_add(ext(r, rty, w)), w),
-        BinOp::Sub => mask(ext(l, lty, w).wrapping_sub(ext(r, rty, w)), w),
-        // Operands are extended to the (wider) product type, so signed and
-        // unsigned multiply share one masked low-`w`-bits implementation
-        // (DESIGN §6.2: `Qa.b * Qc.d -> Q(a+c).(b+d)`).
-        BinOp::Mul => mask(ext(l, lty, w).wrapping_mul(ext(r, rty, w)), w),
-        BinOp::And => mask(l & r, w),
-        BinOp::Or => mask(l | r, w),
-        BinOp::Xor => mask(l ^ r, w),
-        // Shifts lower to `ir::ExprKind::Shl`/`Shr` and concat to `Shl` + `Or`,
-        // so none is ever emitted as a `Binary` op (DESIGN §6.13 / §9.10).
-        BinOp::Shl | BinOp::Shr | BinOp::Concat => {
-            unreachable!("shift/concat lower to ExprKind nodes, not a Binary op")
-        }
-        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-            let a = signed_value(l, lty);
-            let b = signed_value(r, rty);
-            let result = match op {
-                BinOp::Eq => a == b,
-                BinOp::Ne => a != b,
-                BinOp::Lt => a < b,
-                BinOp::Gt => a > b,
-                BinOp::Le => a <= b,
-                BinOp::Ge => a >= b,
-                _ => unreachable!("outer match restricts to comparisons"),
-            };
-            u64::from(result)
-        }
-    }
+    rt::binary(rt_bin(op), l, rt_ty(lty), r, rt_ty(rty), rt_ty(result_ty))
 }
 
 /// Evaluate a typed expression against an environment mapping readable names to
@@ -104,23 +111,17 @@ pub fn eval_expr(expr: &Expr, env: &HashMap<String, u64>) -> u64 {
             expr: inner,
             amount,
         } => apply_shr(eval_expr(inner, env), inner.ty, expr.ty.width(), *amount),
-        // Variable (barrel) shift, same operand width. Reuses the const-shift
-        // helpers with the runtime amount clamped (they already treat an amount
-        // `>= width` as `0` / sign-fill).
+        // Variable (barrel) shift, same operand width.
         ExprKind::VarShift {
             expr: inner,
             amount,
             left,
-        } => {
-            let v = eval_expr(inner, env);
-            let sh = u32::try_from(eval_expr(amount, env)).unwrap_or(u32::MAX);
-            let w = expr.ty.width();
-            if *left {
-                apply_shl(v, w, sh)
-            } else {
-                apply_shr(v, inner.ty, w, sh)
-            }
-        }
+        } => rt::var_shift(
+            eval_expr(inner, env),
+            eval_expr(amount, env),
+            rt_ty(inner.ty),
+            *left,
+        ),
     }
 }
 
@@ -128,11 +129,7 @@ pub fn eval_expr(expr: &Expr, env: &HashMap<String, u64>) -> u64 {
 /// value scales by `2^amount`.
 #[must_use]
 pub fn apply_shl(v: u64, to_w: u32, amount: u32) -> u64 {
-    if amount >= 64 {
-        0
-    } else {
-        mask(v << amount, to_w)
-    }
+    rt::shl(v, to_w, amount)
 }
 
 /// Right shift `v` (of type `from`) by `amount`, masked to the (narrower) result
@@ -140,58 +137,17 @@ pub fn apply_shl(v: u64, to_w: u32, amount: u32) -> u64 {
 /// unsigned.
 #[must_use]
 pub fn apply_shr(v: u64, from: Type, to_w: u32, amount: u32) -> u64 {
-    if from.is_signed() {
-        // `signed_value` is i128, so the shift is always well-defined.
-        mask((signed_value(v, from) >> amount.min(127)) as u64, to_w)
-    } else if amount >= 64 {
-        0
-    } else {
-        mask(v >> amount, to_w)
-    }
-}
-
-/// Extend a masked operand `v` of type `from` to a `to_w`-bit value, sign-
-/// extending signed operands and zero-extending unsigned ones. A no-op when the
-/// operand is already at least `to_w` bits wide.
-fn ext(v: u64, from: Type, to_w: u32) -> u64 {
-    let fw = from.width();
-    if from.is_signed() && fw > 0 && fw < to_w && (v >> (fw - 1)) & 1 == 1 {
-        let hi = if to_w >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << to_w) - 1
-        };
-        let low = if fw >= 64 { u64::MAX } else { (1u64 << fw) - 1 };
-        v | (hi & !low)
-    } else {
-        v
-    }
+    rt::shr(v, rt_ty(from), to_w, amount)
 }
 
 /// Apply a mode-named cast (DESIGN §6.3), converting a masked value of type
 /// `from` to type `to`. The result is masked to `to`'s width.
 #[must_use]
 pub fn apply_cast(v: u64, from: Type, to: Type, mode: CastMode) -> u64 {
-    let to_w = to.width();
     match mode {
-        // Resize: sign/zero-extend (per the source type) when widening, truncate
-        // the high bits when narrowing. `trunc`/`round` never reach the IR (the
-        // elaborator lowers them to shifts); kept here for match exhaustiveness.
-        CastMode::Wrap | CastMode::Trunc | CastMode::Round => mask(ext(v, from, to_w), to_w),
-        CastMode::Sat => {
-            let val = signed_value(v, from);
-            let (lo, hi) = range_of(to);
-            mask(val.clamp(lo, hi) as u64, to_w)
-        }
-    }
-}
-
-/// The inclusive value range of a scalar type, as `i128` (widths are ≤ 64).
-fn range_of(ty: Type) -> (i128, i128) {
-    let w = ty.width();
-    if ty.is_signed() {
-        (-(1i128 << (w - 1)), (1i128 << (w - 1)) - 1)
-    } else {
-        (0, (1i128 << w) - 1)
+        // `trunc` / `round` never reach the IR (the elaborator lowers them to
+        // shifts); kept here for match exhaustiveness.
+        CastMode::Wrap | CastMode::Trunc | CastMode::Round => rt::wrap(v, rt_ty(from), rt_ty(to)),
+        CastMode::Sat => rt::sat(v, rt_ty(from), rt_ty(to)),
     }
 }

@@ -5,6 +5,17 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Added
+
+- **A compiled Rust simulator** (DESIGN §7.2): `sinter build --emit rust`
+  (also in `--emit all`) writes `<out>/<module>-sim/`, a dependency-free
+  crate with typed `Inputs` / `Outputs` and a `step()` per clock cycle, for
+  Rust testbenches. It runs about 60× faster than `sinter sim`. The oracle
+  checks it against the interpreter, and so the Verilog, on every example.
+  See [`docs/generated-rust.md`](docs/generated-rust.md).
+
 ## [0.6.0] — unreleased
 
 ### Removed

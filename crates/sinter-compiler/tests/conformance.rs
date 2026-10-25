@@ -5,6 +5,9 @@
 //! available — (1) synthesize the SV with Yosys and (2) simulate it with
 //! Verilator, asserting its output trace matches the reference bit-for-bit.
 //!
+//! Every case's generated Rust simulator (`--emit rust`, DESIGN §7.2) is also
+//! built and run over the same stimulus, and must match the reference too.
+//!
 //! Yosys/Verilator steps auto-skip when the tools are absent (e.g. a plain
 //! sandbox) and run in the devcontainer / CI where `oss-cad-suite` provides
 //! them. Set `SINTER_REQUIRE_TOOLS=1` to make their absence a failure.
@@ -15,7 +18,7 @@ use std::process::Command;
 use sinter_compiler::ir::Module;
 use sinter_compiler::sim::{gen_stimulus, run_reference, stimulus_to_bytes, Simulator};
 use sinter_compiler::stimulus::Stimulus;
-use sinter_compiler::{compile_str, verilator, verilog};
+use sinter_compiler::{compile_str, rust_sim, verilator, verilog};
 
 const CYCLES: usize = 64;
 
@@ -692,4 +695,150 @@ fn wrong_verilog_model_fails_the_oracle() {
         reference, dut,
         "a wrong `#[verilog]` model must disagree with the real module"
     );
+}
+
+/// Generated-simulator edge cases with no example of their own: a design with
+/// no inputs, and inputs named after Rust keywords (raw identifiers).
+const RUST_SIM_EXTRA: &[Example] = &[
+    Example {
+        name: "rsim_no_inputs",
+        source: "struct Free { pub n: u4 = 3, }\n\
+                 impl Free {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self) -> Free { Free { n: (self.n + 1) as u4 wrap } }\n\
+                 }",
+    },
+    Example {
+        name: "rsim_keywords",
+        source: "struct Kw { pub acc: i12 = 0, }\n\
+                 impl Kw {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self, loop: i12, move: u1) -> Kw {\n\
+                 \x20       Kw { acc: if move == 1 { (self.acc - loop) as i12 wrap } else { self.acc } }\n\
+                 \x20   }\n\
+                 }",
+    },
+];
+
+/// Write `contents` to `path` unless it already holds exactly that, so cargo
+/// doesn't rebuild an unchanged crate.
+fn write_if_changed(path: &Path, contents: &str) {
+    if std::fs::read_to_string(path).is_ok_and(|old| old == contents) {
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create dir");
+    }
+    std::fs::write(path, contents).expect("write file");
+}
+
+/// The generated Rust simulator (`--emit rust`, DESIGN §7.2) of every oracle
+/// case matches the interpreter over the same stimulus. The interpreter is
+/// itself diffed against Verilator above, so this ties the compiled model to
+/// the Verilog too.
+///
+/// The cases' crates live in one cargo workspace under the test's target
+/// directory, with a harness binary that runs any of them over a raw stimulus
+/// file. Unchanged crates aren't rewritten, so reruns are incremental.
+#[test]
+fn examples_match_the_generated_rust_simulator() {
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rust-sim");
+    let mut cases = all_cases();
+    cases.extend(
+        RUST_SIM_EXTRA
+            .iter()
+            .map(|ex| (ex.name.to_string(), compile_one(ex.source), CYCLES)),
+    );
+    let mut members = vec!["\"harness\"".to_string()];
+    let mut deps = String::new();
+    let mut arms = String::new();
+    for (name, module, _) in &cases {
+        let krate = format!("{name}-sim");
+        for (rel, contents) in rust_sim::emit_crate(module, &krate) {
+            write_if_changed(&root.join(&krate).join(rel), &contents);
+        }
+        members.push(format!("{krate:?}"));
+        deps.push_str(&format!("{krate} = {{ path = \"../{krate}\" }}\n"));
+        let lib = krate.replace('-', "_");
+        let ni = module.inputs().count();
+        arms.push_str(&format!(
+            "        {name:?} => {{\n\
+             \x20           let rows: Vec<[u64; {ni}]> = if {ni} == 0 {{\n\
+             \x20               vec![[0; {ni}]; cycles]\n\
+             \x20           }} else {{\n\
+             \x20               stim.chunks_exact({ni}.max(1))\n\
+             \x20                   .map(|c| core::array::from_fn(|k| c[k]))\n\
+             \x20                   .collect()\n\
+             \x20           }};\n\
+             \x20           {lib}::{}::run_raw(&rows).iter().flatten().copied().collect()\n\
+             \x20       }}\n",
+            rust_sim::model_name(module)
+        ));
+    }
+    write_if_changed(
+        &root.join("Cargo.toml"),
+        &format!(
+            "[workspace]\nresolver = \"2\"\nmembers = [{}]\n",
+            members.join(", ")
+        ),
+    );
+    write_if_changed(
+        &root.join("harness/Cargo.toml"),
+        &format!(
+            "[package]\nname = \"harness\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
+             publish = false\n\n[dependencies]\n{deps}"
+        ),
+    );
+    write_if_changed(
+        &root.join("harness/src/main.rs"),
+        &format!(
+            "//! Run one case's generated simulator over a raw stimulus file:\n\
+             //! `harness <case> <cycles> <stimulus.bin> <trace.bin>`.\n\n\
+             fn main() {{\n\
+             \x20   let args: Vec<String> = std::env::args().collect();\n\
+             \x20   let cycles: usize = args[2].parse().expect(\"cycles\");\n\
+             \x20   let bytes = std::fs::read(&args[3]).expect(\"read stimulus\");\n\
+             \x20   let stim: Vec<u64> = bytes\n\
+             \x20       .chunks_exact(8)\n\
+             \x20       .map(|b| u64::from_le_bytes(b.try_into().expect(\"8 bytes\")))\n\
+             \x20       .collect();\n\
+             \x20   let out: Vec<u64> = match args[1].as_str() {{\n\
+             {arms}\
+             \x20       other => panic!(\"unknown case {{other}}\"),\n\
+             \x20   }};\n\
+             \x20   let trace: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();\n\
+             \x20   std::fs::write(&args[4], trace).expect(\"write trace\");\n\
+             }}\n"
+        ),
+    );
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(&cargo)
+        .args(["build", "--quiet", "--manifest-path"])
+        .arg(root.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", root.join("target"))
+        .status()
+        .expect("run cargo");
+    assert!(status.success(), "building the generated simulators failed");
+    let harness = root.join("target/debug/harness");
+
+    for (name, module, cycles) in &cases {
+        let stimulus = gen_stimulus(module, *cycles, 0xDEAD_BEEF);
+        let stim_path = root.join(format!("{name}.stim"));
+        let trace_path = root.join(format!("{name}.trace"));
+        std::fs::write(&stim_path, stimulus_to_bytes(&stimulus)).expect("write stimulus");
+        let status = Command::new(&harness)
+            .arg(name)
+            .arg(cycles.to_string())
+            .arg(&stim_path)
+            .arg(&trace_path)
+            .status()
+            .expect("run harness");
+        assert!(status.success(), "{name}: the generated simulator failed");
+        let got = std::fs::read(&trace_path).expect("read trace");
+        assert!(
+            got == run_reference(module, &stimulus),
+            "{name}: the generated Rust simulator diverges from the interpreter"
+        );
+    }
 }

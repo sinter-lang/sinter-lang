@@ -40,6 +40,10 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
   (barrel) shifts.
 - **Faults**: sim-only `assert!` / `debug_assert!` with a static inlined
   backtrace, and an opt-in silicon fault latch (`sinter build --faults`).
+- **Simulation**: `sinter sim` runs the cycle-accurate reference model over
+  random or CSV stimulus (with expected outputs and VCD), and
+  `sinter build --emit rust` writes a compiled simulator crate for Rust
+  testbenches, about 60× faster.
 - **Boards**: a `.pins` pin map that emits a board-top wrapper + nextpnr PCF.
 - **Foreign Verilog**: a `#[verilog(module = "...", src = "...")]` binding
   instantiates existing Verilog IP. Its Sinter reference model runs in
@@ -65,7 +69,9 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
   layer yet.
 
 To use the emitted SystemVerilog from your own Verilog (port names, reset,
-timing), see [`docs/generated-verilog.md`](docs/generated-verilog.md).
+timing), see [`docs/generated-verilog.md`](docs/generated-verilog.md). To
+test a design from Rust, `sinter build --emit rust` writes a compiled
+simulator crate; see [`docs/generated-rust.md`](docs/generated-rust.md).
 
 ## Workspace layout
 
@@ -178,7 +184,8 @@ Working inside this repository (devcontainer or any machine with Rust +
 # Parse and type-check a source file.
 cargo run -p sinter-lang -- check examples/fn_counter.snt
 
-# Emit SystemVerilog + a Verilator C++ harness into ./build.
+# Emit SystemVerilog, a Verilator C++ harness, and a Rust simulator crate
+# into ./build.
 cargo run -p sinter-lang -- build examples/fn_counter.snt
 
 # Run the cycle-accurate reference simulator over a deterministic stimulus.

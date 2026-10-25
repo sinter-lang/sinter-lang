@@ -15,8 +15,9 @@ use std::collections::HashMap;
 use sinter_syntax::ast::{BinOp, CastMode, Type, UnaryOp};
 
 use crate::error::mask;
-use crate::eval::{apply_binary, apply_cast, apply_shl, apply_shr, apply_unary};
+use crate::eval::{apply_binary, apply_cast, apply_shl, apply_shr, apply_unary, rt_ty};
 use crate::ir::{Expr, ExprKind, Module};
+use crate::sim_runtime as rt;
 
 /// A sim-only assertion failure (DESIGN §6.12, FLT0): an `assert!` whose
 /// condition read false during a cycle. Recorded rather than panicked so callers
@@ -45,7 +46,7 @@ enum Node {
     Cast(Box<Node>, Type, Type, CastMode),
     Shl(Box<Node>, u32, u32),
     Shr(Box<Node>, Type, u32, u32),
-    VarShift(Box<Node>, Box<Node>, Type, u32, bool),
+    VarShift(Box<Node>, Box<Node>, Type, bool),
 }
 
 impl Node {
@@ -67,7 +68,7 @@ impl Node {
             ExprKind::Shl { expr, amount } => Node::Shl(c(expr), e.ty.width(), *amount),
             ExprKind::Shr { expr, amount } => Node::Shr(c(expr), expr.ty, e.ty.width(), *amount),
             ExprKind::VarShift { expr, amount, left } => {
-                Node::VarShift(c(expr), c(amount), expr.ty, e.ty.width(), *left)
+                Node::VarShift(c(expr), c(amount), expr.ty, *left)
             }
         }
     }
@@ -90,16 +91,9 @@ impl Node {
             Node::Cast(x, from, to, mode) => apply_cast(x.eval(env), *from, *to, *mode),
             Node::Shl(x, to_w, amount) => apply_shl(x.eval(env), *to_w, *amount),
             Node::Shr(x, from, to_w, amount) => apply_shr(x.eval(env), *from, *to_w, *amount),
-            // Variable (barrel) shift, same operand width: the const-shift
-            // helpers already treat an amount `>= width` as 0 / sign fill.
-            Node::VarShift(x, amount, from, w, left) => {
-                let v = x.eval(env);
-                let sh = u32::try_from(amount.eval(env)).unwrap_or(u32::MAX);
-                if *left {
-                    apply_shl(v, *w, sh)
-                } else {
-                    apply_shr(v, *from, *w, sh)
-                }
+            // Variable (barrel) shift, same operand width.
+            Node::VarShift(x, amount, from, left) => {
+                rt::var_shift(x.eval(env), amount.eval(env), rt_ty(*from), *left)
             }
         }
     }
@@ -408,15 +402,7 @@ impl<'a> Simulator<'a> {
             let idx = w.addr.eval(&self.env) as usize;
             let data = w.data.eval(&self.env);
             if let Some(cell) = self.mem[w.mem].get_mut(idx) {
-                if w.lanes == 1 {
-                    *cell = data;
-                } else {
-                    // Replace only the enabled byte lanes.
-                    let keep = (0..w.lanes)
-                        .filter(|i| (we >> i) & 1 == 1)
-                        .fold(0u64, |m, i| m | (0xFF << (8 * i)));
-                    *cell = (*cell & !keep) | (data & keep);
-                }
+                rt::write_lanes(cell, we, data, w.lanes);
             }
         }
 

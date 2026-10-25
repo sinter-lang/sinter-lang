@@ -41,8 +41,9 @@ The `sinter` CLI has three subcommands (a `.snt` path is compiled as the root of
 a possibly-multi-file project — sibling `mod`s are pulled in automatically):
 
 - `sinter check <file.snt>` — parse + type-check, report errors.
-- `sinter build <file.snt> --emit verilog|harness|all [--out DIR] [--pins F.pins]`
-  — emit backend artifacts (default out dir `build/`).
+- `sinter build <file.snt> --emit verilog|harness|rust|all [--out DIR] [--pins F.pins]`
+  — emit backend artifacts (default out dir `build/`); `rust` is a standalone
+  simulator crate, `<out>/<module>-sim/` (`rust_sim.rs`, `docs/generated-rust.md`).
 - `sinter sim <file.snt> [--cycles N --seed S | --stimulus F.csv] [--trace
   trace.bin] [--vcd F.vcd]` — run the cycle-accurate reference simulator over
   random or directed CSV stimulus (`stimulus.rs`); `expect.<output>` columns
@@ -212,6 +213,12 @@ the functional surface is the only one.)
     `--faults on|off` (`compile_str_faults` / CLI `build --faults`). `off` is
     byte-identical to the assert-free module; `on` co-simulates the sideband
     bit-for-bit (`fn_fault`).
+- **Simulators** (DESIGN §7.2) — the interpreter (`sim.rs`, behind `sinter sim`
+  and the oracle) and the generated crate (`rust_sim.rs`, `--emit rust`) share
+  one arithmetic, `sim_runtime.rs`: `eval.rs` wraps it, and it is copied into
+  each crate as `src/runtime.rs`, so keep it self-contained (no `crate::`).
+  The oracle builds every case's crate under `target/tmp/rust-sim/` and diffs
+  its trace against the interpreter's.
 - **Foreign Verilog modules** (EXT1, §6.15 / §9.13) — a
   `#[verilog(module, src, clk, rst_n)]` attribute on a state struct binds it to
   an existing Verilog module; its one `step(self, ..) -> (Self, Out)` method is
