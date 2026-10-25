@@ -69,6 +69,18 @@ RUN curl -fsSL "https://github.com/tree-sitter/tree-sitter/releases/download/v${
     && chmod +x /usr/local/bin/tree-sitter \
     && tree-sitter --version
 
+# --- mdBook ----------------------------------------------------------------
+# Builds the user guide in docs/book (`just book`). Keep the version in sync
+# with scripts/book.sh and the CI workflow.
+ARG MDBOOK_VERSION=0.5.4
+ARG MDBOOK_SHA256=3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7
+RUN curl -fsSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+        -o /tmp/mdbook.tar.gz \
+    && echo "${MDBOOK_SHA256}  /tmp/mdbook.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/mdbook.tar.gz -C /usr/local/bin mdbook \
+    && rm /tmp/mdbook.tar.gz \
+    && mdbook --version
+
 # --- Non-root user ---------------------------------------------------------
 ARG USERNAME=vscode
 ARG USER_UID=1000

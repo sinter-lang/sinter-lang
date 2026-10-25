@@ -14,6 +14,7 @@ crates/sinter-lang       `sinter` CLI binary (published crate: sinter-lang)
 editors/tree-sitter-sinter  tree-sitter grammar + highlight queries (editors only)
 editors/vscode           VS Code extension: TextMate grammar (`just vsix`)
 examples/                example `.snt` programs (also the oracle corpus)
+docs/book/               the user guide + language reference (mdBook; `just book`)
 scripts/                 task scripts wrapped by the justfile (shared by dev shell + CI)
 .claude/skills/          coding-standard skills (git submodules; see below)
 ```
@@ -23,6 +24,10 @@ scripts/                 task scripts wrapped by the justfile (shared by dev she
 - The conformance oracle harness is `crates/sinter-compiler/tests/conformance.rs`
   (there is **no** top-level `tests/`); parser goldens live in
   `crates/sinter-syntax/tests/corpus/`.
+- `STABILITY.md` is the semver policy: what 1.0 keeps stable (the language,
+  the generated module's ports, the CLI and its input files, the generated
+  Rust simulator's API) and what it doesn't (Verilog internals, diagnostics,
+  the library crates' Rust APIs).
 
 ## Building, running, and the task runner
 
@@ -45,6 +50,12 @@ the devcontainer, and CI (`just ci` reproduces the GitHub pipeline step for step
   in `tests/support/oracle.rs`.
 - `just verilog` — emit SystemVerilog for every example into `build/verilog/`
   (git-ignored); `just board` emits the board-top wrapper + nextpnr PCF.
+- `just book [serve]` — build the book into `build/book/` with the pinned
+  mdBook. `cargo test` compiles every ```` ```sinter ```` block in it
+  (`crates/sinter-compiler/tests/book.rs`, which documents the `~` hidden-line
+  prefix and the `ignore` / `fail` / `project=` flags).
+- `just package` — `cargo publish --workspace --dry-run`: the three published
+  crates package and build from their packages (CI runs it).
 
 The `sinter` CLI has three subcommands (a `.snt` path is compiled as the root of
 a possibly-multi-file project — sibling `mod`s are pulled in automatically):
@@ -82,6 +93,11 @@ backends. The stages, in order:
 6. **`ir_cse::share_muls`** (multiplex only) — collapse the desugar's shared,
    SROA-duplicated multiply into one physical multiplier, inserting each shared
    wire just before its first reader.
+
+**When the language or CLI changes**, update the book: the reference page that
+covers it, `appendix/limitations.md` if a limitation goes away, and any
+example output it quotes. The book describes what is *implemented*; DESIGN.md
+also covers what is planned.
 
 **When the surface syntax changes**, update both editor grammars too:
 `editors/tree-sitter-sinter/grammar.js` (then `just tree-sitter` and commit

@@ -9,8 +9,9 @@ to match bit for bit. It is about 60× faster than `sinter sim`'s interpreter
 (31 million cycles per second for the pipelined RV32 core in
 `examples/rv32/pipe.snt`, on one core).
 
-Before 1.0 the API may still change, and any change will be listed in the
-[CHANGELOG](../CHANGELOG.md).
+From 1.0 this interface is stable; until then it may change, and any
+change will be listed in the [CHANGELOG](https://github.com/sinter-lang/sinter-lang/blob/master/CHANGELOG.md). See
+[Stability and versioning](https://github.com/sinter-lang/sinter-lang/blob/master/STABILITY.md).
 
 ## The crate
 
@@ -66,7 +67,7 @@ for cycle in 0..10 {
 - **`Inputs::NAMES`**, `from_raw` / `to_raw`, and **`run_raw(&[[u64; N]])`**
   work with raw bit patterns in port order, for replaying traces.
 
-**Several clock domains** (DESIGN §6.7). Each `step` advances to the next
+**Several clock domains.** Each `step` advances to the next
 clock edge, as `sinter sim` does: the domains with an edge at that time take
 their inputs from `Inputs` and update, and the others hold, ignoring their
 fields. `time()` gives the edge time in period units, and `ticked()` says which

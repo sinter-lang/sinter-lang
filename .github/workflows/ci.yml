@@ -9,12 +9,14 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   # Keep these in sync with .devcontainer/Dockerfile (ARG JUST_VERSION,
-  # OSS_CAD_SUITE_*, NODE_VERSION, TREE_SITTER_VERSION).
+  # OSS_CAD_SUITE_*, NODE_VERSION, TREE_SITTER_VERSION, MDBOOK_*).
   JUST_VERSION: 1.54.0
   OSS_CAD_SUITE_VERSION: "20260127"
   OSS_CAD_SUITE_DATE: 2026-01-27
   NODE_VERSION: 24.22.1
   TREE_SITTER_VERSION: 0.27.1
+  MDBOOK_VERSION: 0.5.4
+  MDBOOK_SHA256: 3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7
 
 jobs:
   build-and-test:
@@ -94,6 +96,9 @@ jobs:
       - name: Build release
         run: just build
 
+      - name: Package (publish dry run)
+        run: just package
+
   editors:
     # The editor grammars: the committed tree-sitter parser must match
     # grammar.js, and the VS Code extension must test and package.
@@ -129,4 +134,34 @@ jobs:
         with:
           name: vsix
           path: build/sinter-*.vsix
+          if-no-files-found: error
+
+  book:
+    # The user guide renders. Its code samples are compiled by the test suite
+    # (crates/sinter-compiler/tests/book.rs), not here.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mdBook
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/mdbook.tar.gz \
+            "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${MDBOOK_SHA256}  /tmp/mdbook.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/mdbook.tar.gz -C "$HOME/.local/bin" mdbook
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+            | bash -s -- --tag "${JUST_VERSION}" --to "$HOME/.local/bin"
+
+      - name: Build the book
+        run: just book
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: book
+          path: build/book
           if-no-files-found: error

@@ -3,9 +3,10 @@
 `sinter build` emits one SystemVerilog module per design. This page describes
 that module's interface, so that hand-written Verilog can instantiate it. The
 rules are pinned by
-[`crates/sinter-compiler/tests/interface.rs`](../crates/sinter-compiler/tests/interface.rs).
-Before 1.0 they may still change, and any change will be listed in the
-[CHANGELOG](../CHANGELOG.md).
+[`crates/sinter-compiler/tests/interface.rs`](https://github.com/sinter-lang/sinter-lang/blob/master/crates/sinter-compiler/tests/interface.rs).
+From 1.0 this interface is stable; until then it may change, and any
+change will be listed in the [CHANGELOG](https://github.com/sinter-lang/sinter-lang/blob/master/CHANGELOG.md). See
+[Stability and versioning](https://github.com/sinter-lang/sinter-lang/blob/master/STABILITY.md).
 
 ## Module and file
 
@@ -30,7 +31,7 @@ Every module has two ports first, in this order:
 Drive `rst_n` from a reset synchronizer (asynchronous assert, synchronous
 deassert) as you would for any other logic.
 
-**Several clock domains** (DESIGN §6.7). A design with a `#[clock]` tick per
+**Several clock domains.** A design with a `#[clock]` tick per
 domain has a clock port per domain, `clk_<d>` (`clk_fast`, `clk_slow`), in
 declaration order, and still one `rst_n`. The module synchronizes `rst_n`
 into each domain itself (asynchronous assert, release two edges later on that
@@ -140,7 +141,7 @@ Counter u_counter (
 
 Add the emitted `.sv` to your Yosys / Verilator / vendor project like any
 other source. For a board top level that maps ports to physical pins, see the
-`.pins` flow (`sinter build --pins`, DESIGN §7.6), which emits a wrapper
+`.pins` flow (`sinter build --pins`), which emits a wrapper
 module and a nextpnr PCF.
 
 ## Internal wires
@@ -154,7 +155,7 @@ SystemVerilog keyword; that is a compile error.
 
 ## Foreign module instances
 
-A `#[verilog(module = "...")]` binding (DESIGN §6.15) becomes an instance of
+A `#[verilog(module = "...")]` binding becomes an instance of
 that module, named `u_<field>` after the state field that holds it
 (`self.uart` becomes `u_uart`). A stateless binding gets `u_<module>_<n>`
 instead, one per call. Each port connects to a wire named

@@ -153,10 +153,17 @@ Release: tag `v0.8.0` on the "release: v0.8.0" commit.
 
 ## v0.9 — release candidate
 
-- [ ] Language reference and tutorial written for users, separate from
-      DESIGN.md: an mdBook under `docs/book/`, its examples compiled by a test.
-- [ ] Written stability / semver policy.
+Release: tag `v0.9.0` on the "release: v0.9.0" commit, then publish the
+crates (README "Releasing").
+
+- [x] Language reference and tutorial written for users, separate from
+      DESIGN.md: an mdBook under `docs/book/` (`just book`, built in CI), its
+      code samples compiled by `tests/book.rs`.
+- [x] Written stability / semver policy: [`STABILITY.md`](STABILITY.md).
 - [ ] Publish `sinter-syntax`, `sinter-compiler`, `sinter-lang` to crates.io.
+      The crates are ready (license files, READMEs, metadata) and CI runs a
+      `cargo publish --workspace --dry-run` (`just package`); the upload
+      happens when `v0.9.0` is tagged.
 
 ## 1.0 exit criteria
 
@@ -165,3 +172,18 @@ Release: tag `v0.8.0` on the "release: v0.8.0" commit.
       oracle mismatches.
 - [ ] The language reference covers every 1.0 feature.
 - [ ] No open DESIGN question would change 1.0 syntax.
+- [ ] Settle the behaviours that writing the reference found unfinished.
+      All but the last would be breaking changes after 1.0:
+  - [ ] `#[encoding(gray)]` / `#[encoding(johnson)]` are accepted but give
+        the binary encoding: implement them or reject them.
+  - [ ] Unknown attributes are ignored, so a misspelling is silent and a new
+        1.x attribute could change an existing program: reject them.
+  - [ ] A `multiplex fn` ignores its `in_valid` argument and free-runs: make
+        it gate phase 0, or drop the argument.
+  - [ ] A `pub` field holding a channel, CDC primitive, or staged function
+        exposes compiler-internal registers as ports (`STABILITY.md` excludes
+        them): reject `pub` there, or design their ports.
+  - [ ] An `impl` on an enum fails with "expected `E`, found `E`": support
+        enum methods, or reject the `impl` with a clear message.
+  - [ ] `sinter sim | head` panics on the closed pipe instead of exiting
+        quietly.

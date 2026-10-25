@@ -7,6 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["compilers", "simulation"]
+readme = "README.md"
+# Tests and fixtures read files elsewhere in the repository, so only the
+# sources are packaged.
+include = ["/src/**/*", "/README.md", "/LICENSE-*"]
 
 [dependencies]
 sinter-syntax = { workspace = true }

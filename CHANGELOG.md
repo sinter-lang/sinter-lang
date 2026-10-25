@@ -5,6 +5,29 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [0.9.0] — unreleased
+
+### Added
+
+- **The Sinter Book** (`docs/book/`): installation, a tutorial that builds a
+  UART transmitter, a language reference, the tools (CLI, stimulus files, the
+  generated Verilog and Rust interfaces, pin maps), and appendices.
+  `just book` builds it with mdBook (`just book serve` live-reloads), and CI
+  builds it too. `cargo test` compiles every code sample in it, and checks
+  that the samples meant to fail give the error the book shows.
+- **`STABILITY.md`**: what 1.0 will keep stable (the language, the generated
+  module's ports, the CLI and its input files, the generated Rust
+  simulator's API) and what it won't (Verilog internals, diagnostics, the
+  library crates' Rust APIs).
+- The crates are ready for crates.io: license files, a README for each, and
+  keywords and categories. `just package` (a `cargo publish --workspace
+  --dry-run`) runs in CI.
+
+### Fixed
+
+- A pin map that binds an `out` pin to a private register is an error. It
+  used to produce a board wrapper with the pin undriven.
+
 ## [0.8.0] — unreleased
 
 ### Added

@@ -63,6 +63,11 @@ conformance require="auto":
 tree-sitter *args:
     scripts/tree-sitter.sh {{ args }}
 
+# Build the book (docs/book/) into build/book/ with mdBook; `just book serve`
+# serves it with live reload. `cargo test` compiles its code samples.
+book *args:
+    scripts/book.sh {{ args }}
+
 # Test the VS Code grammar and package editors/vscode as build/sinter-<v>.vsix
 # (needs Node.js 22+).
 vsix:
@@ -76,6 +81,11 @@ fuzz programs="200" seed="1":
 # Release build of the workspace (CI: Build release).
 build:
     scripts/build.sh
+
+# Package the published crates and build them from the packages, without
+# uploading (a `cargo publish` dry run; CI: Package).
+package:
+    scripts/package.sh
 
 # Emit SystemVerilog for the example .snt files into build/verilog/ (git-ignored,
 # observable in the dev container). emit = verilog (default) | harness | all.
@@ -94,7 +104,7 @@ board:
 check: fmt clippy test
 
 # Reproduce the GitHub CI pipeline exactly (conformance enforced; needs the tools).
-ci: fmt clippy test (conformance "1") (fuzz "30" "1000") build
+ci: fmt clippy test (conformance "1") (fuzz "30" "1000") build package
 
 # Full pre-push gate: ci checks (conformance in auto mode) plus docs + dep policy.
-verify: fmt clippy test conformance build doc deny audit
+verify: fmt clippy test conformance build package doc deny audit

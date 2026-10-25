@@ -25,9 +25,11 @@ scripts/clippy.sh    # directly (works from any directory)
 | `test.sh` | `just test` | `cargo test --workspace` |
 | `conformance.sh` | `just conformance` | Yosys/Verilator conformance oracle |
 | `tree-sitter.sh` | `just tree-sitter [--check]` | Regenerate the editor grammar's parser (or check it is current) |
+| `book.sh` | `just book [serve]` | Build the mdBook in `docs/book/` into `build/book/` (needs mdbook) |
 | `vscode.sh` | `just vsix` | Test the VS Code grammar and package `build/sinter-<v>.vsix` (needs Node.js) |
 | `fuzz.sh` | `just fuzz [N] [SEED]` | Random programs through the whole oracle (needs Yosys + Verilator) |
 | `build.sh` | `just build` | `cargo build --release` |
+| `package.sh` | `just package` | `cargo publish --workspace --dry-run` (package + build the published crates) |
 | `doc.sh` | `just doc` | `cargo doc` (broken doc links denied) |
 | `deny.sh` | `just deny` | `cargo deny check` (skips if cargo-deny absent) |
 | `audit.sh` | `just audit` | `cargo audit` (skips if cargo-audit absent) |

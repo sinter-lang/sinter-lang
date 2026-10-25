@@ -6,8 +6,12 @@ cycle-accurate Rust simulator. The two lowerings are required to agree
 bit-for-bit, cycle-for-cycle — that equivalence is the language's built-in
 correctness oracle.
 
-See [`DESIGN.md`](DESIGN.md) for the full language design (the source of truth)
-and [`CLAUDE.md`](CLAUDE.md) for the coding standards every change must follow.
+**[The Sinter Book](docs/book/src/SUMMARY.md)** is the user guide: installation,
+a tutorial, the language reference, and the tools (`just book` builds it as
+HTML). [`DESIGN.md`](DESIGN.md) is the language design and its rationale,
+including features not built yet, [`STABILITY.md`](STABILITY.md) says what
+1.0 will keep stable, and [`CLAUDE.md`](CLAUDE.md) has the coding standards
+every change must follow.
 
 > **Status: v0.8 — experimental, pre-1.0.** The language and CLI may still
 > change incompatibly between releases. Sinter is usable today for small-to-medium
@@ -310,7 +314,26 @@ just fmt-fix      # apply rustfmt formatting in place
 ```
 
 Individual checks are recipes too — `just fmt`, `just clippy`, `just test`,
-`just conformance`, `just build`, `just doc`, `just deny`, `just audit`.
+`just conformance`, `just build`, `just package`, `just doc`, `just deny`,
+`just audit`. `just book` builds the book into `build/book/` (`just book
+serve` serves it with live reload); `cargo test` compiles every code sample
+in it.
+
+### Releasing
+
+1. In one `release: vX.Y.Z` commit: bump the version in `Cargo.toml` (the
+   workspace version and the two `[workspace.dependencies]` entries) and in
+   both editor packages (`cargo test -p tree-sitter-sinter` checks they
+   match), date the CHANGELOG section, update the version in the README's and
+   the book's install snippets, and tick the ROADMAP.
+2. `just ci` and `just book` pass.
+3. Tag the commit `vX.Y.Z` and push the tag. The release workflow builds the
+   static binaries and the VS Code extension and attaches them to a GitHub
+   release.
+4. Publish the crates to crates.io (needs `cargo login` with an owner's
+   token): `cargo publish --workspace --locked` publishes `sinter-syntax`,
+   `sinter-compiler`, and `sinter-lang` in dependency order. `just package`
+   is the same with `--dry-run`, and runs in CI.
 
 ## License
 

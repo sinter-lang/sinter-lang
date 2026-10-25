@@ -13,7 +13,9 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/sinter-lang/sinter-lang"
+homepage = "https://github.com/sinter-lang/sinter-lang"
 authors = ["The Sinter Authors"]
+keywords = ["hdl", "rtl", "verilog", "fpga", "hardware"]
 
 [workspace.dependencies]
 sinter-syntax = { path = "crates/sinter-syntax", version = "0.8.0" }

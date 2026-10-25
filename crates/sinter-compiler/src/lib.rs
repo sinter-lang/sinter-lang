@@ -5,6 +5,9 @@
 //! ([`sim`]), portable SystemVerilog ([`verilog`]), and a Verilator testbench
 //! harness ([`verilator`]). The shared [`eval`] semantics keep the simulator
 //! and the Verilog in bit-for-bit agreement (DESIGN §7.4).
+//!
+//! This crate is internal to the `sinter` command (package `sinter-lang`): its
+//! API may change in any release. See `STABILITY.md` in the repository.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

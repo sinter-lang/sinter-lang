@@ -1,0 +1,26 @@
+# The Sinter book: a user guide and language reference (`just book`).
+#
+# Every ```sinter code block in src/ is compiled by
+# crates/sinter-compiler/tests/book.rs, so the samples can't drift from the
+# compiler.
+
+[book]
+title = "The Sinter Book"
+authors = ["The Sinter Authors"]
+language = "en"
+src = "src"
+
+[build]
+# Built output goes under the git-ignored top-level build/ directory.
+build-dir = "../../build/book"
+
+[output.html]
+git-repository-url = "https://github.com/sinter-lang/sinter-lang"
+edit-url-template = "https://github.com/sinter-lang/sinter-lang/edit/master/docs/book/{path}"
+additional-js = ["theme/sinter-highlight.js"]
+
+# A line starting with `~` in a ```sinter block is hidden from readers but
+# still compiled by the sample test, so a fragment can be shown inside the
+# full program it needs.
+[output.html.code.hidelines]
+sinter = "~"

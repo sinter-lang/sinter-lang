@@ -5,6 +5,9 @@
 //!
 //! See `DESIGN.md` at the repository root for the language design and
 //! `grammar/sinter.pest` for the normative surface grammar.
+//!
+//! This crate is internal to the `sinter` command (package `sinter-lang`): its
+//! API may change in any release. See `STABILITY.md` in the repository.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
