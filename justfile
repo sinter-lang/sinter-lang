@@ -94,7 +94,7 @@ board:
 check: fmt clippy test
 
 # Reproduce the GitHub CI pipeline exactly (conformance enforced; needs the tools).
-ci: fmt clippy test (conformance "1") build
+ci: fmt clippy test (conformance "1") (fuzz "30" "1000") build
 
 # Full pre-push gate: ci checks (conformance in auto mode) plus docs + dep policy.
 verify: fmt clippy test conformance build doc deny audit

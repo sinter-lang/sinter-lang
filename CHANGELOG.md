@@ -14,7 +14,18 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   its README. `cargo test` checks it parses every corpus case and example.
 - **A VS Code extension** (`editors/vscode/`): highlighting, comment
   toggling, and bracket handling for `.snt` files. `just vsix` tests its
-  grammar and packages `build/sinter-<version>.vsix`.
+  grammar and packages `build/sinter-<version>.vsix`. Releases attach it.
+
+### Changed
+
+- CI runs the oracle and a 30-program fuzz campaign against two tool sets:
+  Ubuntu 24.04's Yosys 0.33 / Verilator 5.020 and oss-cad-suite's Yosys 0.61
+  / Verilator 5.045. (The Verilator optimizer bug worked around in 0.7 is
+  in 5.045, not 5.020.) A new `editors` job checks the tree-sitter parser
+  is current and packages the VS Code extension. `just ci` runs the fuzz
+  campaign too.
+- The oracle retries a failed Verilator build once, since Verilator 5.020's
+  parallel build occasionally fails with nothing wrong.
 
 ## [0.7.0] — unreleased
 

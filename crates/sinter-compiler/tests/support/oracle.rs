@@ -114,25 +114,47 @@ pub fn run_verilator(
     cycles: usize,
 ) -> Vec<u8> {
     let obj = dir.join("obj");
-    let build = Command::new("verilator")
-        .args(["--cc", "--exe", "--build", "-f", VERILATOR_FLAGS])
-        .arg("--top-module")
-        .arg(top)
-        .arg("--Mdir")
-        .arg(&obj)
-        .arg("-o")
-        .arg("sim")
-        .arg(sv)
-        .args(extra)
-        .arg(harness)
-        .output()
-        .expect("spawn verilator");
-    assert!(
-        build.status.success(),
-        "verilator build failed for {top}:\n{}\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
+    let build_once = || {
+        let _ = std::fs::remove_dir_all(&obj);
+        Command::new("verilator")
+            .args(["--cc", "--exe", "--build", "-f", VERILATOR_FLAGS])
+            .arg("--top-module")
+            .arg(top)
+            .arg("--Mdir")
+            .arg(&obj)
+            .arg("-o")
+            .arg("sim")
+            .arg(sv)
+            .args(extra)
+            .arg(harness)
+            .output()
+            .expect("spawn verilator")
+    };
+    let mut build = build_once();
+    if !build.status.success() {
+        // Verilator 5.020's parallel build (`-j 0`) fails now and then with
+        // nothing wrong (about 1 build in 100); one clean retry tells that
+        // apart from a real failure.
+        eprintln!(
+            "verilator build failed for {top} ({}); retrying once",
+            build.status
+        );
+        build = build_once();
+    }
+    if !build.status.success() {
+        // The error comes last, after any (non-fatal) warnings.
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let lines: Vec<&str> = log.lines().collect();
+        let tail = lines[lines.len().saturating_sub(40)..].join("\n");
+        panic!(
+            "verilator build failed for {top} ({}; last 40 lines):\n{tail}",
+            build.status
+        );
+    }
 
     let trace = dir.join("dut_trace.bin");
     let run = Command::new(obj.join("sim"))

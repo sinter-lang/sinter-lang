@@ -64,8 +64,28 @@ jobs:
           path: sinter-*.tar.gz*
           if-no-files-found: error
 
+  vsix:
+    # The VS Code extension, attached to the release beside the binaries.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Keep in sync with .github/workflows/ci.yml (NODE_VERSION).
+          node-version: 24.22.1
+
+      - name: Test and package the extension
+        run: scripts/vscode.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: build/sinter-*.vsix
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, vsix]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4

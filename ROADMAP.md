@@ -144,7 +144,10 @@ Release: tag `v0.7.0` on the "release: v0.7.0" commit.
 - [x] VS Code syntax highlighting (`editors/vscode/`): a TextMate grammar and
       language configuration, packaged as a `.vsix` (`just vsix`). A full LSP
       can follow 1.0.
-- [ ] CI against more than one Yosys / Verilator version.
+- [x] CI against more than one Yosys / Verilator version: Ubuntu 24.04's
+      packages (Yosys 0.33, Verilator 5.020) and the pinned oss-cad-suite
+      (Yosys 0.61, Verilator 5.045), each through the enforced oracle and a
+      fixed-seed fuzz campaign.
 
 ## v0.9 — release candidate
 

@@ -8,11 +8,24 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
-  # Keep in sync with .devcontainer/Dockerfile (ARG JUST_VERSION).
+  # Keep these in sync with .devcontainer/Dockerfile (ARG JUST_VERSION,
+  # OSS_CAD_SUITE_*, NODE_VERSION, TREE_SITTER_VERSION).
   JUST_VERSION: 1.54.0
+  OSS_CAD_SUITE_VERSION: "20260127"
+  OSS_CAD_SUITE_DATE: 2026-01-27
+  NODE_VERSION: 24.22.1
+  TREE_SITTER_VERSION: 0.27.1
 
 jobs:
   build-and-test:
+    # The oracle runs against the oldest and newest Yosys / Verilator we
+    # support: Ubuntu 24.04's packages (Yosys 0.33, Verilator 5.020) and the
+    # devcontainer's pinned oss-cad-suite (Yosys 0.61, Verilator 5.045).
+    name: test (${{ matrix.tools }})
+    strategy:
+      fail-fast: false
+      matrix:
+        tools: [ubuntu-packages, oss-cad-suite]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -20,13 +33,34 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show && rustup component add rustfmt clippy
 
-      - name: Install Yosys + Verilator
-        # Provides the conformance oracle's external tools. The devcontainer
-        # uses oss-cad-suite; CI uses the distro packages for speed.
+      - name: Install Yosys + Verilator (Ubuntu packages)
+        if: matrix.tools == 'ubuntu-packages'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends yosys verilator
-          yosys --version
+
+      - name: Cache oss-cad-suite
+        if: matrix.tools == 'oss-cad-suite'
+        id: oss-cad-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/oss-cad-suite
+          key: oss-cad-suite-${{ env.OSS_CAD_SUITE_VERSION }}
+
+      - name: Install Yosys + Verilator (oss-cad-suite)
+        if: matrix.tools == 'oss-cad-suite' && steps.oss-cad-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL \
+            "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/${OSS_CAD_SUITE_DATE}/oss-cad-suite-linux-x64-${OSS_CAD_SUITE_VERSION}.tgz" \
+            | tar -xz -C "$HOME"
+
+      - name: Put oss-cad-suite on PATH
+        if: matrix.tools == 'oss-cad-suite'
+        run: echo "$HOME/oss-cad-suite/bin" >> "$GITHUB_PATH"
+
+      - name: Tool versions
+        run: |
+          yosys -V
           verilator --version
 
       - name: Install just
@@ -53,5 +87,46 @@ jobs:
         # require=1 -> fail if Yosys/Verilator are missing.
         run: just conformance 1
 
+      - name: Fuzz campaign
+        # Fixed seeds, so a failure reproduces locally with the same command.
+        run: just fuzz 30 1000
+
       - name: Build release
         run: just build
+
+  editors:
+    # The editor grammars: the committed tree-sitter parser must match
+    # grammar.js, and the VS Code extension must test and package.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install tree-sitter CLI
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL \
+            "https://github.com/tree-sitter/tree-sitter/releases/download/v${TREE_SITTER_VERSION}/tree-sitter-linux-x64.gz" \
+            | gunzip > "$HOME/.local/bin/tree-sitter"
+          chmod +x "$HOME/.local/bin/tree-sitter"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh \
+            | bash -s -- --tag "${JUST_VERSION}" --to "$HOME/.local/bin"
+
+      - name: tree-sitter parser is current
+        run: just tree-sitter --check
+
+      - name: VS Code extension (test + package)
+        run: just vsix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: build/sinter-*.vsix
+          if-no-files-found: error

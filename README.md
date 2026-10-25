@@ -65,8 +65,8 @@ sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 - Clocks have fixed integer periods: no derived or related clocks, clock
   gating, or multi-domain `pipeline` / `multiplex` functions. The fault
   latch (`--faults`) and `.pins` board tops are single-clock only.
-- No editor support (LSP / syntax highlighting) and no package / dependency
-  layer yet.
+- Editors get syntax highlighting (below), but there's no language server
+  yet, and no package / dependency layer.
 
 To use the emitted SystemVerilog from your own Verilog (port names, reset,
 timing), see [`docs/generated-verilog.md`](docs/generated-verilog.md). To
@@ -80,6 +80,9 @@ simulator crate; see [`docs/generated-rust.md`](docs/generated-rust.md).
 | `crates/sinter-syntax` | `.snt` grammar (pest), AST, and parser |
 | `crates/sinter-compiler` | semantic checks + backends (Verilog, Rust sim, Verilator harness) |
 | `crates/sinter-lang` | the `sinter` CLI binary (published crate: `sinter-lang`) |
+| `editors/tree-sitter-sinter` | tree-sitter grammar + highlight queries (not published) |
+
+`editors/vscode` is the VS Code extension.
 
 `examples/` holds example `.snt` programs; the conformance oracle lives in
 `crates/sinter-compiler/tests/conformance.rs`.
@@ -134,7 +137,18 @@ sinter sim     src/cpu.snt --cycles 64
 
 `sinter build` needs only Rust; the `--emit verilog` output is portable
 SystemVerilog. Yosys/Verilator are needed only to *run* the correctness oracle
-(below), not to install or use the compiler.
+(below), not to install or use the compiler. CI runs the oracle against
+Yosys 0.33 / Verilator 5.020 (Ubuntu 24.04's packages) and Yosys 0.61 /
+Verilator 5.045 (oss-cad-suite 2026-01-27).
+
+### Editor support
+
+- **VS Code:** install `sinter-<version>.vsix` from a release with
+  `code --install-extension sinter-<version>.vsix`, or build it with
+  `just vsix` ([`editors/vscode`](editors/vscode/README.md)).
+- **Neovim, Helix, Zed:** the tree-sitter grammar in
+  [`editors/tree-sitter-sinter`](editors/tree-sitter-sinter/README.md) has
+  setup instructions.
 
 ### In a Docker image / devcontainer
 
