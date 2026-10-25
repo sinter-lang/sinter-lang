@@ -11,7 +11,7 @@ static Linux binaries for `x86_64` and `aarch64`, which run on any
 distribution:
 
 ```sh
-SINTER_VERSION=v0.8.0
+SINTER_VERSION=v0.9.0
 mkdir -p ~/.local/bin
 curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
     | tar -xz -C ~/.local/bin sinter
@@ -19,16 +19,25 @@ curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTE
 
 Each tarball has a `.sha256` file beside it.
 
+## From crates.io
+
+With a Rust toolchain (1.85 or later):
+
+```sh
+cargo install sinter-lang --locked
+```
+
+The package is called `sinter-lang`; the binary it installs is `sinter`.
+
 ## From source
 
-With a Rust toolchain (1.85 or later), build and install from the repository:
+To build an unreleased version, install from the repository:
 
 ```sh
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
 ```
 
-Add `--tag v0.8.0` to pin a release. The package is called `sinter-lang`; the
-binary it installs is `sinter`.
+Add `--tag v0.9.0` to pin a release, or `--rev <commit>` for a commit.
 
 ## Check it works
 
