@@ -119,7 +119,9 @@ hold every value in a `u64`); wider values are post-1.0.
 - Values wider than 64 bits.
 - Native place-and-route (§7.5).
 
-## v0.7 — engine
+## v0.7 — engine ✅
+
+Release: tag `v0.7.0` on the "release: v0.7.0" commit.
 
 - [x] **Generated-Rust simulator** (DESIGN §7.2): `sinter build --emit rust`
       produces a standalone crate with a typed `step()` API for Rust
