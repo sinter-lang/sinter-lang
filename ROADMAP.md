@@ -129,8 +129,9 @@ hold every value in a `u64`); wider values are post-1.0.
       through the whole oracle (`tests/fuzz.rs`, `just fuzz`). It found
       five Verilog backend bugs and a Verilator optimizer bug, all fixed or
       worked around.
-- [ ] **Diagnostics: multiple errors**: one run reports more than the first
-      semantic error (parsing still stops at the first syntax error, §7.1).
+- [x] **Diagnostics: multiple errors**: one run reports the first type error
+      in every function and method, not just the first overall (parsing still
+      stops at the first syntax error, §7.1).
 
 ## v0.8 — tooling
 

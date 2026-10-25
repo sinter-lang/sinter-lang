@@ -1023,8 +1023,8 @@ Editors get a separate tree-sitter grammar (highlighting and structural
 editing), tested against the same parser corpus (`tests/corpus/`): every `pass/`
 program must parse without error nodes. Expressions carry source positions
 (v0.6), so diagnostics point at the offending expression. The batch parser
-stops at the first syntax error; the semantic checks may report more than one
-error per run. A future language server takes syntax from tree-sitter and
+stops at the first syntax error; the type checker reports the first error in
+each function and method (v0.7). A future language server takes syntax from tree-sitter and
 meaning from the compiler. Moving to a hand-written, error-recovering parser
 over a lossless tree stays possible after 1.0, since it changes no syntax.
 

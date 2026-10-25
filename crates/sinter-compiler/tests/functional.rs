@@ -458,3 +458,31 @@ fn a_method_error_points_at_the_call() {
         "has no methods",
     );
 }
+
+// --- Several errors per run (v0.7) -------------------------------------------
+
+#[test]
+fn every_function_reports_its_first_error() {
+    let src = "fn a(x: u8) -> u8 {\n    x + 1\n}\n\
+               fn b(x: u8, y: u4) -> u8 {\n    x & y\n}\n\
+               fn c(x: u8) -> u8 {\n    x\n}\n\
+               fn d(x: u8) -> u8 {\n    nope\n}\n";
+    let program = parse_program(src).expect("parses");
+    let err = check_functional(&program).expect_err("three functions are wrong");
+    let lines: Vec<usize> = err
+        .errors()
+        .iter()
+        .map(|e| match e {
+            sinter_compiler::CompileError::Semantic { pos, .. } => pos.line,
+            other => panic!("expected a semantic error, got {other}"),
+        })
+        .collect();
+    assert_eq!(lines, [2, 5, 11], "one error per broken function, in order");
+    assert!(err.to_string().ends_with("3 errors"), "got: {err}");
+}
+
+#[test]
+fn a_single_error_is_reported_alone() {
+    let err = check("fn a(x: u8) -> u8 {\n    x + 1\n}").expect_err("rejected");
+    assert!(!err.contains("errors"), "got: {err}");
+}

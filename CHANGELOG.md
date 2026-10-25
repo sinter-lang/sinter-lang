@@ -15,6 +15,10 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   Rust testbenches. It runs about 60× faster than `sinter sim`. The oracle
   checks it against the interpreter, and so the Verilog, on every example.
   See [`docs/generated-rust.md`](docs/generated-rust.md).
+- **Several errors per run**: `sinter check` / `build` / `sim` report the
+  first type error in every function and method, each with its source line
+  and caret, then a count. `CompileError::Multiple` holds them, and
+  `CompileError::errors()` lists them.
 - **A program fuzzer** (`crates/sinter-compiler/tests/fuzz.rs`,
   `just fuzz [N] [SEED]`): random, well-typed programs mixing every scalar
   operator, register files, memories, and helper functions, each put

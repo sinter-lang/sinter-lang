@@ -31,9 +31,49 @@ pub enum CompileError {
     /// file path, the offending line, and a caret under the position.
     #[error("{0}")]
     InFile(Box<Located>),
+
+    /// Several independent errors, in source order: the first error in each
+    /// item that has one.
+    #[error("{}", render_all(.0))]
+    Multiple(Vec<CompileError>),
+}
+
+/// The errors one after another, then how many there were.
+fn render_all(errors: &[CompileError]) -> String {
+    let mut out = String::new();
+    for e in errors {
+        out.push_str(&e.to_string());
+        out.push_str("\n\n");
+    }
+    out.push_str(&format!("{} errors", errors.len()));
+    out
 }
 
 impl CompileError {
+    /// `errors` as one error: the error itself if there is just one.
+    ///
+    /// # Panics
+    /// If `errors` is empty.
+    #[must_use]
+    pub(crate) fn from_all(mut errors: Vec<CompileError>) -> Self {
+        if errors.len() == 1 {
+            errors.remove(0)
+        } else {
+            assert!(!errors.is_empty(), "from_all needs at least one error");
+            CompileError::Multiple(errors)
+        }
+    }
+
+    /// The individual errors: the list of a [`CompileError::Multiple`], else
+    /// just this one.
+    #[must_use]
+    pub fn errors(&self) -> Vec<&CompileError> {
+        match self {
+            CompileError::Multiple(errors) => errors.iter().collect(),
+            other => vec![other],
+        }
+    }
+
     /// Build a semantic error.
     pub(crate) fn semantic(module: &str, pos: Pos, msg: impl Into<String>) -> Self {
         CompileError::Semantic {
@@ -65,6 +105,9 @@ impl CompileError {
                 l.msg = rename(std::mem::take(&mut l.msg));
                 CompileError::InFile(l)
             }
+            CompileError::Multiple(errors) => {
+                CompileError::Multiple(errors.into_iter().map(|e| e.rename_types(names)).collect())
+            }
             other => other,
         }
     }
@@ -75,6 +118,11 @@ impl CompileError {
     /// with a synthesized (line-0) position, is returned unchanged.
     #[must_use]
     pub fn with_sources(self, files: &[SourceFile]) -> Self {
+        if let CompileError::Multiple(errors) = self {
+            return CompileError::Multiple(
+                errors.into_iter().map(|e| e.with_sources(files)).collect(),
+            );
+        }
         let CompileError::Semantic { module, pos, msg } = self else {
             return self;
         };

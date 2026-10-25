@@ -218,35 +218,46 @@ pub fn check_functional(program: &Program) -> Result<(), CompileError> {
     let tables = build_tables(program)?;
     let checker = Checker::new(&tables);
 
-    // Type-check every function body. Free functions may be combinational or a
-    // staged color (DESIGN §3); methods must be combinational.
+    // Type-check every function body, each independently, so one run reports
+    // the first error in every function that has one. Free functions may be
+    // combinational or a staged color (DESIGN §3); methods must be
+    // combinational.
+    let mut errors = Vec::new();
     for item in &program.items {
         match item {
-            Item::Func(f) => match f.color {
-                FnColor::Comb => checker.check_fn(f, None)?,
-                FnColor::Pipeline => checker.check_pipeline(f)?,
-                FnColor::Multiplex => checker.check_multiplex(f)?,
-            },
+            Item::Func(f) => {
+                let checked = match f.color {
+                    FnColor::Comb => checker.check_fn(f, None),
+                    FnColor::Pipeline => checker.check_pipeline(f),
+                    FnColor::Multiplex => checker.check_multiplex(f),
+                };
+                errors.extend(checked.err());
+            }
             Item::Impl(im) => {
                 for m in &im.methods {
-                    if m.color != FnColor::Comb {
-                        return Err(sem(
+                    let checked = if m.color == FnColor::Comb {
+                        checker.check_fn(m, Some(&im.type_name))
+                    } else {
+                        Err(sem(
                             &m.name,
                             m.pos,
                             "a staged (`pipeline` / `multiplex`) function cannot be a method; \
                              declare it as a free `fn`"
                                 .to_string(),
-                        ));
-                    }
-                    checker.check_fn(m, Some(&im.type_name))?;
+                        ))
+                    };
+                    errors.extend(checked.err());
                 }
             }
             _ => {}
         }
     }
-
-    checker.check_clock_root(program)?;
-    Ok(())
+    errors.extend(checker.check_clock_root(program).err());
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CompileError::from_all(errors))
+    }
 }
 
 // --- Symbol-table construction --------------------------------------------
