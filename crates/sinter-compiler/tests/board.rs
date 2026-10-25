@@ -253,6 +253,16 @@ fn unresolved_output_path_is_rejected() {
     );
 }
 
+/// A private register has no `_q` port for the wrapper to tap, so binding a pin
+/// to it is an error rather than an undriven pin.
+#[test]
+fn private_register_output_is_rejected() {
+    reject(
+        "set_io 15 clock sys\nset_io 53 in btn.inc\nset_io 51 in btn.dec\nset_io 3 out inc_edge.prev",
+        "names register `inc_edge_prev`, which is not an output; mark its field `pub`",
+    );
+}
+
 #[test]
 fn duplicate_wrapper_port_is_rejected() {
     reject(

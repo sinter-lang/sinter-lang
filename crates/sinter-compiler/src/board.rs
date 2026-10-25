@@ -385,6 +385,24 @@ fn resolve_output(
     src: &str,
     line: usize,
 ) -> Result<(String, u32, u32), CompileError> {
+    // A register is only visible to the wrapper through its `_q` port, which
+    // exists only under a `pub` field; tapping a private one would leave the
+    // pin undriven.
+    let exported = |reg: &str| -> Result<(), CompileError> {
+        let port = format!("{reg}_q");
+        if module.outputs().any(|p| p.name == port) {
+            Ok(())
+        } else {
+            Err(sem(
+                src,
+                line,
+                format!(
+                    "output pin path `{path}` names register `{reg}`, which is not an \
+                     output; mark its field `pub`"
+                ),
+            ))
+        }
+    };
     // DESIGN §7.6: trailing `[i]` is the BIT; the leaf is everything before it.
     // (Mirrors `resolve_input` — see the note there.)
     if let Some((base, bit)) = tail {
@@ -407,6 +425,7 @@ fn resolve_output(
                 format!("bit {bit} is out of range for output `{base}` ({w} bits)"),
             ));
         }
+        exported(base)?;
         return Ok((format!("{base}_q"), *bit, w));
     }
     let r = module.regs.iter().find(|r| r.name == full).ok_or_else(|| {
@@ -424,6 +443,7 @@ fn resolve_output(
             format!("output `{full}` is {w} bits wide; address a single bit, e.g. `{path}[0]`"),
         ));
     }
+    exported(full)?;
     Ok((format!("{full}_q"), 0, 1))
 }
 
