@@ -125,8 +125,10 @@ hold every value in a `u64`); wider values are post-1.0.
       produces a standalone crate with a typed `step()` API for Rust
       testbenches, cross-checked against the interpreter (and so the Verilog)
       on every oracle case. About 60× the interpreter's speed.
-- [ ] Program fuzzer: generate random valid `.snt` programs and run each
-      through the sim-vs-Verilog oracle.
+- [x] Program fuzzer: generate random valid `.snt` programs and run each
+      through the whole oracle (`tests/fuzz.rs`, `just fuzz`). It found
+      five Verilog backend bugs and a Verilator optimizer bug, all fixed or
+      worked around.
 - [ ] **Diagnostics: multiple errors**: one run reports more than the first
       semantic error (parsing still stops at the first syntax error, §7.1).
 

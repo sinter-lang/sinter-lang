@@ -15,6 +15,28 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
   Rust testbenches. It runs about 60× faster than `sinter sim`. The oracle
   checks it against the interpreter, and so the Verilog, on every example.
   See [`docs/generated-rust.md`](docs/generated-rust.md).
+- **A program fuzzer** (`crates/sinter-compiler/tests/fuzz.rs`,
+  `just fuzz [N] [SEED]`): random, well-typed programs mixing every scalar
+  operator, register files, memories, and helper functions, each put
+  through the whole oracle. A normal test run checks 40.
+
+### Fixed
+
+Found by the fuzzer. Each has a reduced regression case in the oracle.
+
+- Verilog: a cast to an unsigned type of a signed value stayed signed in
+  SystemVerilog, so a comparison of two such values compared signed.
+- Verilog: a widening cast of an arithmetic or bitwise-not result computed
+  at the wider width (`(a - b) as u16 wrap` set high bits on underflow).
+- Verilog: `~` of a cast was emitted as `~8'(x)`, which Yosys rejects.
+- Verilog: a module with no ports besides `clk` / `rst_n` had a trailing
+  comma in its port list.
+- The Verilator harness clocked once during reset, so a memory whose write
+  enable is true in the reset state was written before cycle 0. It now
+  resets with a falling edge of `rst_n` and no clock edge.
+- Worked around a Verilator 5.045 optimizer bug that sign-extends or
+  arithmetic-shifts a zero-extended variable from the variable's own top
+  bit: such casts are emitted through their own wire.
 
 ## [0.6.0] — unreleased
 

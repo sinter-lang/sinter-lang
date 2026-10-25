@@ -34,6 +34,13 @@ the devcontainer, and CI (`just ci` reproduces the GitHub pipeline step for step
   Yosys / Verilator are missing); `auto` (default) skips them when absent.
   Equivalent to `SINTER_REQUIRE_TOOLS=1 cargo test -p sinter-compiler --test
   conformance`. The tools live at `/opt/oss-cad-suite/bin` in the devcontainer.
+- `just fuzz [N] [SEED]` — generate `N` random well-typed programs
+  (`tests/fuzz/gen.rs`) and put each through the whole oracle with the tools
+  required. A normal `cargo test` runs 40 seeds (6 through the tools).
+  Programs land in `target/tmp/fuzz/seed-<seed>.snt`; rerun one with
+  `SINTER_FUZZ_FILE=<path>`. Add a reduced copy of anything it finds to
+  `FUZZ_REGRESSIONS` in `conformance.rs`. The oracle's tool runners are shared
+  in `tests/support/oracle.rs`.
 - `just verilog` — emit SystemVerilog for every example into `build/verilog/`
   (git-ignored); `just board` emits the board-top wrapper + nextpnr PCF.
 
@@ -133,6 +140,15 @@ The Verilog backend is held to the `claude-skill-verilog` standard:
   `unique`/`priority case`, multi-dimensional packed arrays in ports.
 - Must pass Verilator lint with **no** suppression pragmas, and synthesize under
   Yosys without errors.
+
+Inside `verilog.rs`, an emitted expression must mean the same in any context.
+SystemVerilog sizes an operator's operands to its context and a size cast
+keeps its operand's signedness, so: a widening cast of a non-primary operand
+goes through `$unsigned(...)` / `$signed(...)` (`atomic`, `unsigned`), a
+comparison of an unsigned operand that is signed in SV gets `$unsigned`
+(`sv_signed`), and every unsigned-to-wider-signed cast is hoisted into its
+own `__zx<k>` wire (`hoist_zero_extensions`), working around a Verilator
+5.045 optimizer bug.
 
 ## Correctness oracle (CI from day one — DESIGN §7.4)
 

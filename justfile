@@ -58,6 +58,11 @@ test:
 conformance require="auto":
     scripts/conformance.sh {{ require }}
 
+# Fuzz: put `programs` random programs from `seed` through the whole oracle
+# (needs Yosys + Verilator).
+fuzz programs="200" seed="1":
+    scripts/fuzz.sh {{ programs }} {{ seed }}
+
 # Release build of the workspace (CI: Build release).
 build:
     scripts/build.sh

@@ -12,19 +12,18 @@
 //! sandbox) and run in the devcontainer / CI where `oss-cad-suite` provides
 //! them. Set `SINTER_REQUIRE_TOOLS=1` to make their absence a failure.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+#[path = "support/oracle.rs"]
+mod oracle;
 
+use std::path::{Path, PathBuf};
+
+use oracle::{co_simulate, foreign_sources, run_verilator, rust_sim_traces, tools, workdir, Lint};
 use sinter_compiler::ir::Module;
 use sinter_compiler::sim::{gen_stimulus, run_reference, stimulus_to_bytes, Simulator};
 use sinter_compiler::stimulus::Stimulus;
-use sinter_compiler::{compile_str, rust_sim, verilator, verilog};
+use sinter_compiler::{compile_str, verilator, verilog};
 
 const CYCLES: usize = 64;
-
-/// Shared Verilator flag file mirroring the downstream pico-gs config (repo-root
-/// `verilator.f`); drives the build / co-simulation step.
-const VERILATOR_FLAGS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../verilator.f");
 
 struct Example {
     name: &'static str,
@@ -326,25 +325,6 @@ const PROJECTS: &[Project] = &[
     },
 ];
 
-fn tool_available(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-fn require_tools() -> bool {
-    std::env::var("SINTER_REQUIRE_TOOLS").is_ok_and(|v| v == "1")
-}
-
-fn workdir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("sinter-conf-{name}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create workdir");
-    dir
-}
-
 fn compile_one(source: &str) -> Module {
     let design = compile_str(source).expect("example should compile");
     design.modules.into_iter().next().expect("one module")
@@ -394,192 +374,12 @@ fn all_cases() -> Vec<(String, Module, usize)> {
     cases
 }
 
-/// The Verilog sources of a module's `#[verilog]` instances (DESIGN §6.15),
-/// which every tool below reads alongside the emitted SV.
-fn foreign_sources(module: &Module) -> Vec<PathBuf> {
-    let mut srcs: Vec<PathBuf> = module
-        .instances
-        .iter()
-        .filter_map(|i| i.src.clone())
-        .collect();
-    srcs.sort();
-    srcs.dedup();
-    srcs
-}
-
-/// Synthesize with Yosys to confirm the emitted SV is synthesizable.
-fn run_yosys(sv: &Path, extra: &[PathBuf], top: &str) {
-    let reads: String = std::iter::once(sv)
-        .chain(extra.iter().map(PathBuf::as_path))
-        .map(|f| format!("read_verilog -sv {}; ", f.display()))
-        .collect();
-    let script = format!("{reads}hierarchy -check -top {top}; proc; opt; synth -top {top}");
-    let out = Command::new("yosys")
-        .args(["-q", "-p", &script])
-        .output()
-        .expect("spawn yosys");
-    assert!(
-        out.status.success(),
-        "yosys failed for {top}:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// Strict Verilator lint (`-Wall`, warnings fatal — note: NO `-Wno-fatal`): the
-/// `claude-skill-verilog` gate. Run alongside the pico-gs-flagged co-sim so that
-/// generated Verilog must be warning-free even though the co-sim tolerates
-/// warnings (matching pico-gs's `-Wno-fatal`).
-fn lint_verilator(sv: &Path, extra: &[PathBuf], top: &str) {
-    let out = Command::new("verilator")
-        .args(["--lint-only", "-Wall", "--top-module"])
-        .arg(top)
-        .arg(sv)
-        .args(extra)
-        .output()
-        .expect("spawn verilator");
-    assert!(
-        out.status.success(),
-        "verilator lint failed for {top}:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// Build and run the Verilator model, returning its output trace bytes. The
-/// build uses the shared pico-gs flag file (`-f verilator.f`) so the generated
-/// SV runs under the same Verilator settings as the downstream project.
-fn run_verilator(
-    dir: &Path,
-    sv: &Path,
-    extra: &[PathBuf],
-    harness: &Path,
-    top: &str,
-    stim: &Path,
-    cycles: usize,
-) -> Vec<u8> {
-    let obj = dir.join("obj");
-    let build = Command::new("verilator")
-        .args(["--cc", "--exe", "--build", "-f", VERILATOR_FLAGS])
-        .arg("--top-module")
-        .arg(top)
-        .arg("--Mdir")
-        .arg(&obj)
-        .arg("-o")
-        .arg("sim")
-        .arg(sv)
-        .args(extra)
-        .arg(harness)
-        .output()
-        .expect("spawn verilator");
-    assert!(
-        build.status.success(),
-        "verilator build failed for {top}:\n{}\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    let trace = dir.join("dut_trace.bin");
-    let run = Command::new(obj.join("sim"))
-        .arg(stim)
-        .arg(&trace)
-        .arg(cycles.to_string())
-        .output()
-        .expect("run verilated sim");
-    assert!(
-        run.status.success(),
-        "verilated sim failed for {top}:\n{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    std::fs::read(&trace).expect("read dut trace")
-}
-
-/// Which external tools this run uses; enforces `SINTER_REQUIRE_TOOLS=1`.
-struct Tools {
-    yosys: bool,
-    verilator: bool,
-}
-
-fn tools() -> Tools {
-    let t = Tools {
-        yosys: tool_available("yosys"),
-        verilator: tool_available("verilator"),
-    };
-    if require_tools() {
-        assert!(t.yosys, "SINTER_REQUIRE_TOOLS=1 but yosys is missing");
-        assert!(
-            t.verilator,
-            "SINTER_REQUIRE_TOOLS=1 but verilator is missing"
-        );
-    }
-    if !t.yosys && !t.verilator {
-        eprintln!(
-            "skipping Yosys/Verilator conformance: neither tool found \
-             (install oss-cad-suite; set SINTER_REQUIRE_TOOLS=1 to enforce)"
-        );
-    }
-    t
-}
-
-/// Run one oracle case: emit the SV + harness, compute the reference trace over
-/// `stimulus`, then (tools permitting) synthesize, lint, and co-simulate the SV,
-/// asserting its trace matches the reference bit-for-bit.
-fn co_simulate(tools: &Tools, name: &str, module: &Module, stimulus: &[Vec<u64>]) {
-    let dir = workdir(name);
-
-    // Emit artifacts.
-    let sv = dir.join(format!("{}.sv", module.name));
-    std::fs::write(&sv, verilog::emit_module(module)).expect("write sv");
-    let harness = dir.join(format!("{}_tb.cpp", module.name));
-    std::fs::write(&harness, verilator::emit_cpp_harness(module)).expect("write harness");
-
-    // Stimulus + reference trace.
-    let stim_path = dir.join("stimulus.bin");
-    std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
-    let reference = run_reference(module, stimulus);
-
-    let extra = foreign_sources(module);
-    if tools.yosys {
-        run_yosys(&sv, &extra, &module.name);
-    }
-    if tools.verilator {
-        // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
-        lint_verilator(&sv, &extra, &module.name);
-        let dut = run_verilator(
-            &dir,
-            &sv,
-            &extra,
-            &harness,
-            &module.name,
-            &stim_path,
-            stimulus.len(),
-        );
-        assert_eq!(
-            dut.len(),
-            reference.len(),
-            "trace length mismatch for `{}`",
-            module.name
-        );
-        // Find the first differing 8-byte word for a useful message.
-        for (cycle, (a, b)) in reference
-            .chunks_exact(8)
-            .zip(dut.chunks_exact(8))
-            .enumerate()
-        {
-            assert_eq!(
-                a, b,
-                "trace mismatch for `{}` at output word {cycle}",
-                module.name
-            );
-        }
-    }
-}
-
 #[test]
 fn examples_pass_the_oracle() {
     let tools = tools();
     for (name, module, cycles) in &all_cases() {
         let stimulus = gen_stimulus(module, *cycles, 0xDEAD_BEEF);
-        co_simulate(&tools, name, module, &stimulus);
+        co_simulate(&tools, name, module, &stimulus, Lint::Strict);
     }
 }
 
@@ -650,6 +450,7 @@ fn directed_examples_pass_the_oracle() {
             &format!("{}-directed", ex.name),
             &module,
             &stim.inputs,
+            Lint::Strict,
         );
     }
 }
@@ -720,125 +521,113 @@ const RUST_SIM_EXTRA: &[Example] = &[
     },
 ];
 
-/// Write `contents` to `path` unless it already holds exactly that, so cargo
-/// doesn't rebuild an unchanged crate.
-fn write_if_changed(path: &Path, contents: &str) {
-    if std::fs::read_to_string(path).is_ok_and(|old| old == contents) {
-        return;
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).expect("create dir");
-    }
-    std::fs::write(path, contents).expect("write file");
-}
-
 /// The generated Rust simulator (`--emit rust`, DESIGN §7.2) of every oracle
 /// case matches the interpreter over the same stimulus. The interpreter is
 /// itself diffed against Verilator above, so this ties the compiled model to
 /// the Verilog too.
-///
-/// The cases' crates live in one cargo workspace under the test's target
-/// directory, with a harness binary that runs any of them over a raw stimulus
-/// file. Unchanged crates aren't rewritten, so reruns are incremental.
 #[test]
 fn examples_match_the_generated_rust_simulator() {
-    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rust-sim");
     let mut cases = all_cases();
     cases.extend(
         RUST_SIM_EXTRA
             .iter()
             .map(|ex| (ex.name.to_string(), compile_one(ex.source), CYCLES)),
     );
-    let mut members = vec!["\"harness\"".to_string()];
-    let mut deps = String::new();
-    let mut arms = String::new();
-    for (name, module, _) in &cases {
-        let krate = format!("{name}-sim");
-        for (rel, contents) in rust_sim::emit_crate(module, &krate) {
-            write_if_changed(&root.join(&krate).join(rel), &contents);
-        }
-        members.push(format!("{krate:?}"));
-        deps.push_str(&format!("{krate} = {{ path = \"../{krate}\" }}\n"));
-        let lib = krate.replace('-', "_");
-        let ni = module.inputs().count();
-        arms.push_str(&format!(
-            "        {name:?} => {{\n\
-             \x20           let rows: Vec<[u64; {ni}]> = if {ni} == 0 {{\n\
-             \x20               vec![[0; {ni}]; cycles]\n\
-             \x20           }} else {{\n\
-             \x20               stim.chunks_exact({ni}.max(1))\n\
-             \x20                   .map(|c| core::array::from_fn(|k| c[k]))\n\
-             \x20                   .collect()\n\
-             \x20           }};\n\
-             \x20           {lib}::{}::run_raw(&rows).iter().flatten().copied().collect()\n\
-             \x20       }}\n",
-            rust_sim::model_name(module)
-        ));
-    }
-    write_if_changed(
-        &root.join("Cargo.toml"),
-        &format!(
-            "[workspace]\nresolver = \"2\"\nmembers = [{}]\n",
-            members.join(", ")
-        ),
-    );
-    write_if_changed(
-        &root.join("harness/Cargo.toml"),
-        &format!(
-            "[package]\nname = \"harness\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\
-             publish = false\n\n[dependencies]\n{deps}"
-        ),
-    );
-    write_if_changed(
-        &root.join("harness/src/main.rs"),
-        &format!(
-            "//! Run one case's generated simulator over a raw stimulus file:\n\
-             //! `harness <case> <cycles> <stimulus.bin> <trace.bin>`.\n\n\
-             fn main() {{\n\
-             \x20   let args: Vec<String> = std::env::args().collect();\n\
-             \x20   let cycles: usize = args[2].parse().expect(\"cycles\");\n\
-             \x20   let bytes = std::fs::read(&args[3]).expect(\"read stimulus\");\n\
-             \x20   let stim: Vec<u64> = bytes\n\
-             \x20       .chunks_exact(8)\n\
-             \x20       .map(|b| u64::from_le_bytes(b.try_into().expect(\"8 bytes\")))\n\
-             \x20       .collect();\n\
-             \x20   let out: Vec<u64> = match args[1].as_str() {{\n\
-             {arms}\
-             \x20       other => panic!(\"unknown case {{other}}\"),\n\
-             \x20   }};\n\
-             \x20   let trace: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();\n\
-             \x20   std::fs::write(&args[4], trace).expect(\"write trace\");\n\
-             }}\n"
-        ),
-    );
-
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let status = Command::new(&cargo)
-        .args(["build", "--quiet", "--manifest-path"])
-        .arg(root.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", root.join("target"))
-        .status()
-        .expect("run cargo");
-    assert!(status.success(), "building the generated simulators failed");
-    let harness = root.join("target/debug/harness");
-
-    for (name, module, cycles) in &cases {
-        let stimulus = gen_stimulus(module, *cycles, 0xDEAD_BEEF);
-        let stim_path = root.join(format!("{name}.stim"));
-        let trace_path = root.join(format!("{name}.trace"));
-        std::fs::write(&stim_path, stimulus_to_bytes(&stimulus)).expect("write stimulus");
-        let status = Command::new(&harness)
-            .arg(name)
-            .arg(cycles.to_string())
-            .arg(&stim_path)
-            .arg(&trace_path)
-            .status()
-            .expect("run harness");
-        assert!(status.success(), "{name}: the generated simulator failed");
-        let got = std::fs::read(&trace_path).expect("read trace");
+    let stimuli: Vec<Vec<Vec<u64>>> = cases
+        .iter()
+        .map(|(_, module, cycles)| gen_stimulus(module, *cycles, 0xDEAD_BEEF))
+        .collect();
+    let runs: Vec<(String, &Module, &[Vec<u64>])> = cases
+        .iter()
+        .zip(&stimuli)
+        .map(|((name, module, _), stim)| (name.clone(), module, stim.as_slice()))
+        .collect();
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rust-sim");
+    for ((name, module, stimulus), got) in runs.iter().zip(rust_sim_traces(&root, &runs)) {
         assert!(
-            got == run_reference(module, &stimulus),
+            got == run_reference(module, stimulus),
             "{name}: the generated Rust simulator diverges from the interpreter"
         );
+    }
+}
+
+/// Verilog backend bugs the fuzzer found (`tests/fuzz.rs`), reduced. Each
+/// passes the oracle only with its fix. The lint is `Lint::Design`, since
+/// these leave input bits unread.
+const FUZZ_REGRESSIONS: &[Example] = &[
+    // A size cast keeps its operand's signedness: `as u8 wrap` of a signed
+    // value emitted `8'(signed)`, so `255 >= x` compared signed and failed.
+    Example {
+        name: "fuzz_sign_leak",
+        source: "struct Top { pub f0: u1 = 1, }\n\
+                 impl Top {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self, i0: u17) -> (Top, u1) {\n\
+                 \x20       let a: u8 = ((((self.f0 as i8 sat) << 55) as i24 sat) >> 14) as u8 wrap;\n\
+                 \x20       let b: u8 = ((-(i0 as i39 wrap)) * ((i0 as u16 wrap)[15:14] as i8 wrap)) as u8 wrap;\n\
+                 \x20       (Top { f0: self.f0 }, ((((((self.f0 as i8 sat) << 55) as i24 sat) >> 14) as u8 wrap) >= (((-(i0 as i39 wrap)) * ((i0 as u16 wrap)[15:14] as i8 wrap)) as u8 wrap)) & (a >= b))\n\
+                 \x20   }\n\
+                 }",
+    },
+    // A widening cast sizes its operand's operators: `16'(a - b)` subtracted
+    // at 16 bits, and `16'(~x)` set the high bits. (`~8'(x)` also made Yosys
+    // read a cast of size `~8`.)
+    Example {
+        name: "fuzz_width_leak",
+        source: "struct Top { pub f0: u1 = 0, }\n\
+                 impl Top {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self, i0: u17, i1: u17) -> (Top, (u16, u16, i16)) {\n\
+                 \x20       (Top { f0: self.f0 }, ((((i0 as u8 wrap) - (i1 as u8 wrap)) as u16 wrap), ((~(i0 as u8 wrap)) as u16 wrap), ((-(i0 as i8 wrap)) as i16 wrap)))\n\
+                 \x20   }\n\
+                 }",
+    },
+    // Verilator 5.045 sign-extends or arithmetic-shifts an inline zero-extended
+    // variable from the variable's own top bit.
+    Example {
+        name: "fuzz_verilator_zext",
+        source: "struct Top { pub f1: u15 = 0x4000, }\n\
+                 impl Top {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self, i0: u9) -> (Top, (i22, i24)) {\n\
+                 \x20       let l0: u9 = i0 | 0x100;\n\
+                 \x20       (Top { f1: ((((l0[0:0] as i18 sat) + 0x7_i3) as i33 wrap) as u15 wrap) }, (((l0 as i22 wrap) >> (l0 as u7 wrap)), (((l0 as i18 wrap) & 0x3ffff_i18) as i24 wrap)))\n\
+                 \x20   }\n\
+                 }",
+    },
+    // A module with no ports besides `clk` and `rst_n`, and a memory written
+    // every cycle, even from the reset state (the harness must not clock
+    // during reset).
+    Example {
+        name: "fuzz_no_ports",
+        source: "struct Top { f0: u17 = 0, m: mem<u32, 8> = 0, }\n\
+                 impl Top {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self) -> Top {\n\
+                 \x20       Top { f0: (self.f0 + 1) as u17 wrap, m: self.m.next(0, 1, self.f0[2:0], self.m.value()) }\n\
+                 \x20   }\n\
+                 }",
+    },
+    // Written to during reset, the memory's first read must still be its
+    // initial contents.
+    Example {
+        name: "fuzz_mem_reset",
+        source: "struct Top { pub rd: u24 = 0, m: mem<u24, 2> = 0, }\n\
+                 impl Top {\n\
+                 \x20   #[clock(domain = sys)]\n\
+                 \x20   fn tick(self) -> Top {\n\
+                 \x20       Top { rd: self.m.value(), m: self.m.next(0, 1, 0, 0x74422) }\n\
+                 \x20   }\n\
+                 }",
+    },
+];
+
+#[test]
+fn fuzz_regressions_pass_the_oracle() {
+    let tools = tools();
+    for ex in FUZZ_REGRESSIONS {
+        let module = compile_one(ex.source);
+        let stimulus = gen_stimulus(&module, CYCLES, 6);
+        co_simulate(&tools, ex.name, &module, &stimulus, Lint::Design);
     }
 }

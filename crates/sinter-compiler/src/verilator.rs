@@ -58,11 +58,15 @@ pub fn emit_cpp_harness(m: &Module) -> String {
     let _ = writeln!(out, "    uint64_t tmp = 0;");
     let _ = writeln!(out, "    (void)tmp;");
     let _ = writeln!(out);
-    let _ = writeln!(out, "    // Assert the asynchronous active-low reset.");
-    let _ = writeln!(out, "    top->rst_n = 0;");
-    let _ = writeln!(out, "    top->clk = 0; top->eval();");
-    let _ = writeln!(out, "    top->clk = 1; top->eval();");
-    let _ = writeln!(out, "    top->clk = 0; top->eval();");
+    // Assert the asynchronous active-low reset with a falling edge and no
+    // clock edge: memories aren't reset, so nothing may write them before
+    // cycle 0 (the simulator starts there, from the reset state).
+    let _ = writeln!(
+        out,
+        "    // Reset: a falling edge of rst_n, with no clock edge."
+    );
+    let _ = writeln!(out, "    top->clk = 0; top->rst_n = 1; top->eval();");
+    let _ = writeln!(out, "    top->rst_n = 0; top->eval();");
     let _ = writeln!(out);
     let _ = writeln!(out, "    for (long k = 0; k < cycles; ++k) {{");
     let _ = writeln!(out, "        top->rst_n = 1;");
@@ -157,6 +161,11 @@ fn emit_multi_clock_harness(m: &Module) -> String {
         out,
         "    // Reset, then two edges per clock to clear the reset synchronizers."
     );
+    let _ = writeln!(out, "    top->rst_n = 1;");
+    let _ = writeln!(out, "    {{");
+    set_clocks(&mut out, "0");
+    let _ = writeln!(out, "        top->eval();");
+    let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "    top->rst_n = 0;");
     let _ = writeln!(out, "    {{");
     set_clocks(&mut out, "0");

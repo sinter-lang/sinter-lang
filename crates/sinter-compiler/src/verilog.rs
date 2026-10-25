@@ -16,12 +16,14 @@ use std::fmt::Write as _;
 
 use sinter_syntax::ast::{BinOp, CastMode, Type, UnaryOp};
 
-use crate::ir::{Expr, ExprKind, Module};
+use crate::ir::{self, Expr, ExprKind, Module};
 
 /// Emit the SystemVerilog text for a module. The caller writes it to
 /// `<module.name>.sv` (filename matches the module name, per the skill).
 #[must_use]
 pub fn emit_module(m: &Module) -> String {
+    let hoisted = hoist_zero_extensions(m);
+    let m = &hoisted;
     let mut out = String::new();
     let _ = writeln!(out, "`default_nettype none");
     let _ = writeln!(out);
@@ -49,6 +51,102 @@ pub fn emit_module(m: &Module) -> String {
     let _ = writeln!(out);
     let _ = writeln!(out, "`default_nettype wire");
     out
+}
+
+/// A copy of `m` in which every cast that zero-extends an unsigned value into
+/// a wider signed type is its own wire (`__zx<k>`).
+///
+/// This works around a Verilator (5.045) optimizer bug: an inline
+/// `$signed(N'(v))`, with `v` a narrower unsigned variable, is sign-extended
+/// or arithmetic-shifted from `v`'s own top bit (`22'($signed(20'(v)))` with
+/// `v = 9'h1f0` gives `3ffff0`, not `0001f0`). Read through a named signed
+/// wire, the same value is handled correctly. The semantics are unchanged.
+fn hoist_zero_extensions(m: &Module) -> Module {
+    fn walk(e: &mut Expr, new: &mut Vec<ir::Let>, taken: &std::collections::HashSet<String>) {
+        match &mut e.kind {
+            ExprKind::Literal(_) | ExprKind::Ident(_) => {}
+            ExprKind::Unary { expr: x, .. }
+            | ExprKind::Cast { expr: x, .. }
+            | ExprKind::Shl { expr: x, .. }
+            | ExprKind::Shr { expr: x, .. } => walk(x, new, taken),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                walk(lhs, new, taken);
+                walk(rhs, new, taken);
+            }
+            ExprKind::VarShift {
+                expr: x, amount, ..
+            } => {
+                walk(x, new, taken);
+                walk(amount, new, taken);
+            }
+            ExprKind::If { cond, then, els } => {
+                walk(cond, new, taken);
+                walk(then, new, taken);
+                walk(els, new, taken);
+            }
+        }
+        let zero_extends = matches!(&e.kind, ExprKind::Cast { expr: x, mode }
+            if *mode != CastMode::Sat
+                && !x.ty.is_signed()
+                && e.ty.is_signed()
+                && x.ty.width() < e.ty.width());
+        if zero_extends {
+            let name = (new.len()..)
+                .map(|k| format!("__zx{k}"))
+                .find(|n| !taken.contains(n))
+                .unwrap_or_default();
+            let value = std::mem::replace(
+                e,
+                Expr {
+                    kind: ExprKind::Ident(name.clone()),
+                    ty: e.ty,
+                },
+            );
+            new.push(ir::Let {
+                name,
+                ty: value.ty,
+                frac_bits: 0,
+                value,
+            });
+        }
+    }
+    let mut m = m.clone();
+    let taken: std::collections::HashSet<String> = m
+        .ports
+        .iter()
+        .map(|p| p.name.clone())
+        .chain(m.regs.iter().map(|r| r.name.clone()))
+        .chain(m.lets.iter().map(|l| l.name.clone()))
+        .chain(m.mems.iter().map(|x| x.name.clone()))
+        .collect();
+    let mut new = Vec::new();
+    // Each hoisted wire goes just before the wire that reads it, keeping the
+    // wires in dependency order; the rest go after every wire.
+    let mut lets = Vec::new();
+    for mut l in std::mem::take(&mut m.lets) {
+        let before = new.len();
+        walk(&mut l.value, &mut new, &taken);
+        lets.extend(new[before..].iter().cloned());
+        lets.push(l);
+    }
+    let lets_done = new.len();
+    for (_, e) in &mut m.out_drives {
+        walk(e, &mut new, &taken);
+    }
+    for (_, e) in &mut m.reg_updates {
+        walk(e, &mut new, &taken);
+    }
+    for r in &mut m.mem_reads {
+        walk(&mut r.addr, &mut new, &taken);
+    }
+    for w in &mut m.mem_writes {
+        walk(&mut w.we, &mut new, &taken);
+        walk(&mut w.addr, &mut new, &taken);
+        walk(&mut w.data, &mut new, &taken);
+    }
+    lets.extend(new[lets_done..].iter().cloned());
+    m.lets = lets;
+    m
 }
 
 /// The signed/range prefix for a net of `ty` width, e.g. `signed [15:0]`.
@@ -90,9 +188,11 @@ fn emit_ports(out: &mut String, m: &Module) {
             m.clock_domain
         );
     }
+    // With no other ports, `rst_n` is last and takes no comma.
+    let comma = if m.ports.is_empty() { " " } else { "," };
     let _ = writeln!(
         out,
-        "    input  wire         rst_n,  // active-low asynchronous reset"
+        "    input  wire         rst_n{comma}  // active-low asynchronous reset"
     );
     for (i, p) in m.ports.iter().enumerate() {
         let (dir, kw) = match p.dir {
@@ -500,8 +600,8 @@ fn expr(e: &Expr) -> String {
         ExprKind::Literal(v) => format!("{}'h{v:x}", e.ty.width()),
         ExprKind::Ident(name) => name.clone(),
         ExprKind::Unary { op, expr: inner } => match op {
-            UnaryOp::Not => format!("(!{})", expr(inner)),
-            UnaryOp::BitNot => format!("(~{})", expr(inner)),
+            UnaryOp::Not => format!("(!{})", operand(inner)),
+            UnaryOp::BitNot => format!("(~{})", operand(inner)),
             // `Neg` requires a signed operand (enforced by the checker).
             UnaryOp::Neg => format!("(-$signed({}))", expr(inner)),
         },
@@ -542,8 +642,11 @@ fn expr(e: &Expr) -> String {
             expr: inner,
             amount,
         } => {
+            // With the sign bit known to be 0, an arithmetic shift is a
+            // logical one (and dodges the Verilator bug noted at
+            // `hoist_zero_extensions`).
             let w = e.ty.width();
-            if inner.ty.is_signed() {
+            if arith_shift(inner) {
                 format!("{w}'($signed({}) >>> {amount})", expr(inner))
             } else {
                 format!("{w}'({} >> {amount})", expr(inner))
@@ -560,12 +663,109 @@ fn expr(e: &Expr) -> String {
             let w = e.ty.width();
             if *left {
                 format!("{w}'({} << {})", expr(inner), expr(amount))
-            } else if inner.ty.is_signed() {
+            } else if arith_shift(inner) {
                 format!("{w}'($signed({}) >>> {})", expr(inner), expr(amount))
             } else {
                 format!("{w}'({} >> {})", expr(inner), expr(amount))
             }
         }
+    }
+}
+
+/// A unary operator's operand. One that starts with a size cast is
+/// parenthesized: Yosys reads `~8'(x)` as a cast of size `~8`.
+fn operand(e: &Expr) -> String {
+    let s = expr(e);
+    if s.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("({s})")
+    } else {
+        s
+    }
+}
+
+/// Whether the SystemVerilog that [`expr`] emits for `e` is signed. It can
+/// differ from `e`'s own type: a size cast `N'(x)` keeps `x`'s signedness, and
+/// a concatenation is always unsigned. Where that matters (comparisons and
+/// zero-extension), [`unsigned`] corrects it.
+fn sv_signed(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Literal(_) => false,
+        ExprKind::Ident(_) => e.ty.is_signed(),
+        ExprKind::Unary { op, expr: inner } => match op {
+            UnaryOp::Not => false,
+            UnaryOp::BitNot => sv_signed(inner),
+            UnaryOp::Neg => true,
+        },
+        ExprKind::Binary { op, lhs, rhs } => {
+            if op.is_comparison() {
+                false
+            } else if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+                let w = e.ty.width();
+                ext_signed(lhs, w) && ext_signed(rhs, w)
+            } else {
+                sv_signed(lhs) && sv_signed(rhs)
+            }
+        }
+        ExprKind::If { then, els, .. } => sv_signed(then) && sv_signed(els),
+        ExprKind::Cast { expr: inner, mode } => match mode {
+            CastMode::Sat => e.ty.is_signed() && sv_signed(inner),
+            _ => ext_signed(inner, e.ty.width()),
+        },
+        ExprKind::Shl {
+            expr: inner,
+            amount,
+        } => *amount == 0 && sv_signed(inner),
+        ExprKind::Shr { expr: inner, .. } => arith_shift(inner) || sv_signed(inner),
+        ExprKind::VarShift {
+            expr: inner, left, ..
+        } => (!*left && arith_shift(inner)) || sv_signed(inner),
+    }
+}
+
+/// Whether a right shift of `e` is emitted as arithmetic (`>>>`): `e` is
+/// signed and its sign bit isn't known to be 0.
+fn arith_shift(e: &Expr) -> bool {
+    e.ty.is_signed() && !zero_msb(e)
+}
+
+/// Whether [`ext`]`(e, w)` is signed SystemVerilog.
+fn ext_signed(e: &Expr, w: u32) -> bool {
+    if e.ty.width() >= w {
+        sv_signed(e)
+    } else {
+        e.ty.is_signed()
+    }
+}
+
+/// Whether [`expr`]`(e)` is a primary (a name, literal, size cast, or
+/// concatenation), whose width its context can't change.
+///
+/// Anything else, widened by a size cast, is evaluated at the wider width:
+/// SystemVerilog sizes an operator's operands to its context, so `16'(a - b)`
+/// subtracts at 16 bits, and `~x` and `-x` likewise compute high bits that
+/// `e`'s own width drops (and Verilator warns about a widened `?:`).
+fn atomic(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Literal(_) | ExprKind::Ident(_) => true,
+        ExprKind::Unary { .. } | ExprKind::Binary { .. } | ExprKind::If { .. } => false,
+        ExprKind::Cast { expr: inner, mode } => match mode {
+            CastMode::Sat => false,
+            _ => inner.ty.width() != e.ty.width() || atomic(inner),
+        },
+        ExprKind::Shl {
+            expr: inner,
+            amount,
+        } => *amount != 0 || atomic(inner),
+        ExprKind::Shr { .. } | ExprKind::VarShift { .. } => true,
+    }
+}
+
+/// `e` as unsigned SystemVerilog of its own width, safe to zero-extend.
+fn unsigned(e: &Expr) -> String {
+    if sv_signed(e) || !atomic(e) {
+        format!("$unsigned({})", expr(e))
+    } else {
+        expr(e)
     }
 }
 
@@ -575,9 +775,53 @@ fn ext(e: &Expr, w: u32) -> String {
     if e.ty.width() == w {
         expr(e)
     } else if e.ty.is_signed() {
-        format!("{w}'($signed({}))", expr(e))
+        sign_extend(e, w)
     } else {
-        format!("{w}'({})", expr(e))
+        format!("{w}'({})", unsigned(e))
+    }
+}
+
+/// Sign-extend signed `e` to `w` bits. When `e`'s sign bit is known to be 0,
+/// zero-extend instead: the value is the same, and it avoids a Verilator
+/// (5.045) optimizer bug that sign-extends a zero-extended variable from the
+/// variable's own top bit (`19'($signed(18'(v)))` with `v` a 4-bit 8 gives
+/// -8, not 8).
+fn sign_extend(e: &Expr, w: u32) -> String {
+    if zero_msb(e) {
+        format!("$signed({w}'({}))", unsigned(e))
+    } else {
+        format!("{w}'($signed({}))", expr(e))
+    }
+}
+
+/// Whether `e`'s top bit is 0 by construction: a zero-extension, or a bitwise
+/// combination or choice of such.
+fn zero_msb(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Literal(v) => (v >> (e.ty.width() - 1)) & 1 == 0,
+        ExprKind::Cast { expr: inner, mode } if *mode != CastMode::Sat => {
+            match inner.ty.width().cmp(&e.ty.width()) {
+                std::cmp::Ordering::Less => !inner.ty.is_signed(),
+                std::cmp::Ordering::Equal => zero_msb(inner),
+                std::cmp::Ordering::Greater => false,
+            }
+        }
+        ExprKind::Binary {
+            op: BinOp::And,
+            lhs,
+            rhs,
+        } => zero_msb(lhs) || zero_msb(rhs),
+        ExprKind::Binary {
+            op: BinOp::Or | BinOp::Xor,
+            lhs,
+            rhs,
+        } => zero_msb(lhs) && zero_msb(rhs),
+        ExprKind::If { then, els, .. } => zero_msb(then) && zero_msb(els),
+        ExprKind::Shl {
+            expr: inner,
+            amount: 0,
+        } => zero_msb(inner),
+        _ => false,
     }
 }
 
@@ -591,9 +835,9 @@ fn resize(inner: &Expr, to: Type) -> String {
     } else if w < sw {
         format!("{w}'({})", expr(inner))
     } else if inner.ty.is_signed() {
-        format!("{w}'($signed({}))", expr(inner))
+        sign_extend(inner, w)
     } else {
-        format!("{w}'({})", expr(inner))
+        format!("{w}'({})", unsigned(inner))
     }
 }
 
@@ -619,10 +863,14 @@ fn sat(inner: &Expr, to: Type) -> String {
     }
 }
 
-/// Wrap `e` in `$signed(...)` when its type is signed (for comparisons).
+/// A comparison operand: `$signed(...)` when its type is signed, and
+/// unsigned SystemVerilog otherwise, so the comparison's signedness is the
+/// operands' type's.
 fn signed(e: &Expr) -> String {
     if e.ty.is_signed() {
         format!("$signed({})", expr(e))
+    } else if sv_signed(e) {
+        format!("$unsigned({})", expr(e))
     } else {
         expr(e)
     }

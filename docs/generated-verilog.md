@@ -42,7 +42,11 @@ clock.
 Memory contents (`mem` / `rom`) are **not** cleared by `rst_n`. A `mem`
 starts at zero and a `rom` at its contents, set by an `initial` block. FPGA
 flows honour this as power-up contents; ASIC flows don't. A memory's
-read-data register *is* reset (to zero).
+read-data register *is* reset (to zero). A write port also isn't gated by
+`rst_n`: if its enable is true in the reset state, every clock edge during
+reset writes. Sinter's simulators start at cycle 0 from the reset state with
+memories at their initial contents, so to match them, keep write enables low
+in the reset state or don't clock during reset.
 
 ## Ports
 

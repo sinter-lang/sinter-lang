@@ -1078,6 +1078,14 @@ uninitialised signals surface as trace mismatches. Because that flag set is
 (warnings fatal, no pragmas) enforces the lint-clean guarantee on every generated
 module.
 
+**Fuzzing (v0.7).** `tests/fuzz.rs` generates random, well-typed programs
+(type-directed, so each compiles by construction) and puts each through the
+same oracle plus the generated Rust simulator. Its lint pass allows only
+warnings about the design's own logic (unused signals, constant
+comparisons); anything else is the compiler's fault. Its first campaigns found
+five Verilog backend bugs, in signedness, operand widths, and syntax, and a
+Verilator optimizer bug; each now has a regression case.
+
 ### 7.5 (Future, explicitly deferred) custom place-and-route
 
 The "iteratively collapse a high-dimensional network of springs onto the 2-D
