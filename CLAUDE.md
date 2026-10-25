@@ -12,6 +12,7 @@ crates/sinter-syntax     grammar (.pest) + AST + parser + multi-file loader for 
 crates/sinter-compiler   semantic checks + elaboration + Verilog/Rust-sim/Verilator backends
 crates/sinter-lang       `sinter` CLI binary (published crate: sinter-lang)
 editors/tree-sitter-sinter  tree-sitter grammar + highlight queries (editors only)
+editors/vscode           VS Code extension: TextMate grammar (`just vsix`)
 examples/                example `.snt` programs (also the oracle corpus)
 scripts/                 task scripts wrapped by the justfile (shared by dev shell + CI)
 .claude/skills/          coding-standard skills (git submodules; see below)
@@ -82,11 +83,14 @@ backends. The stages, in order:
    SROA-duplicated multiply into one physical multiplier, inserting each shared
    wire just before its first reader.
 
-**When the surface syntax changes**, update the editor grammar too:
+**When the surface syntax changes**, update both editor grammars too:
 `editors/tree-sitter-sinter/grammar.js` (then `just tree-sitter` and commit
-`src/`) and its `queries/highlights.scm`. `cargo test -p tree-sitter-sinter`
-parses every corpus `pass/` case and example and fails on any error node, so a
-new case or example it can't parse is caught.
+`src/`) with its `queries/highlights.scm`, and
+`editors/vscode/syntaxes/sinter.tmLanguage.json` with its
+`test/highlight.test.snt`. `cargo test -p tree-sitter-sinter` parses every
+corpus `pass/` case and example (failing on any error node), and checks that
+every pest reserved word is highlighted by both grammars and that both editor
+packages carry the workspace version (bump them in a release commit).
 
 **Gotcha when adding an AST `ExprKind` / `Pattern` / `TypeRef` variant:** every
 stage above matches it exhaustively, and so do `pipeline_desugar`,

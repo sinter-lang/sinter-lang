@@ -12,6 +12,9 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 - **A tree-sitter grammar** (`editors/tree-sitter-sinter/`) with highlight
   queries, for Neovim, Helix, Zed, and other tree-sitter editors; setup is in
   its README. `cargo test` checks it parses every corpus case and example.
+- **A VS Code extension** (`editors/vscode/`): highlighting, comment
+  toggling, and bracket handling for `.snt` files. `just vsix` tests its
+  grammar and packages `build/sinter-<version>.vsix`.
 
 ## [0.7.0] — unreleased
 

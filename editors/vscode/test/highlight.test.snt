@@ -1,0 +1,40 @@
+// SYNTAX TEST "source.sinter" "Sinter highlighting"
+
+#[clock(domain = sys, period = 3)]
+// <~- punctuation.definition.attribute.sinter
+//^^^^^ entity.name.function.attribute.sinter
+//      ^^^^^^ variable.other.property.sinter
+pub struct Counter {
+// <--- storage.modifier.sinter
+//  ^^^^^^ keyword.declaration.sinter
+//         ^^^^^^^ entity.name.type.sinter
+    pub value: u8 = 0x1f_u8,
+//             ^^ storage.type.primitive.sinter
+//                  ^^^^^^^ constant.numeric.hex.sinter
+    q: fifo<u4.12, 16>,
+//     ^^^^ support.type.sinter
+//          ^^^^^ storage.type.primitive.sinter
+}
+
+fn bump(self, x: i16) -> Option<u8> {
+// <-- keyword.other.fn.sinter
+// ^^^^ entity.name.function.sinter
+//      ^^^^ variable.language.self.sinter
+//                       ^^^^^^ support.type.sinter
+    let y = (x + 1) as u8 wrap; // a comment
+//  ^^^ keyword.other.sinter
+//                  ^^ keyword.operator.cast.sinter
+//                     ^^ storage.type.sinter
+//                        ^^^^ keyword.operator.cast.mode.sinter
+//                              ^^^^^^^^^^^^ comment.line.double-slash.sinter
+    assert!(y != 0, "nonzero");
+//  ^^^^^^^ support.function.macro.sinter
+//                  ^^^^^^^^^ string.quoted.double.sinter
+    match self.q.front() { Some(v) => Cmd::Up, None => h(y) }
+//  ^^^^^ keyword.control.sinter
+//               ^^^^^ entity.name.function.method.sinter
+//                         ^^^^ constant.language.sinter
+//                                    ^^^ entity.name.type.sinter
+//                                         ^^ variable.other.enummember.sinter
+//                                                     ^ entity.name.function.call.sinter
+}

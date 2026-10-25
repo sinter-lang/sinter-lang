@@ -141,9 +141,9 @@ Release: tag `v0.7.0` on the "release: v0.7.0" commit.
       queries, tested against the parser corpus and every example (§7.1).
       The generated parser is committed; `just tree-sitter --check` keeps it
       current.
-- [ ] VS Code syntax highlighting (`editors/vscode/`): a TextMate grammar and
-      language configuration, packaged as a `.vsix`. A full LSP can follow
-      1.0.
+- [x] VS Code syntax highlighting (`editors/vscode/`): a TextMate grammar and
+      language configuration, packaged as a `.vsix` (`just vsix`). A full LSP
+      can follow 1.0.
 - [ ] CI against more than one Yosys / Verilator version.
 
 ## v0.9 — release candidate

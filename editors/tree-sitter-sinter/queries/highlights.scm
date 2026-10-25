@@ -46,6 +46,10 @@
   "use" "mod" "const" "struct" "enum" "impl" "fn" "let" "yield"
 ] @keyword
 
+; Reserved for generators (`gen fn`, DESIGN §4.4), which have no syntax yet.
+((identifier) @keyword
+  (#eq? @keyword "gen"))
+
 (visibility) @keyword
 (function_color) @keyword
 (cast_mode) @keyword

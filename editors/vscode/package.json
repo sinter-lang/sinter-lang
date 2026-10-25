@@ -1,0 +1,47 @@
+{
+  "name": "sinter",
+  "displayName": "Sinter",
+  "description": "Syntax highlighting for the Sinter hardware description language (.snt).",
+  "version": "0.7.0",
+  "publisher": "sinter-lang",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sinter-lang/sinter-lang",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "sinter",
+    "hdl",
+    "verilog",
+    "fpga"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "sinter",
+        "aliases": [
+          "Sinter",
+          "sinter"
+        ],
+        "extensions": [
+          ".snt"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sinter",
+        "scopeName": "source.sinter",
+        "path": "./syntaxes/sinter.tmLanguage.json"
+      }
+    ]
+  }
+}

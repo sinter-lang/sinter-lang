@@ -63,6 +63,11 @@ conformance require="auto":
 tree-sitter *args:
     scripts/tree-sitter.sh {{ args }}
 
+# Test the VS Code grammar and package editors/vscode as build/sinter-<v>.vsix
+# (needs Node.js 22+).
+vsix:
+    scripts/vscode.sh
+
 # Fuzz: put `programs` random programs from `seed` through the whole oracle
 # (needs Yosys + Verilator).
 fuzz programs="200" seed="1":
