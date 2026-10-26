@@ -97,7 +97,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A `-rc.N` (or other suffixed) tag is a pre-release.
+          prerelease=()
+          case "${GITHUB_REF_NAME}" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+            --generate-notes \
+            "${prerelease[@]}"

@@ -163,7 +163,9 @@ v1.0.0-rc.1).
 - [x] The crates are ready for crates.io (license files, READMEs, metadata;
       CI runs `just package`, a publish dry run). Publishing waits for 1.0.
 
-## v1.0.0-rc.1 — ready to use
+## v1.0.0-rc.1 — ready to use ✅
+
+Release: tag `v1.0.0-rc.1` on the "release: v1.0.0-rc.1" commit.
 
 A version to build a real project with (a from-scratch pico-gs v2, an ECP5
 GPU) before 1.0 is frozen. Released as a GitHub pre-release with binaries;
@@ -194,7 +196,7 @@ nothing goes to crates.io.
       with Rust models of external chips (evaluate outputs without
       committing a cycle, so a model can answer combinationally), and each
       `#[module]` gets its own crate for block-level tests.
-- [ ] Book, CHANGELOG, and examples updated; release `v1.0.0-rc.1` as a
+- [x] Book, CHANGELOG, and examples updated; release `v1.0.0-rc.1` as a
       GitHub pre-release.
 
 ## 1.0 exit criteria

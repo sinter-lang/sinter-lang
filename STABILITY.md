@@ -11,8 +11,8 @@ the editor packages share one version number and are released together.
 
 ## Before 1.0
 
-Sinter is pre-1.0. Each `0.x` minor release (0.9 to 0.10, say) may break
-anything on this page; the [CHANGELOG](https://github.com/sinter-lang/sinter-lang/blob/master/CHANGELOG.md) lists every breaking
+Sinter is pre-1.0. Each `0.x` minor release (0.9 to 0.10, say), and each
+1.0 release candidate (`1.0.0-rc.N`), may break anything on this page; the [CHANGELOG](https://github.com/sinter-lang/sinter-lang/blob/master/CHANGELOG.md) lists every breaking
 change with how to update. Patch releases (0.9.0 to 0.9.1) only fix bugs.
 
 ## What 1.0 promises

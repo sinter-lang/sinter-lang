@@ -2,7 +2,7 @@
   "name": "sinter",
   "displayName": "Sinter",
   "description": "Syntax highlighting for the Sinter hardware description language (.snt).",
-  "version": "0.9.0",
+  "version": "1.0.0-rc.1",
   "publisher": "sinter-lang",
   "license": "MIT OR Apache-2.0",
   "repository": {

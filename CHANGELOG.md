@@ -5,7 +5,7 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
-## [1.0.0-rc.1] — unreleased
+## [1.0.0-rc.1] — 2026-10-26
 
 A version to build a real project with before 1.0 is frozen. Not published
 to crates.io.

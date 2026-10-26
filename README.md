@@ -13,19 +13,24 @@ including features not built yet, [`STABILITY.md`](STABILITY.md) says what
 1.0 will keep stable, and [`CLAUDE.md`](CLAUDE.md) has the coding standards
 every change must follow.
 
-> **Status: v0.9 — release candidate, pre-1.0.** The language and CLI may still
-> change incompatibly between releases. Sinter is usable today for small-to-medium
-> datapaths and controllers, on one clock or several, that you instantiate from
-> hand-written Verilog and verify with your own testbench.
+> **Status: v1.0.0-rc.1 — a release candidate to build real projects with.**
+> The language and CLI may still change before 1.0, and the crates aren't on
+> crates.io yet. Sinter is usable today for datapaths, controllers, and whole
+> FPGA designs, on one clock or several, flat or hierarchical, verified in
+> simulation and against the generated Verilog.
 
 **Implemented** — every feature below lowers to both backends and passes the
 sim-vs-Verilog oracle (Yosys synthesis + Verilator co-simulation) in CI:
 
 - **Functional surface** (DESIGN §2.1): `struct` state with inline reset values,
   `impl` transition methods, a `#[clock]` root; `enum` / `match`, tuples, arrays,
-  `const`s; width-inferred `uN` / `iN` arithmetic and fixed-point `uI.F` / `iI.F`;
-  explicit narrowing casts `as T wrap | sat | round`.
+  computed `const`s; width-inferred `uN` / `iN` arithmetic and fixed-point
+  `uI.F` / `iI.F`; explicit narrowing casts `as T wrap | sat | round`; struct
+  update `S { a: x, ..self }`, `Self`, and tuple / nested `match` patterns.
 - **Modules**: multi-file `mod` / `use` with `pub` visibility (Rust-2018 layout).
+- **Hierarchy**: a `#[module]` struct becomes its own Verilog module,
+  instantiated by its parent; the simulator stays flat and the oracle checks
+  it against the hierarchical Verilog.
 - **Staged functions**: `pipeline fn` (free-running, valid bubbles, global stall)
   and `multiplex fn` (time-folded onto one shared multiplier).
 - **Storage**: `mem<T, N, R>` block RAM with `R` read ports and byte-enable
@@ -104,7 +109,7 @@ fully static Linux binaries for `x86_64` and `aarch64`. They have no runtime
 dependencies, so they run on any distro, including Alpine.
 
 ```sh
-SINTER_VERSION=v0.9.0
+SINTER_VERSION=v1.0.0-rc.1
 mkdir -p ~/.local/bin
 curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
     | tar -xz -C ~/.local/bin sinter
@@ -120,7 +125,7 @@ Each tarball has a matching `.sha256` file alongside it.
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
 
 # Reproducible builds: pin to a release tag (v0.1.1+) or a specific commit.
-cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --tag v0.9.0 --locked
+cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --tag v1.0.0-rc.1 --locked
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --rev <sha> --locked
 
 # Updating a git-installed copy to a newer commit needs --force.
@@ -162,7 +167,7 @@ is pinned so builds are reproducible.
 
 ```dockerfile
 # --- Sinter HDL compiler ---------------------------------------------------
-ARG SINTER_VERSION=v0.9.0
+ARG SINTER_VERSION=v1.0.0-rc.1
 RUN curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
         | tar -xz -C /usr/local/bin sinter \
     && sinter --version
@@ -177,7 +182,7 @@ GitHub SSH key.
 ```dockerfile
 # --- Sinter HDL compiler (build stage) -------------------------------------
 FROM rust:1-slim-bookworm AS sinter
-ARG SINTER_REF=v0.9.0
+ARG SINTER_REF=v1.0.0-rc.1
 RUN cargo install --locked --root /opt/sinter \
         --git https://github.com/sinter-lang/sinter-lang.git --tag ${SINTER_REF} \
         sinter-lang

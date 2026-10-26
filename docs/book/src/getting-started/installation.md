@@ -11,7 +11,7 @@ static Linux binaries for `x86_64` and `aarch64`, which run on any
 distribution:
 
 ```sh
-SINTER_VERSION=v0.9.0
+SINTER_VERSION=v1.0.0-rc.1
 mkdir -p ~/.local/bin
 curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTER_VERSION}/sinter-${SINTER_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
     | tar -xz -C ~/.local/bin sinter
@@ -28,7 +28,7 @@ repository:
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
 ```
 
-Add `--tag v0.9.0` to pin a release, or `--rev <commit>` for a commit. The
+Add `--tag v1.0.0-rc.1` to pin a release, or `--rev <commit>` for a commit. The
 package is called `sinter-lang`; the binary it installs is `sinter`.
 
 ## Check it works
