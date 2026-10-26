@@ -25,7 +25,7 @@ Writes the design's artifacts to the output directory (`--out`, default
 | `--emit` | Writes |
 |---|---|
 | `verilog` | `<Module>.sv`, the SystemVerilog module ([details](generated-verilog.md)), and one `.sv` per [`#[module]`](../reference/hierarchy.md) struct |
-| `rust` | `<module>-sim/`, a Rust crate that simulates the design ([details](generated-rust.md)) |
+| `rust` | `<module>-sim/`, a Rust crate that simulates the design ([details](generated-rust.md)), and one per `#[module]` struct |
 | `harness` | `<Module>_tb.cpp`, a Verilator testbench used by Sinter's own conformance tests |
 | `all` (default) | all three |
 

@@ -200,8 +200,9 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
     let modules = read_and_compile(file, mode)?;
     fs::create_dir_all(out).with_context(|| format!("creating output dir `{}`", out.display()))?;
 
-    // The first module is the top; the rest are its `#[module]` children,
-    // which need only their Verilog (the top's simulator includes them).
+    // The first module is the top; the rest are its `#[module]` children.
+    // Each gets its Verilog and a Rust simulator (a child's, for testing that
+    // block alone); the Verilator harness is for the top.
     for (k, m) in modules.iter().enumerate() {
         let top = k == 0;
         if m.outputs().next().is_none() {
@@ -223,7 +224,7 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
                 .with_context(|| format!("writing `{}`", path.display()))?;
             info!("wrote {}", path.display());
         }
-        if top && matches!(emit, Emit::Rust | Emit::All) {
+        if matches!(emit, Emit::Rust | Emit::All) {
             let name = rust_sim::crate_name(m);
             let dir = out.join(&name);
             for (rel, contents) in rust_sim::emit_crate(m, &name) {

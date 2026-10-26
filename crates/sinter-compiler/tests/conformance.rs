@@ -383,12 +383,6 @@ struct Case {
     cycles: usize,
 }
 
-impl Case {
-    fn top(&self) -> &Module {
-        &self.modules[0]
-    }
-}
-
 /// Every oracle case — the single-file examples plus the multi-file projects.
 fn all_cases() -> Vec<Case> {
     let mut cases: Vec<Case> = EXAMPLES
@@ -413,19 +407,44 @@ fn all_cases() -> Vec<Case> {
     cases
 }
 
+/// The modules `top` instantiates through `#[module]`s, directly or not.
+fn descendants<'a>(modules: &'a [Module], top: &Module) -> Vec<Module> {
+    let mut out: Vec<Module> = Vec::new();
+    let mut todo: Vec<String> = top
+        .generated_children()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    while let Some(name) = todo.pop() {
+        if out.iter().any(|m| m.name == name) {
+            continue;
+        }
+        let m: &'a Module = modules
+            .iter()
+            .find(|m| m.name == name)
+            .expect("child module");
+        todo.extend(m.generated_children().iter().map(|s| s.to_string()));
+        out.push(m.clone());
+    }
+    out
+}
+
 #[test]
 fn examples_pass_the_oracle() {
     let tools = tools();
     for case in &all_cases() {
-        let stimulus = gen_stimulus(case.top(), case.cycles, 0xDEAD_BEEF);
-        co_simulate(
-            &tools,
-            &case.name,
-            case.top(),
-            &case.modules[1..],
-            &stimulus,
-            Lint::Strict,
-        );
+        // The top, and each `#[module]` child on its own: a child is complete
+        // for simulation too.
+        for (k, module) in case.modules.iter().enumerate() {
+            let name = if k == 0 {
+                case.name.clone()
+            } else {
+                format!("{}-{}", case.name, module.name)
+            };
+            let stimulus = gen_stimulus(module, case.cycles, 0xDEAD_BEEF);
+            let children = descendants(&case.modules, module);
+            co_simulate(&tools, &name, module, &children, &stimulus, Lint::Strict);
+        }
     }
 }
 
@@ -580,14 +599,28 @@ fn examples_match_the_generated_rust_simulator() {
         modules: vec![compile_one(ex.source)],
         cycles: CYCLES,
     }));
-    let stimuli: Vec<Vec<Vec<u64>>> = cases
+    // Every module: a `#[module]` child's crate simulates that block alone.
+    let modules: Vec<(String, &Module, usize)> = cases
         .iter()
-        .map(|c| gen_stimulus(c.top(), c.cycles, 0xDEAD_BEEF))
+        .flat_map(|c| {
+            c.modules.iter().enumerate().map(move |(k, m)| {
+                let name = if k == 0 {
+                    c.name.clone()
+                } else {
+                    format!("{}_{}", c.name, m.name.to_lowercase())
+                };
+                (name, m, c.cycles)
+            })
+        })
         .collect();
-    let runs: Vec<(String, &Module, &[Vec<u64>])> = cases
+    let stimuli: Vec<Vec<Vec<u64>>> = modules
+        .iter()
+        .map(|(_, m, cycles)| gen_stimulus(m, *cycles, 0xDEAD_BEEF))
+        .collect();
+    let runs: Vec<(String, &Module, &[Vec<u64>])> = modules
         .iter()
         .zip(&stimuli)
-        .map(|(c, stim)| (c.name.clone(), c.top(), stim.as_slice()))
+        .map(|((name, m, _), stim)| (name.clone(), *m, stim.as_slice()))
         .collect();
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rust-sim");
     for ((name, module, stimulus), got) in runs.iter().zip(rust_sim_traces(&root, &runs)) {

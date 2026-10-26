@@ -307,9 +307,21 @@ pub fn rust_sim_traces(root: &Path, cases: &[(String, &Module, &[Vec<u64>])]) ->
              \x20                   .map(|c| core::array::from_fn(|k| c[k]))\n\
              \x20                   .collect()\n\
              \x20           }};\n\
-             \x20           {lib}::{}::run_raw(&rows).iter().flatten().copied().collect()\n\
+             \x20           // Step one cycle at a time, checking `eval` predicts\n\
+             \x20           // `step`'s outputs without changing anything.\n\
+             \x20           let mut sim = {lib}::{model}::new();\n\
+             \x20           let mut out = Vec::new();\n\
+             \x20           for row in &rows {{\n\
+             \x20               let ins = {lib}::Inputs::from_raw(row);\n\
+             \x20               let predicted = sim.eval(&ins);\n\
+             \x20               assert_eq!(predicted, sim.eval(&ins), \"eval changed the state\");\n\
+             \x20               let o = sim.step(&ins);\n\
+             \x20               assert_eq!(predicted, o, \"eval disagrees with step\");\n\
+             \x20               out.extend(o.to_raw());\n\
+             \x20           }}\n\
+             \x20           out\n\
              \x20       }}\n",
-            rust_sim::model_name(module)
+            model = rust_sim::model_name(module)
         ));
     }
     write_if_changed(

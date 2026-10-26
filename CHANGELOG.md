@@ -34,6 +34,12 @@ to crates.io.
   writes one `.sv` per module; the simulators still run the whole design
   flat, and the oracle checks them against the hierarchical Verilog
   (`examples/fn_hier.snt`).
+- The generated Rust simulator has **`eval(&Inputs) -> Outputs`**: the
+  outputs `step` would return, without committing. A Rust model of an
+  external chip can read them and answer in the same cycle. `--emit rust`
+  also writes a crate per `#[module]` struct, to test a block on its own.
+  The oracle checks `eval` against `step` on every cycle of every example,
+  and co-simulates each `#[module]` child on its own as well.
 
 ### Changed (breaking)
 

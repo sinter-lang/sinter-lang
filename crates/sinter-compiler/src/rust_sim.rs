@@ -375,44 +375,86 @@ impl<'a> Gen<'a> {
              \x20   }}\n",
             name = m.name,
         );
+        self.eval_fn(s);
         self.step_fn(s);
         s.push_str("}\n");
     }
 
-    fn step_fn(&self, s: &mut String) {
+    /// The lines that compute every wire for the next edge into `w<k>`, from
+    /// the held inputs `x` and the registers `r`. `commit` also advances the
+    /// edge schedule and latches the inputs; otherwise they are copied.
+    fn eval_prelude(&self, s: &mut String, commit: bool) {
         let m = self.m;
         let nd = m.domains.len().max(1);
+        let _ = writeln!(
+            s,
+            "        let t = self.next_edge.iter().copied().fold(u64::MAX, u64::min);\n\
+             \x20       let tick: [bool; {nd}] = core::array::from_fn(|d| self.next_edge[d] == t);"
+        );
+        if commit {
+            let _ = writeln!(
+                s,
+                "        for d in 0..{nd} {{\n\
+                 \x20           if tick[d] {{\n\
+                 \x20               self.next_edge[d] = t + PERIODS[d];\n\
+                 \x20           }}\n\
+                 \x20       }}\n\
+                 \x20       self.time = t;\n\
+                 \x20       self.ticked = tick;\n\
+                 \x20       let held = &mut self.held;"
+            );
+        } else {
+            s.push_str("        let mut held = self.held;\n        let held = &mut held;\n");
+        }
+        s.push_str("        let raw = inputs.to_raw();\n");
+        for (k, p) in self.inputs.iter().enumerate() {
+            let _ = writeln!(
+                s,
+                "        if tick[{}] {{\n            held[{k}] = raw[{k}];\n        }}",
+                p.domain
+            );
+        }
+        s.push_str("        let x = &*held;\n        let r = &self.regs;\n");
+        for (k, l) in m.lets.iter().enumerate() {
+            let _ = writeln!(s, "        // {}", l.name);
+            let _ = writeln!(s, "        let w{k} = {};", self.expr(&l.value));
+        }
+    }
+
+    /// The outputs expression, from the wires `eval_prelude` computed.
+    fn outputs_expr(&self) -> String {
+        let outs = join(self.outputs.iter().map(|p| {
+            self.m
+                .out_drives
+                .iter()
+                .find(|(n, _)| *n == p.name)
+                .map_or_else(|| "0u64".to_string(), |(_, e)| self.expr(e))
+        }));
+        format!("Outputs::from_raw(&[{outs}])")
+    }
+
+    fn eval_fn(&self, s: &mut String) {
+        s.push_str(
+            "\n    /// The outputs `step` would return for `inputs`, without advancing:\n\
+             \x20   /// nothing is committed and no assertion is checked. A testbench\n\
+             \x20   /// model of an external chip can read these, answer within the same\n\
+             \x20   /// cycle, and then `step` with its answer.\n\
+             \x20   #[must_use]\n\
+             \x20   pub fn eval(&self, inputs: &Inputs) -> Outputs {\n",
+        );
+        self.eval_prelude(s, false);
+        let _ = writeln!(s, "        {}\n    }}", self.outputs_expr());
+    }
+
+    fn step_fn(&self, s: &mut String) {
+        let m = self.m;
         s.push_str(
             "\n    /// Advance to the next clock edge: the domains with an edge take\n\
              \x20   /// their new inputs and commit their next state; the others hold.\n\
              \x20   /// Returns the outputs sampled before the edge.\n\
              \x20   pub fn step(&mut self, inputs: &Inputs) -> Outputs {\n",
         );
-        let _ = writeln!(
-            s,
-            "        let t = self.next_edge.iter().copied().fold(u64::MAX, u64::min);\n\
-             \x20       let tick: [bool; {nd}] = core::array::from_fn(|d| self.next_edge[d] == t);\n\
-             \x20       for d in 0..{nd} {{\n\
-             \x20           if tick[d] {{\n\
-             \x20               self.next_edge[d] = t + PERIODS[d];\n\
-             \x20           }}\n\
-             \x20       }}\n\
-             \x20       self.time = t;\n\
-             \x20       self.ticked = tick;\n\
-             \x20       let raw = inputs.to_raw();"
-        );
-        for (k, p) in self.inputs.iter().enumerate() {
-            let _ = writeln!(
-                s,
-                "        if tick[{}] {{\n            self.held[{k}] = raw[{k}];\n        }}",
-                p.domain
-            );
-        }
-        s.push_str("        let x = &self.held;\n        let r = &self.regs;\n");
-        for (k, l) in m.lets.iter().enumerate() {
-            let _ = writeln!(s, "        // {}", l.name);
-            let _ = writeln!(s, "        let w{k} = {};", self.expr(&l.value));
-        }
+        self.eval_prelude(s, true);
         for a in &m.asserts {
             let _ = writeln!(
                 s,
@@ -430,15 +472,10 @@ impl<'a> Gen<'a> {
             );
         }
         s.push_str("        self.cycle += 1;\n");
-        let outs = join(self.outputs.iter().map(|p| {
-            m.out_drives
-                .iter()
-                .find(|(n, _)| *n == p.name)
-                .map_or_else(|| "0u64".to_string(), |(_, e)| self.expr(e))
-        }));
         let _ = writeln!(
             s,
-            "        let out = Outputs::from_raw(&[{outs}]);\n        let mut n = self.regs;"
+            "        let out = {};\n        let mut n = self.regs;",
+            self.outputs_expr()
         );
         let reg_index: HashMap<&str, usize> = m
             .regs

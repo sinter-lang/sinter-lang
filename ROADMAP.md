@@ -190,9 +190,10 @@ nothing goes to crates.io.
       instantiated by its parent, so a large design keeps its structure in
       synthesis reports and waveforms. Simulation semantics are unchanged; the
       oracle checks the flat simulator against the hierarchical Verilog.
-- [ ] **The generated simulator as a digital twin:** generated crates compose
+- [x] **The generated simulator as a digital twin:** generated crates compose
       with Rust models of external chips (evaluate outputs without
-      committing a cycle, so a model can answer combinationally).
+      committing a cycle, so a model can answer combinationally), and each
+      `#[module]` gets its own crate for block-level tests.
 - [ ] Book, CHANGELOG, and examples updated; release `v1.0.0-rc.1` as a
       GitHub pre-release.
 
