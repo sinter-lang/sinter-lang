@@ -46,12 +46,12 @@ fn fifo_step(sim: &mut Simulator, push: Option<u64>, take: u64) -> (Option<u64>,
         .into_iter()
         .collect::<HashMap<_, _>>(),
     );
-    let front = if out["out_is_some"] == 1 {
-        Some(out["out_payload"])
+    let front = if out["out_0_is_some"] == 1 {
+        Some(out["out_0_payload"])
     } else {
         None
     };
-    (front, out["q_count_q"])
+    (front, out["out_1"])
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn ring_step(sim: &mut Simulator, push: Option<u64>, take: u64) -> (Option<u64>,
     } else {
         None
     };
-    (front, out["r_count_q"])
+    (front, out["out_2"])
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn flow_is_newest_wins_and_holds_without_a_push() {
 #[test]
 fn fifo_capacity_must_be_a_power_of_two() {
     compile_err(
-        "struct Q { pub q: fifo<u8, 3> }\n\
+        "struct Q { q: fifo<u8, 3> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { q: self.q.next(None, 0) } } }",
         "power of two",
     );
@@ -294,7 +294,7 @@ fn fifo_capacity_must_be_a_power_of_two() {
 #[test]
 fn fifo_field_takes_no_initializer() {
     compile_err(
-        "struct Q { pub q: fifo<u8, 4> = 0 }\n\
+        "struct Q { q: fifo<u8, 4> = 0 }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { q: self.q.next(None, 0) } } }",
         "no initializer",
     );
@@ -303,7 +303,7 @@ fn fifo_field_takes_no_initializer() {
 #[test]
 fn ring_capacity_must_be_a_power_of_two() {
     compile_err(
-        "struct Q { pub r: ring<u8, 3> }\n\
+        "struct Q { r: ring<u8, 3> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { r: self.r.next(None, 0) } } }",
         "power of two",
     );
@@ -312,7 +312,7 @@ fn ring_capacity_must_be_a_power_of_two() {
 #[test]
 fn ring_field_takes_no_initializer() {
     compile_err(
-        "struct Q { pub r: ring<u8, 4> = 0 }\n\
+        "struct Q { r: ring<u8, 4> = 0 }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { r: self.r.next(None, 0) } } }",
         "no initializer",
     );
@@ -321,7 +321,7 @@ fn ring_field_takes_no_initializer() {
 #[test]
 fn flow_field_takes_no_initializer() {
     compile_err(
-        "struct Q { pub f: flow<u8> = 0 }\n\
+        "struct Q { f: flow<u8> = 0 }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { f: self.f.next(None) } } }",
         "no initializer",
     );
@@ -333,13 +333,13 @@ fn flow_field_takes_no_initializer() {
 #[test]
 fn flow_has_no_pop_or_front() {
     compile_err(
-        "struct Q { pub f: flow<u8> }\n\
+        "struct Q { f: flow<u8> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> (Q, Option<u8>) \
          { (Q { f: self.f.next(None) }, self.f.front()) } }",
         "front",
     );
     compile_err(
-        "struct Q { pub f: flow<u8> }\n\
+        "struct Q { f: flow<u8> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { f: self.f.next(None, 0) } } }",
         "next",
     );
@@ -350,12 +350,12 @@ fn flow_has_no_pop_or_front() {
 #[test]
 fn errors_name_the_channel_kind() {
     compile_err(
-        "struct Q { pub r: ring<(u8, u8), 4> }\n\
+        "struct Q { r: ring<(u8, u8), 4> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { r: self.r.next(None, 0) } } }",
         "a `ring` element must be a scalar",
     );
     compile_err(
-        "struct Q { pub f: flow<(u8, u8)> }\n\
+        "struct Q { f: flow<(u8, u8)> }\n\
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { f: self.f.next(None) } } }",
         "a `flow` element must be a scalar",
     );
@@ -366,7 +366,7 @@ fn errors_name_the_channel_kind() {
 #[test]
 fn a_fifo_push_must_come_from_its_sender() {
     compile_err(
-        "struct Q { pub q: fifo<u8, 4>, }
+        "struct Q { q: fifo<u8, 4>, }
          impl Q {
              #[clock(domain = sys)]
              fn tick(self, x: Option<u8>) -> Q { Q { q: self.q.next(x, 0) } }
@@ -375,7 +375,7 @@ fn a_fifo_push_must_come_from_its_sender() {
     );
     // A lossy `ring` still takes a plain `Option`: dropping is its contract.
     compile_str(
-        "struct Q { pub r: ring<u8, 4>, }
+        "struct Q { r: ring<u8, 4>, }
          impl Q {
              #[clock(domain = sys)]
              fn tick(self, x: Option<u8>) -> Q { Q { r: self.r.next(x, 0) } }
@@ -417,7 +417,7 @@ fn views_cross_module_boundaries() {
         dir.join("main.snt"),
         "mod ends;
          use root::ends::*;
-         struct Q { pub q: fifo<u8, 4>, }
+         struct Q { q: fifo<u8, 4>, }
          impl Q {
              #[clock(domain = sys)]
              fn tick(self, x: u8, go: u1) -> (Q, Option<u8>) {
@@ -451,9 +451,9 @@ fn twin_source(n: u32, bram_attr: &str) -> String {
     format!(
         "struct Twin {{
              #[storage(regs)]
-             pub regs: fifo<u8, {n}>,
+             regs: fifo<u8, {n}>,
              {bram_attr}
-             pub bram: fifo<u8, {n}>,
+             bram: fifo<u8, {n}>,
          }}
          impl Twin {{
              #[clock(domain = sys)]
@@ -534,11 +534,11 @@ fn storage_attribute_rejections() {
         "`#[storage(..)]` applies only to a `fifo` field",
     );
     compile_err(
-        "struct Q { #[storage(flash)] pub q: fifo<u8, 4>, }
+        "struct Q { #[storage(flash)] q: fifo<u8, 4>, }
          impl Q {
              #[clock(domain = sys)]
              fn tick(self) -> Q { Q { q: self.q.next(self.q.sender().no_push(), 0) } }
          }",
-        "`#[storage(..)]` takes `regs` or `bram`",
+        "`#[storage]` doesn't take `flash`",
     );
 }

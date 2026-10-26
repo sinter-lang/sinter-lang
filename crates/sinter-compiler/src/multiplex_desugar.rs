@@ -7,6 +7,8 @@
 //! reused register per value** plus a small **phase counter**, processing one
 //! datum every `N+1` cycles (`N` = number of `yield`s; latency `N`, static).
 //! Exactly one phase is active per cycle, so a scarce resource can be reused.
+//! Phase 0 takes the inputs, and waits there while `in_valid` is 0, so a
+//! datum enters only on a cycle the caller marks valid.
 //!
 //! Like the pipeline pass it is a **source-to-source desugaring** run before
 //! `check_functional`/`elaborate`: for each `multiplex fn M` it synthesizes a
@@ -601,17 +603,32 @@ fn phase_mux(items: &[(usize, Expr)]) -> Expr {
 /// needs no cast; only the widening `ph + 1` arm is cast back to the counter
 /// width (so the `if`-mux unifies to `uK`).
 fn next_ph(kbits: u32, last: usize) -> Expr {
+    // Phase 0 waits for a valid input: `ph == 0 & in_valid == 0` holds it.
+    let idle = Expr::from(ExprKind::Binary {
+        op: BinOp::And,
+        lhs: Box::new(eq_ph(0)),
+        rhs: Box::new(Expr::from(ExprKind::Binary {
+            op: BinOp::Eq,
+            lhs: Box::new(Expr::from(ExprKind::Ident(IN_VALID.to_string()))),
+            rhs: Box::new(Expr::from(ExprKind::Literal(0))),
+        })),
+    });
+    let zero = || Box::new(Expr::from(ExprKind::Literal(0)));
     Expr::from(ExprKind::If {
         cond: Box::new(eq_ph(last)),
-        then: Box::new(Expr::from(ExprKind::Literal(0))),
-        els: Box::new(Expr::from(ExprKind::Cast {
-            expr: Box::new(Expr::from(ExprKind::Binary {
-                op: BinOp::Add,
-                lhs: Box::new(self_field(PH)),
-                rhs: Box::new(Expr::from(ExprKind::Literal(1))),
+        then: zero(),
+        els: Box::new(Expr::from(ExprKind::If {
+            cond: Box::new(idle),
+            then: zero(),
+            els: Box::new(Expr::from(ExprKind::Cast {
+                expr: Box::new(Expr::from(ExprKind::Binary {
+                    op: BinOp::Add,
+                    lhs: Box::new(self_field(PH)),
+                    rhs: Box::new(Expr::from(ExprKind::Literal(1))),
+                })),
+                ty: TypeRef::Scalar(Type::Uint(kbits)),
+                mode: sinter_syntax::ast::CastMode::Wrap,
             })),
-            ty: TypeRef::Scalar(Type::Uint(kbits)),
-            mode: sinter_syntax::ast::CastMode::Wrap,
         })),
     })
 }

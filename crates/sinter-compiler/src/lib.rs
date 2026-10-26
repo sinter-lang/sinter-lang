@@ -32,6 +32,7 @@ pub mod rust_sim;
 pub mod sim;
 mod sim_runtime;
 pub mod stimulus;
+pub mod surface;
 pub mod vcd;
 pub mod verilator;
 pub mod verilog;
@@ -111,6 +112,8 @@ fn compile_program(
     base: Option<&std::path::Path>,
     faults: FaultMode,
 ) -> Result<Design, CompileError> {
+    surface::check_attributes(&program)?;
+    surface::check_pub_internal_state(&program)?;
     let mut program = program;
     include_expand::expand_includes(&mut program, base)?;
     // Lower channel fields (`fifo`/`ring`/`flow`) to synthesized struct + impl

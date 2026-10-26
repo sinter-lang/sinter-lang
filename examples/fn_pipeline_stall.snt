@@ -17,7 +17,7 @@ pipeline fn mac(a: u8, b: u8) -> u16 {
 }
 
 struct Top {
-    pub inst: mac,
+    inst: mac,
     pub y: u16 = 0,
     pub valid: u1 = 0,
 }

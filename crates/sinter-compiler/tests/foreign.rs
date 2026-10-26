@@ -264,7 +264,7 @@ fn malformed_bindings_are_rejected() {
     );
     compile_err(
         &bind("#[verilog(module = \"acc8\", width = 8)]"),
-        "unknown `#[verilog]` argument `width`",
+        "`#[verilog]` doesn't take `width`",
     );
     compile_err(
         &bind("#[verilog(module = acc8)]"),
@@ -310,7 +310,7 @@ fn multiplex_and_foreign_instances_combine() {
                  (self, IncOut { y: (x + 1) as u17 wrap })
              }
          }
-         struct Top { pub inst: dot2, pub inc: Inc, }
+         struct Top { inst: dot2, pub inc: Inc, }
          impl Top {
              #[clock(domain = sys)]
              fn tick(self, a: u8, b: u8) -> (Top, u17) {

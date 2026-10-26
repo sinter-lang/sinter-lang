@@ -232,3 +232,41 @@ fn multiplex_non_scalar_carried_value_is_rejected() {
         "must be a scalar",
     );
 }
+
+/// Phase 0 waits while `in_valid` is 0: no datum enters, and the next valid
+/// cycle starts the period.
+#[test]
+fn phase_zero_waits_for_in_valid() {
+    let src = "
+        multiplex fn dot2(a0: u8, b0: u8, a1: u8, b1: u8) -> u17 {
+            let p = (a0 * b0) as u17 wrap;
+            yield;
+            (p + (a1 * b1)) as u17 wrap
+        }
+        struct Top { inst: dot2 }
+        impl Top {
+            #[clock(domain = sys)]
+            fn tick(self, a: u8, go: u1) -> (Top, (u17, u1)) {
+                let (inst, result, valid) = self.inst.advance(a, a, a, a, go);
+                (Top { inst: inst }, (result, valid))
+            }
+        }";
+    let design = compile_str(src).expect("compile");
+    let mut sim = Simulator::new(&design.modules[0]);
+    let mut step = |a: u64, go: u64| {
+        let out = sim.step(
+            &[("a".to_string(), a), ("go".to_string(), go)]
+                .into_iter()
+                .collect(),
+        );
+        (out["out_0"], out["out_1"])
+    };
+    // Idle in phase 0: nothing becomes valid however long `go` stays low.
+    for _ in 0..3 {
+        assert_eq!(step(5, 0).1, 0, "waiting in phase 0");
+    }
+    // `go` takes 3; its result (3*3 + 3*3) is valid in the next cycle.
+    assert_eq!(step(3, 1).1, 0, "phase 0 takes the datum");
+    assert_eq!(step(9, 0), (18, 1), "phase 1: the result");
+    assert_eq!(step(9, 0).1, 0, "back in phase 0, waiting again");
+}

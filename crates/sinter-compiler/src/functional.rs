@@ -374,7 +374,18 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                 }
             }
             Item::Impl(im) => {
-                if !known.structs.contains(&im.type_name) && !known.enums.contains(&im.type_name) {
+                if known.enums.contains(&im.type_name) {
+                    return Err(sem(
+                        &im.type_name,
+                        im.pos,
+                        format!(
+                            "`impl` blocks are for structs, and `{}` is an enum; write its \
+                             functions at module level, taking the enum as a parameter",
+                            im.type_name
+                        ),
+                    ));
+                }
+                if !known.structs.contains(&im.type_name) {
                     return Err(sem(
                         &im.type_name,
                         im.pos,
@@ -382,6 +393,17 @@ fn build_tables(program: &Program) -> Result<Tables, CompileError> {
                     ));
                 }
                 for m in &im.methods {
+                    if !matches!(m.params.first(), Some(Param::SelfRef { .. })) {
+                        return Err(sem(
+                            &im.type_name,
+                            m.pos,
+                            format!(
+                                "method `{}::{}` must take `self` first; a function without \
+                                 `self` belongs at module level",
+                                im.type_name, m.name
+                            ),
+                        ));
+                    }
                     let sig = resolve_sig(&known, m)?;
                     let key = (im.type_name.clone(), m.name.clone());
                     if methods.insert(key, sig).is_some() {
@@ -703,7 +725,7 @@ fn validate_encoding(e: &sinter_syntax::ast::EnumItem) -> Result<(), CompileErro
             continue;
         }
         for arg in &attr.args {
-            if !matches!(arg.key.as_str(), "binary" | "onehot" | "gray" | "johnson") {
+            if !matches!(arg.key.as_str(), "binary" | "onehot") {
                 return Err(sem(
                     &e.name,
                     attr.pos,

@@ -24,7 +24,7 @@ pipeline fn mac(a: u8, b: u8, c: u16) -> u16 {
 
 struct Top {
     // The desugarer rewrites this field type to the synthesized `mac__pipe`.
-    pub inst: mac,
+    inst: mac,
 }
 
 impl Top {

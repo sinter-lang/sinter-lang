@@ -506,7 +506,8 @@ explicit in the semantics.
   one-variant-payload special case.
 - **Enum encoding is annotatable (SETTLED syntax).** A `#[encoding(...)]`
   attribute selects the bit-encoding: `binary` (the default, `ceil(log2 N)`
-  bits), `onehot` (`N` bits), `gray`, or `johnson`. Independently, Rust-style
+  bits) or `onehot` (`N` bits); `gray` and `johnson` are reserved for later
+  and rejected until implemented (v1.0.0-rc.1). Independently, Rust-style
   **explicit discriminants** (`enum Op { Rd = 0b01, Wr = 0b10 }`) let an external
   protocol encoding be matched exactly. The two compose: the named scheme says
   "pick a good encoding of this kind"; explicit values say "I am these exact
@@ -1345,8 +1346,9 @@ the pipeline. Same surface — `yield`-separated phases, an owned instance +
   run only for multiplex designs) then collapses the (SROA-duplicated) shared
   multiply into **one physical multiplier**. Mutual exclusion (one phase/cycle)
   makes the sharing free/structural — no cost model.
-- **Driving** is free-running like the pipeline: `advance(self, in…, in_valid: u1)
-  -> (Self, Out, u1)`; inputs sampled at phase 0, `valid = (ph == N)`. Defined
+- **Driving** mirrors the pipeline: `advance(self, in…, in_valid: u1)
+  -> (Self, Out, u1)`; inputs sampled at phase 0, `valid = (ph == N)`. Phase 0
+  waits while `in_valid = 0` (v1.0.0-rc.1; it used to free-run). Defined
   reset (`ph = 0`, every latch 0). `ph` / `shared` / `in_valid` are reserved names.
 
 | Phase | Scope | Done when |
@@ -1827,7 +1829,8 @@ version / build-manifest format (cf. the M5 build-system line in §9).
 - Fixed-point spelled `uI.F` / `iI.F` (dotted); `I` includes the sign bit, total
   width = `I + F` (§6.1). Word-scaled integers deferred (fold into the
   fixed-point binary-point position if revived).
-- Enum encoding via `#[encoding(binary|onehot|gray|johnson)]` (default binary),
+- Enum encoding via `#[encoding(binary|onehot)]` (default binary; `gray` /
+  `johnson` reserved),
   plus optional explicit discriminants for protocol matching (§6.5).
 - Integer literals untyped by default; optional Rust-style width suffix
   (`_uN`/`_iN`); `0x`/`0b` forms and `_` separators (§6.10).

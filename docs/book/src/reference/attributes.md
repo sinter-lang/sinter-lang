@@ -13,11 +13,22 @@ name, an integer, or a string, or `key` alone.
 | `#[storage(regs)]`, `#[storage(bram)]` | a `fifo` field | build the queue from registers or block RAM ([Channels](channels.md#storage)) |
 | `#[verilog(module = "m", ...)]` | a struct | bind the struct to Verilog module `m` ([Foreign Verilog](foreign-verilog.md)) |
 
-`#[encoding(gray)]` and `#[encoding(johnson)]` are accepted, but currently
-give the binary encoding.
+Any other attribute, an attribute in the wrong place, or an argument it
+doesn't take is an error, so a misspelling can't go unnoticed:
 
-`#[cdc_sync]`, `#[cdc_side]`, and `#[cdc_ram]` are reserved for the compiler's
-own clock-domain crossings and are rejected in source.
+```sinter,fail
+struct Queue {
+    #[storag(bram)]
+    q: fifo<u32, 16>,
+}
+~impl Queue {
+~    #[clock(domain = sys)]
+~    fn tick(self) -> Queue {
+~        Queue { q: self.q.next(self.q.sender().no_push(), 0) }
+~    }
+~}
+```
 
-The compiler currently ignores attributes it doesn't know, so a misspelled
-attribute has no effect and no warning. Check the spelling of the ones above.
+```text
+error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `verilog`
+```

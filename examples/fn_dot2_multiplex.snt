@@ -13,7 +13,7 @@ multiplex fn dot2(a0: u8, b0: u8, a1: u8, b1: u8) -> u17 {
 
 struct Top {
     // The desugarer rewrites this field type to the synthesized `dot2__mux`.
-    pub inst: dot2,
+    inst: dot2,
 }
 
 impl Top {

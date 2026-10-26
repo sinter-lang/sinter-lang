@@ -17,16 +17,18 @@
 // This lowers by a source-to-source desugar (`fifo_desugar`) into a plain
 // `struct` + `impl` shift register, so no new IR or backend code is involved.
 struct Queue {
-    pub q: fifo<u8, 4>,
+    // Private: a queue's registers are internal, so `tick` outputs what it
+    // wants seen (the head and the length).
+    q: fifo<u8, 4>,
 }
 
 impl Queue {
     #[clock(domain = sys)]
-    fn tick(self, incoming: Option<u8>, take: u1) -> (Queue, Option<u8>) {
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Queue, (Option<u8>, u3)) {
         // A push goes through the queue's `Sender`, which refuses the word when
         // the queue is full, so nothing is ever silently dropped (CHAN3).
         let push = self.q.sender().offer(incoming);
         let head = self.q.front();
-        (Queue { q: self.q.next(push, take) }, head)
+        (Queue { q: self.q.next(push, take) }, (head, self.q.len()))
     }
 }

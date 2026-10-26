@@ -6,19 +6,19 @@
 // many random cycles and the oracle co-simulates against the Verilog.
 struct Twin {
     #[storage(regs)]
-    pub regs: fifo<u8, 4>,
+    regs: fifo<u8, 4>,
     #[storage(bram)]
-    pub bram: fifo<u8, 4>,
+    bram: fifo<u8, 4>,
 }
 
 impl Twin {
     #[clock(domain = sys)]
-    fn tick(self, incoming: Option<u8>, take: u1) -> (Twin, (Option<u8>, Option<u8>)) {
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Twin, (Option<u8>, Option<u8>, u3, u3)) {
         let a = self.regs.sender().offer(incoming);
         let b = self.bram.sender().offer(incoming);
         (
             Twin { regs: self.regs.next(a, take), bram: self.bram.next(b, take) },
-            (self.regs.front(), self.bram.front()),
+            (self.regs.front(), self.bram.front(), self.regs.len(), self.bram.len()),
         )
     }
 }

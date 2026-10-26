@@ -14,14 +14,14 @@
 // This producer deliberately ignores `is_full()` (it pushes unconditionally) —
 // legal here precisely because the type accepts loss.
 struct Trace {
-    pub r: ring<u8, 4>,
+    r: ring<u8, 4>,
 }
 
 impl Trace {
     #[clock(domain = sys)]
-    fn tick(self, incoming: Option<u8>, take: u1) -> (Trace, (Option<u8>, u1)) {
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Trace, (Option<u8>, u1, u3)) {
         let head = self.r.front();
         // Push regardless of occupancy: a full ring drops its oldest word.
-        (Trace { r: self.r.next(incoming, take) }, (head, self.r.is_full()))
+        (Trace { r: self.r.next(incoming, take) }, (head, self.r.is_full(), self.r.len()))
     }
 }

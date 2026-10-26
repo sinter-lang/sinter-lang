@@ -96,7 +96,7 @@ fn value_carried_across_multiple_boundaries_chains() {
             yield;
             r
         }
-        struct Top { pub inst: delay }
+        struct Top { inst: delay }
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, x: u8) -> (Top, (u8, u1)) {
@@ -158,7 +158,7 @@ fn non_shadowing_match_binding_in_a_stage_compiles() {
             yield;
             p
         }
-        struct Top { pub inst: f }
+        struct Top { inst: f }
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, a: u8) -> (Top, (u8, u1)) {
@@ -187,7 +187,7 @@ fn carried_value_with_a_type_annotation_compiles() {
             yield;
             p
         }
-        struct Top { pub inst: f }
+        struct Top { inst: f }
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, a: u8) -> (Top, (u8, u1)) {
@@ -260,7 +260,7 @@ fn pipeline_instance_in_an_aggregate_field_is_rejected() {
     // A pipeline instance must be a plain field in PL3a, not nested in an array.
     compile_err(
         "pipeline fn f(a: u8) -> u8 { let p = (a) as u8 wrap; yield; p } \
-         struct Top { pub insts: [f; 2] }",
+         struct Top { insts: [f; 2] }",
         "must be held in a plain field",
     );
 }
@@ -279,7 +279,7 @@ fn value_used_in_non_consecutive_stages_stays_wavefront_coherent() {
             yield;
             (r + t) as u8 wrap
         }
-        struct Top { pub inst: f }
+        struct Top { inst: f }
         impl Top {
             #[clock(domain = sys)]
             fn tick(self, a: u8, b: u8) -> (Top, (u8, u1)) {

@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::BufWriter;
+use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -144,16 +144,40 @@ fn read_and_compile(file: &Path, faults: FaultMode) -> Result<Vec<Module>> {
     Ok(design.modules)
 }
 
+/// The command's results on standard output. Once a reader closes the pipe
+/// (`sinter sim ... | head`), the rest is dropped quietly: the run still
+/// finishes, so failures are still logged and still set the exit status.
+#[derive(Default)]
+struct Stdout {
+    closed: bool,
+}
+
+impl Stdout {
+    fn line(&mut self, args: std::fmt::Arguments) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        match writeln!(std::io::stdout().lock(), "{args}") {
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => {
+                self.closed = true;
+                Ok(())
+            }
+            r => r.context("writing to standard output"),
+        }
+    }
+}
+
 fn cmd_check(file: &Path) -> Result<()> {
     let modules = read_and_compile(file, FaultMode::Off)?;
+    let mut stdout = Stdout::default();
     for m in &modules {
-        println!(
+        stdout.line(format_args!(
             "ok: module `{}` ({} ports, {} regs, {} wires)",
             m.name,
             m.ports.len(),
             m.regs.len(),
             m.lets.len()
-        );
+        ))?;
     }
     if modules.is_empty() {
         // The source type-checked (it reached here without error) but has no
@@ -343,14 +367,19 @@ fn cmd_sim(
     // With several clock domains a row is an edge time: show the time and
     // which domains ticked (DESIGN §6.7).
     let multi = module.is_multi_clock();
+    let mut stdout = Stdout::default();
     if multi {
-        println!(
+        stdout.line(format_args!(
             " step |  time | ticks | {} || {}",
             names(&inputs),
             names(&outputs)
-        );
+        ))?;
     } else {
-        println!("cycle | {} || {}", names(&inputs), names(&outputs));
+        stdout.line(format_args!(
+            "cycle | {} || {}",
+            names(&inputs),
+            names(&outputs)
+        ))?;
     }
 
     let mut wave = match vcd {
@@ -400,13 +429,13 @@ fn cmd_sim(
                 .filter(|(_, &t)| t)
                 .map(|(d, _)| d.name.as_str())
                 .collect();
-            println!(
+            stdout.line(format_args!(
                 "{k:5} | {:5} | {:5} | {in_str} || {out_str}",
                 sim.time(),
                 ticks.join(",")
-            );
+            ))?;
         } else {
-            println!("{k:5} | {in_str} || {out_str}");
+            stdout.line(format_args!("{k:5} | {in_str} || {out_str}"))?;
         }
         if let Some(stim) = &directed {
             mismatches.extend(stim.check_cycle(module, k, &out));

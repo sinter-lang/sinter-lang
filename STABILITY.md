@@ -48,10 +48,6 @@ same Verilog text.
 - **The generated Verilog's internals.** Internal signal names, formatting,
   and how the logic is written, for example to make it smaller or faster.
   Only the interface is stable.
-- **Ports of `pub` fields whose type is a channel (`fifo`, `ring`, `flow`), a
-  clock-domain crossing, or a `pipeline` / `multiplex` function.** These
-  expose the compiler's internal registers. Publish the values you need
-  through your own `pub` registers or extra outputs instead.
 - **Diagnostics.** Error and warning text, positions, and how many errors are
   reported. New warnings may appear.
 - **Simulator output details.** The layout of `sinter sim`'s table, the VCD

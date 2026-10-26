@@ -5,6 +5,34 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [1.0.0-rc.1] — unreleased
+
+A version to build a real project with before 1.0 is frozen. Not published
+to crates.io.
+
+### Changed (breaking)
+
+- **Unknown attributes are errors**, as are attributes in the wrong place
+  (`#[clock]` on a free function) and arguments an attribute doesn't take.
+  They used to be ignored, so a misspelling did nothing.
+- `#[encoding(gray)]` and `#[encoding(johnson)]` are rejected. They used to
+  give the binary encoding.
+- A **`multiplex fn` waits in phase 0 while `in_valid` is 0**, so a datum
+  enters only on a valid cycle. It used to ignore `in_valid` and take its
+  inputs every `N + 1` cycles.
+- The clock root's `pub` fields can't hold a channel, a clock-domain
+  crossing, or a staged function, whose registers are internal to the
+  compiler; output the values you need instead. The examples now output a
+  queue's `len()` explicitly.
+- An `impl` on an enum, and a method without `self`, are rejected with a
+  clear message. (The first failed with "expected `E`, found `E`"; the second
+  compiled but couldn't be called.)
+
+### Fixed
+
+- `sinter sim | head` stops printing quietly when the pipe closes, instead of
+  panicking.
+
 ## [0.9.0] — unreleased
 
 ### Added

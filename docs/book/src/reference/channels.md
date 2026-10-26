@@ -145,10 +145,29 @@ impl Sampler {
 
 ## Outputs
 
-A `pub` channel field exposes the registers it is built from as `_q` ports,
-whose names depend on how the compiler builds the queue. To publish a queue's
-state, put what you need (`len()`, `front()`) in an extra output or a `pub`
-register instead.
+A channel is built from registers whose names are the compiler's, so the
+clock root's `pub` fields can't hold one (directly, or inside a struct). To
+publish a queue's state, output what you need, such as `len()` or `front()`,
+through the clock root's extra outputs or a `pub` register:
+
+```sinter,fail
+struct Queue {
+    pub q: fifo<u8, 4>,
+}
+~impl Queue {
+~    #[clock(domain = sys)]
+~    fn tick(self) -> Queue {
+~        Queue { q: self.q.next(self.q.sender().no_push(), 0) }
+~    }
+~}
+```
+
+```text
+error: `pub` field `q` holds a channel, whose registers are internal to the compiler and can't be output ports
+```
+
+`pub` on a channel field of any other struct is fine: there it only makes the
+field visible to other modules.
 
 Queues between clock domains are on the [Clock domains](clock-domains.md)
 page.

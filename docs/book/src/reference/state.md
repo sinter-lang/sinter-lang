@@ -105,7 +105,9 @@ A design has two kinds of output:
   struct). These are **combinational**: they can depend on this cycle's
   inputs.
 
-Private fields are registers without ports. A design with no outputs at all
+Private fields are registers without ports. A `pub` field can't hold a
+channel, a clock-domain crossing, or a staged function, since their
+registers are internal to the compiler. A design with no outputs at all
 compiles, but synthesis would remove all of its logic, so `sinter build`
 warns about it.
 

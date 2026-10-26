@@ -169,19 +169,20 @@ A version to build a real project with (a from-scratch pico-gs v2, an ECP5
 GPU) before 1.0 is frozen. Released as a GitHub pre-release with binaries;
 nothing goes to crates.io.
 
-- [ ] **Strict where unfinished.** Each can be relaxed later without breaking
+- [x] **Strict where unfinished.** Each can be relaxed later without breaking
       anyone:
-  - [ ] Reject `#[encoding(gray)]` / `#[encoding(johnson)]` (they gave the
+  - [x] Reject `#[encoding(gray)]` / `#[encoding(johnson)]` (they gave the
         binary encoding).
-  - [ ] Reject unknown attributes (they were ignored, so a misspelling was
+  - [x] Reject unknown attributes (they were ignored, so a misspelling was
         silent).
-  - [ ] Reject an `impl` on an enum with a clear message (it failed with
+  - [x] Reject an `impl` on an enum with a clear message (it failed with
         "expected `E`, found `E`").
-  - [ ] Reject `pub` on a field holding a channel, CDC primitive, or staged
-        function (it exposed compiler-internal registers as ports).
-  - [ ] A `multiplex fn` waits in phase 0 until `in_valid` is 1 (it ignored
+  - [x] Reject `pub` on a clock-root field holding a channel, CDC primitive,
+        or staged function (it exposed compiler-internal registers as ports).
+        Also: a method must take `self`, and `#[clock]` only goes on a method.
+  - [x] A `multiplex fn` waits in phase 0 until `in_valid` is 1 (it ignored
         `in_valid` and free-ran).
-  - [ ] `sinter sim | head` exits quietly instead of panicking.
+  - [x] `sinter sim | head` exits quietly instead of panicking.
 - [ ] **Ergonomics:** struct update `S { a: x, ..base }`; `Self` in `impl`
       blocks; constant arithmetic (`const` values and array lengths from
       expressions over constants); tuple and nested patterns in `match`.

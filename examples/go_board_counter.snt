@@ -83,7 +83,7 @@ impl Edge {
 // ---------------------------------------------------------------------------
 // What a digit is asked to do this cycle. Native enum (DESIGN §6.5); `match`
 // arms are mutually exclusive, giving exclusivity for free (§5). The encoding
-// is annotatable: `binary` (the default — 2 bits here) vs `onehot` / `gray`.
+// is annotatable: `binary` (the default — 2 bits here) vs `onehot`.
 // ---------------------------------------------------------------------------
 #[encoding(binary)]
 enum Cmd {

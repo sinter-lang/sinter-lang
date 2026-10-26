@@ -3,7 +3,7 @@
 // through its `Sender`, whose `offer` refuses the word when the queue is full,
 // so the lossless queue can't be overfilled.
 struct Queue {
-    pub q: fifo<u8, 4>,
+    q: fifo<u8, 4>,
 }
 
 // The producer: offer the incoming word, if any. A full queue refuses it.
@@ -18,9 +18,9 @@ fn consume(rx: Receiver<u8, 4>, take: u1) -> u1 {
 
 impl Queue {
     #[clock(domain = sys)]
-    fn tick(self, incoming: Option<u8>, take: u1) -> (Queue, Option<u8>) {
+    fn tick(self, incoming: Option<u8>, take: u1) -> (Queue, (Option<u8>, u3)) {
         let push = produce(self.q.sender(), incoming);
         let pop = consume(self.q.receiver(), take);
-        (Queue { q: self.q.next(push, pop) }, self.q.receiver().front())
+        (Queue { q: self.q.next(push, pop) }, (self.q.receiver().front(), self.q.len()))
     }
 }

@@ -115,9 +115,10 @@ it works on one input at a time:
 - In the last phase, `N` cycles later, its result is available and `valid` is
   1. The next cycle is phase 0 again.
 
-So it accepts one input every `N + 1` cycles, and the cycle after `valid` is
-the one that takes the next input. The phase counter runs continuously from
-reset; the `in_valid` argument is required but currently ignored.
+So it accepts at most one input every `N + 1` cycles. Phase 0 waits until
+`in_valid` is 1: on a cycle with `in_valid = 0` it stays in phase 0 and takes
+nothing. A caller that always has data passes 1, and gets a result every
+`N + 1` cycles.
 
 Each phase may contain at most one `*`. All the multiplies share **one**
 multiplier, with its operands selected by phase: `dot2` uses one 8×8
@@ -130,6 +131,6 @@ The same rules as for pipelines apply to `yield` placement, and `ph`,
 
 ## Outputs
 
-As with channels, a `pub` field holding a staged function exposes its internal
-registers as ports, with compiler-chosen names. Route the results you need
-through an extra output or a `pub` register instead.
+As with channels, the clock root's `pub` fields can't hold a staged function,
+because its registers are the compiler's. Route the results through an extra
+output or a `pub` register instead.

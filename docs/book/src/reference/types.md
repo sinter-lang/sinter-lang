@@ -80,9 +80,6 @@ The **encoding** is how the variants are stored:
   given, in the fewest bits that hold the largest. Use them when an encoding
   is fixed by something outside the design, such as an instruction set.
 
-`#[encoding(gray)]` and `#[encoding(johnson)]` are accepted, but currently
-produce the binary encoding.
-
 The encoding decides the width of an enum port in the generated Verilog. The
 choice never changes what a design computes, only how it is stored.
 
