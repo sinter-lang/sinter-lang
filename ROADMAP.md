@@ -151,39 +151,57 @@ Release: tag `v0.8.0` on the "release: v0.8.0" commit.
       (Yosys 0.61, Verilator 5.045), each through the enforced oracle and a
       fixed-seed fuzz campaign.
 
-## v0.9 — release candidate
+## v0.9 — release candidate ✅
 
-Release: tag `v0.9.0` on the "release: v0.9.0" commit, then publish the
-crates (README "Releasing").
+Release: the "release: v0.9.0" commit (not tagged; superseded by
+v1.0.0-rc.1).
 
 - [x] Language reference and tutorial written for users, separate from
       DESIGN.md: an mdBook under `docs/book/` (`just book`, built in CI), its
       code samples compiled by `tests/book.rs`.
 - [x] Written stability / semver policy: [`STABILITY.md`](STABILITY.md).
-- [ ] Publish `sinter-syntax`, `sinter-compiler`, `sinter-lang` to crates.io.
-      The crates are ready (license files, READMEs, metadata) and CI runs a
-      `cargo publish --workspace --dry-run` (`just package`); the upload
-      happens when `v0.9.0` is tagged.
+- [x] The crates are ready for crates.io (license files, READMEs, metadata;
+      CI runs `just package`, a publish dry run). Publishing waits for 1.0.
+
+## v1.0.0-rc.1 — ready to use
+
+A version to build a real project with (a from-scratch pico-gs v2, an ECP5
+GPU) before 1.0 is frozen. Released as a GitHub pre-release with binaries;
+nothing goes to crates.io.
+
+- [ ] **Strict where unfinished.** Each can be relaxed later without breaking
+      anyone:
+  - [ ] Reject `#[encoding(gray)]` / `#[encoding(johnson)]` (they gave the
+        binary encoding).
+  - [ ] Reject unknown attributes (they were ignored, so a misspelling was
+        silent).
+  - [ ] Reject an `impl` on an enum with a clear message (it failed with
+        "expected `E`, found `E`").
+  - [ ] Reject `pub` on a field holding a channel, CDC primitive, or staged
+        function (it exposed compiler-internal registers as ports).
+  - [ ] A `multiplex fn` waits in phase 0 until `in_valid` is 1 (it ignored
+        `in_valid` and free-ran).
+  - [ ] `sinter sim | head` exits quietly instead of panicking.
+- [ ] **Ergonomics:** struct update `S { a: x, ..base }`; `Self` in `impl`
+      blocks; constant arithmetic (`const` values and array lengths from
+      expressions over constants); tuple and nested patterns in `match`.
+- [ ] **Hierarchy:** a `#[module]` struct becomes its own Verilog module,
+      instantiated by its parent, so a large design keeps its structure in
+      synthesis reports and waveforms. Simulation semantics are unchanged; the
+      oracle checks the flat simulator against the hierarchical Verilog.
+- [ ] **The generated simulator as a digital twin:** generated crates compose
+      with Rust models of external chips (evaluate outputs without
+      committing a cycle, so a model can answer combinationally).
+- [ ] Book, CHANGELOG, and examples updated; release `v1.0.0-rc.1` as a
+      GitHub pre-release.
 
 ## 1.0 exit criteria
 
-- [ ] The RV32 core and at least one outside design run on real hardware.
+- [ ] The RV32 core and at least one outside design run on real hardware
+      (pico-gs v2 is the intended outside design).
+- [ ] Publish `sinter-syntax`, `sinter-compiler`, `sinter-lang` to crates.io
+      (README "Releasing").
 - [ ] The fuzzer has run clean for a sustained period with no open
       oracle mismatches.
 - [ ] The language reference covers every 1.0 feature.
 - [ ] No open DESIGN question would change 1.0 syntax.
-- [ ] Settle the behaviours that writing the reference found unfinished.
-      All but the last would be breaking changes after 1.0:
-  - [ ] `#[encoding(gray)]` / `#[encoding(johnson)]` are accepted but give
-        the binary encoding: implement them or reject them.
-  - [ ] Unknown attributes are ignored, so a misspelling is silent and a new
-        1.x attribute could change an existing program: reject them.
-  - [ ] A `multiplex fn` ignores its `in_valid` argument and free-runs: make
-        it gate phase 0, or drop the argument.
-  - [ ] A `pub` field holding a channel, CDC primitive, or staged function
-        exposes compiler-internal registers as ports (`STABILITY.md` excludes
-        them): reject `pub` there, or design their ports.
-  - [ ] An `impl` on an enum fails with "expected `E`, found `E`": support
-        enum methods, or reject the `impl` with a clear message.
-  - [ ] `sinter sim | head` panics on the closed pipe instead of exiting
-        quietly.

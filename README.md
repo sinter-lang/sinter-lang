@@ -112,12 +112,6 @@ curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTE
 
 Each tarball has a matching `.sha256` file alongside it.
 
-### From crates.io (v0.9.0+)
-
-```sh
-cargo install sinter-lang --locked
-```
-
 ### From source
 
 ```sh
@@ -336,10 +330,11 @@ in it.
 3. Tag the commit `vX.Y.Z` and push the tag. The release workflow builds the
    static binaries and the VS Code extension and attaches them to a GitHub
    release.
-4. Publish the crates to crates.io (needs `cargo login` with an owner's
-   token): `cargo publish --workspace --locked` publishes `sinter-syntax`,
-   `sinter-compiler`, and `sinter-lang` in dependency order. `just package`
-   is the same with `--dry-run`, and runs in CI.
+4. From 1.0 on, publish the crates to crates.io (needs `cargo login` with an
+   owner's token): `cargo publish --workspace --locked` publishes
+   `sinter-syntax`, `sinter-compiler`, and `sinter-lang` in dependency order.
+   `just package` is the same with `--dry-run`, and runs in CI. Pre-releases
+   (`-rc.N` tags) aren't published.
 
 ## License
 

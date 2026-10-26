@@ -19,25 +19,17 @@ curl -fsSL "https://github.com/sinter-lang/sinter-lang/releases/download/${SINTE
 
 Each tarball has a `.sha256` file beside it.
 
-## From crates.io
-
-With a Rust toolchain (1.85 or later):
-
-```sh
-cargo install sinter-lang --locked
-```
-
-The package is called `sinter-lang`; the binary it installs is `sinter`.
-
 ## From source
 
-To build an unreleased version, install from the repository:
+With a Rust toolchain (1.85 or later), build and install from the
+repository:
 
 ```sh
 cargo install --git https://github.com/sinter-lang/sinter-lang.git sinter-lang --locked
 ```
 
-Add `--tag v0.9.0` to pin a release, or `--rev <commit>` for a commit.
+Add `--tag v0.9.0` to pin a release, or `--rev <commit>` for a commit. The
+package is called `sinter-lang`; the binary it installs is `sinter`.
 
 ## Check it works
 
