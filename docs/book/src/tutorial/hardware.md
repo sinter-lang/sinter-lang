@@ -106,6 +106,8 @@ format, including active-low pins.
 You have used most of the core language. The
 [reference](../reference/lexical.md) covers the rest, including:
 
+- [hierarchy](../reference/hierarchy.md), to keep blocks like `UartTx` as
+  Verilog modules of their own,
 - [memories and ROMs](../reference/storage.md) for block RAM,
 - [pipelines](../reference/staged.md) for datapaths,
 - [clock domains](../reference/clock-domains.md) and safe crossings between

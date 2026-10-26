@@ -173,7 +173,8 @@ fn compile_lowered(
     let mut design = Design {
         modules: Vec::new(),
     };
-    if let Some(mut module) = elaborate::elaborate(&program)? {
+    // The `#[clock]` root's module first, then any `#[module]` children.
+    for (k, mut module) in elaborate::elaborate(&program)?.into_iter().enumerate() {
         // `#[verilog(src = "...")]` paths resolve against the source directory,
         // like `include_hex!` (DESIGN §6.15).
         for inst in &mut module.instances {
@@ -201,7 +202,7 @@ fn compile_lowered(
         // FLT1b: when faults are on, synthesize the silicon latch (sticky bitmap +
         // `fault_code` sideband) from the assert sites. Read once here, so both
         // backends fold from one IR; `off` leaves the module functional-neutral.
-        if faults == FaultMode::On {
+        if faults == FaultMode::On && k == 0 {
             if module.is_multi_clock() {
                 // The latch is one register over every assert site, which would
                 // itself cross clock domains.
@@ -209,6 +210,15 @@ fn compile_lowered(
                     &module.name,
                     sinter_syntax::ast::Pos::default(),
                     "`--faults` doesn't support several clock domains yet",
+                ));
+            }
+            if module.instances.iter().any(|i| i.generated) {
+                // An assert inside a `#[module]` reads that module's internal
+                // signals, which the parent's Verilog doesn't have.
+                return Err(CompileError::semantic(
+                    &module.name,
+                    sinter_syntax::ast::Pos::default(),
+                    "`--faults` doesn't support `#[module]` instances yet",
                 ));
             }
             fault_latch::apply(&mut module)?;

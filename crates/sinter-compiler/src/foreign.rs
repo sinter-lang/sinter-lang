@@ -32,6 +32,17 @@ pub(crate) struct Binding {
     pub clk: String,
     /// The module's reset port name, or `None` for `rst_n = none`.
     pub rst_n: Option<String>,
+    /// A `#[module]` struct: Sinter generates the module from the model.
+    pub generated: bool,
+}
+
+/// The attribute that makes a struct its own Verilog module.
+pub(crate) const MODULE_ATTR: &str = "module";
+
+/// The Verilog module name for `#[module]` struct `name`: its name, with a
+/// module path's `::` (a struct in another source module) as `__`.
+pub(crate) fn module_name(name: &str) -> String {
+    name.replace("::", "__")
 }
 
 /// The binding on struct `s`, if it carries `#[verilog(...)]`.
@@ -40,7 +51,26 @@ pub(crate) struct Binding {
 /// A malformed binding: a missing or non-string `module`, an unknown key, or a
 /// non-string value.
 pub(crate) fn binding_of(s: &StructItem) -> Result<Option<Binding>, CompileError> {
-    let Some(attr) = s.attrs.iter().find(|a| a.name == ATTR) else {
+    let generated = s.attrs.iter().find(|a| a.name == MODULE_ATTR);
+    let foreign = s.attrs.iter().find(|a| a.name == ATTR);
+    if let (Some(g), Some(_)) = (generated, foreign) {
+        return Err(CompileError::semantic(
+            &s.name,
+            g.pos,
+            "a struct is either `#[module]` (Sinter writes its Verilog) or `#[verilog]` (bound to \
+             existing Verilog), not both",
+        ));
+    }
+    if generated.is_some() {
+        return Ok(Some(Binding {
+            module: module_name(&s.name),
+            src: None,
+            clk: "clk".to_string(),
+            rst_n: Some("rst_n".to_string()),
+            generated: true,
+        }));
+    }
+    let Some(attr) = foreign else {
         return Ok(None);
     };
     let bad = |msg: String| CompileError::semantic(&s.name, attr.pos, msg);
@@ -50,6 +80,7 @@ pub(crate) fn binding_of(s: &StructItem) -> Result<Option<Binding>, CompileError
         src: None,
         clk: "clk".to_string(),
         rst_n: Some("rst_n".to_string()),
+        generated: false,
     };
     for arg in &attr.args {
         let text = match &arg.value {
@@ -102,7 +133,12 @@ pub(crate) fn check_isolation(m: &ir::Module, ctx: &str, pos: Pos) -> Result<(),
     let private: HashSet<&str> = m
         .instances
         .iter()
-        .flat_map(|i| i.model_regs.iter().chain(&i.model_lets))
+        .flat_map(|i| {
+            i.model_regs
+                .iter()
+                .chain(&i.model_lets)
+                .chain(&i.model_mem_regs)
+        })
         .map(String::as_str)
         .collect();
 
@@ -119,27 +155,46 @@ pub(crate) fn check_isolation(m: &ir::Module, ctx: &str, pos: Pos) -> Result<(),
             .filter(|(r, _)| !m.is_model_only(r))
             .map(|(_, e)| e),
     );
-    visible.extend(m.mem_reads.iter().map(|r| &r.addr));
-    for w in &m.mem_writes {
+    // A `#[module]` model's own memories are model-only too.
+    visible.extend(
+        m.mem_reads
+            .iter()
+            .filter(|r| !m.is_model_only(&r.mem))
+            .map(|r| &r.addr),
+    );
+    for w in m.mem_writes.iter().filter(|w| !m.is_model_only(&w.mem)) {
         visible.extend([&w.we, &w.addr, &w.data]);
     }
-    visible.extend(m.asserts.iter().map(|a| &a.cond));
+    // An assert inside a `#[module]` model is simulation-only (`--faults`
+    // rejects designs with `#[module]` instances), so only a design without
+    // them needs its asserts kept to visible signals.
+    if !m.instances.iter().any(|i| i.generated) {
+        visible.extend(m.asserts.iter().map(|a| &a.cond));
+    }
 
     for e in visible {
         if let Some(name) = first_ident_in(e, &private) {
-            let inst = m
-                .instances
-                .iter()
-                .find(|i| i.model_regs.iter().chain(&i.model_lets).any(|n| n == name))
-                .map_or("?", |i| i.model.as_str());
-            return Err(CompileError::semantic(
-                ctx,
-                pos,
-                format!(
-                    "`{name}` is internal state of the `#[verilog]` model `{inst}`, which \
-                     exists only in simulation; read the module's outputs instead"
+            let inst = m.instances.iter().find(|i| {
+                i.model_regs
+                    .iter()
+                    .chain(&i.model_lets)
+                    .chain(&i.model_mem_regs)
+                    .any(|n| n == name)
+            });
+            let msg = match inst {
+                Some(i) if i.generated => format!(
+                    "`{}` is internal to the `#[module]` `{}`, whose state its parent can't \
+                     read; add what you need to its outputs",
+                    source_name(i, name),
+                    i.model
                 ),
-            ));
+                i => format!(
+                    "`{name}` is internal state of the `#[verilog]` model `{}`, which exists \
+                     only in simulation; read the module's outputs instead",
+                    i.map_or("?", |i| i.model.as_str())
+                ),
+            };
+            return Err(CompileError::semantic(ctx, pos, msg));
         }
     }
     Ok(())
@@ -164,5 +219,20 @@ fn first_ident_in<'a>(e: &'a ir::Expr, names: &HashSet<&str>) -> Option<&'a str>
         K::If { cond, then, els } => first_ident_in(cond, names)
             .or_else(|| first_ident_in(then, names))
             .or_else(|| first_ident_in(els, names)),
+    }
+}
+
+/// `name`, a model-only signal of instance `inst`, as the source spells it:
+/// a state leaf `slow_count` is `self.slow.count`, and the next-state wire
+/// `u_slow__next_count` is `slow.count` of the value `step` returned.
+fn source_name(inst: &ir::Instance, name: &str) -> String {
+    let field = inst.name.trim_start_matches("u_");
+    let dotted = |s: &str| s.replace('_', ".");
+    if let Some(leaf) = name.strip_prefix(&format!("{}__next_", inst.name)) {
+        format!("{}.{}", dotted(field), dotted(leaf))
+    } else if inst.model_regs.iter().any(|r| r == name) {
+        format!("self.{}", dotted(name))
+    } else {
+        name.to_string()
     }
 }

@@ -200,7 +200,10 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
     let modules = read_and_compile(file, mode)?;
     fs::create_dir_all(out).with_context(|| format!("creating output dir `{}`", out.display()))?;
 
-    for m in &modules {
+    // The first module is the top; the rest are its `#[module]` children,
+    // which need only their Verilog (the top's simulator includes them).
+    for (k, m) in modules.iter().enumerate() {
+        let top = k == 0;
         if m.outputs().next().is_none() {
             warn!(
                 "module `{}` has no output ports, so synthesis will remove all of its \
@@ -214,13 +217,13 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
                 .with_context(|| format!("writing `{}`", path.display()))?;
             info!("wrote {}", path.display());
         }
-        if matches!(emit, Emit::Harness | Emit::All) {
+        if top && matches!(emit, Emit::Harness | Emit::All) {
             let path = out.join(format!("{}_tb.cpp", m.name));
             fs::write(&path, verilator::emit_cpp_harness(m))
                 .with_context(|| format!("writing `{}`", path.display()))?;
             info!("wrote {}", path.display());
         }
-        if matches!(emit, Emit::Rust | Emit::All) {
+        if top && matches!(emit, Emit::Rust | Emit::All) {
             let name = rust_sim::crate_name(m);
             let dir = out.join(&name);
             for (rel, contents) in rust_sim::emit_crate(m, &name) {
@@ -256,7 +259,12 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
 /// (DESIGN §6.15). Warn about instances with no `src`.
 fn copy_verilog_sources(modules: &[Module], out: &Path) -> Result<()> {
     let mut copied: HashMap<String, PathBuf> = HashMap::new();
-    for inst in modules.iter().flat_map(|m| &m.instances) {
+    // A `#[module]` instance's module is one of `modules`, already written.
+    for inst in modules
+        .iter()
+        .flat_map(|m| &m.instances)
+        .filter(|i| !i.generated)
+    {
         let Some(src) = &inst.src else {
             warn!(
                 "`#[verilog]` instance `{}` of `{}` has no `src`; add the module's Verilog \
@@ -288,13 +296,12 @@ fn copy_verilog_sources(modules: &[Module], out: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Emit the board-top wrapper + PCF for a pin-mapped single-module design.
+/// Emit the board-top wrapper + PCF around the design's top module.
 fn emit_board(modules: &[Module], pins: &Path, out: &Path) -> Result<()> {
-    let [module] = modules else {
+    let Some(module) = modules.first() else {
         anyhow::bail!(
-            "`--pins` targets a single-module design, but `{}` produced {} modules",
-            pins.display(),
-            modules.len()
+            "`--pins` needs a design with a `#[clock]` root, but `{}` has none",
+            pins.display()
         );
     };
     let text = fs::read_to_string(pins)

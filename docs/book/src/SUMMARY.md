@@ -23,6 +23,7 @@
 - [Types](reference/types.md)
 - [Expressions](reference/expressions.md)
 - [State and the clock](reference/state.md)
+- [Hierarchy](reference/hierarchy.md)
 - [Option and `?`](reference/option.md)
 - [Arrays, memories, and ROMs](reference/storage.md)
 - [Channels](reference/channels.md)

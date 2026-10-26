@@ -41,7 +41,7 @@ fn random_programs_pass_the_oracle() {
         let design = compile_str(&src).unwrap_or_else(|e| panic!("{file}: {e}"));
         let module = design.modules.into_iter().next().expect("one module");
         let stimulus = gen_stimulus(&module, CYCLES, env_u64("SINTER_FUZZ_SEED").unwrap_or(1));
-        co_simulate(&tools(), "fuzz_file", &module, &stimulus, Lint::Design);
+        co_simulate(&tools(), "fuzz_file", &module, &[], &stimulus, Lint::Design);
         return;
     }
     let first = env_u64("SINTER_FUZZ_SEED").unwrap_or(1);
@@ -70,7 +70,7 @@ fn random_programs_pass_the_oracle() {
 
     let tools = tools();
     for (name, module, stimulus) in cases.iter().take(with_tools as usize) {
-        co_simulate(&tools, name, module, stimulus, Lint::Design);
+        co_simulate(&tools, name, module, &[], stimulus, Lint::Design);
     }
 
     let runs: Vec<(String, &Module, &[Vec<u64>])> = cases

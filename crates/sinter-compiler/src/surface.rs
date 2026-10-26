@@ -72,6 +72,12 @@ const KNOWN: &[Known] = &[
         usage: "`#[storage(regs)]` or `#[storage(bram)]` on a `fifo` field",
     },
     Known {
+        name: "module",
+        site: Site::Struct,
+        keys: Some(&[]),
+        usage: "`#[module]` on a struct",
+    },
+    Known {
         name: "verilog",
         site: Site::Struct,
         keys: Some(&["module", "src", "clk", "rst_n"]),
@@ -147,6 +153,15 @@ pub fn check_attributes(program: &Program) -> Result<(), CompileError> {
         match item {
             Item::Struct(s) => {
                 check(&s.attrs, Site::Struct, &s.name)?;
+                let has = |n: &str| s.attrs.iter().find(|a| a.name == n);
+                if let (Some(m), Some(_)) = (has("module"), has("verilog")) {
+                    return Err(sem(
+                        &s.name,
+                        m.pos,
+                        "a struct is either `#[module]` (Sinter writes its Verilog) or \
+                         `#[verilog]` (bound to existing Verilog), not both",
+                    ));
+                }
                 for f in &s.fields {
                     check(&f.attrs, Site::Field, &s.name)?;
                 }

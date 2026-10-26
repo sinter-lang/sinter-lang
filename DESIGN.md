@@ -331,6 +331,20 @@ them **locally**, and exposes only its combined next-state upward. Rejected
 alternative: flattening every `self` to the root — more uniform but turns the
 root signature into a phone book and destroys encapsulation.
 
+**Emitted hierarchy (v1.0.0-rc.1).** Ownership nests in the source, but
+elaboration flattens it into one module. A `#[module]` attribute on a state
+struct keeps it as its own Verilog module: the struct's one step method
+`step(self, ins..) -> (Self, Out)` is its cycle, its parameters are inputs,
+and `Out`'s fields are outputs (`out_<field>`, the top module's rules). It
+reuses the §6.15 binding machinery: the parent's elaboration inlines the
+struct like a reference model (so the simulator stays flat and complete),
+routes its ports through `u_<field>_<port>` wires, and records an instance
+whose model is simulation-only; the struct is then elaborated again as a
+module of its own (nested `#[module]` / `#[verilog]` steps inside it become
+*its* instances). The binding rules carry over: stepped once per cycle,
+unconditionally, through its own field, with its state private to it. The
+oracle checks the flat simulator against the hierarchical Verilog.
+
 ### 4.4 Multi-cycle (generator) outputs are a sum type (SETTLED shape; implementation after 1.0)
 
 A generator is a function that runs over several cycles. It has two outputs:
@@ -1882,6 +1896,8 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   reserved now and the implementation after 1.0 (§4.4, v0.6).
 - Memory is a distinct primitive type whose interface is a latency-contracted
   stateful instance (§6.9, MEM1).
+- Hierarchy (v1.0.0-rc.1): `#[module]` on a state struct emits it as its own
+  Verilog module, instantiated by its parent; the simulator stays flat (§4.3).
 - Conveniences (v1.0.0-rc.1): struct update `S { a: x, ..base }`; `Self` in
   `impl` blocks; integer `const`s folded from expressions over constants,
   typed as at run time; tuple and nested `match` patterns with

@@ -1,0 +1,72 @@
+// Hierarchy: each `#[module]` struct becomes its own Verilog module.
+//
+// `Top` instantiates a `Pair`, which instantiates two `Delay`s, so the
+// emitted Verilog is three modules: `Top`, `Pair`, and `Delay` (used twice).
+// The simulator runs the whole design flattened, as always; the oracle checks
+// it against the hierarchical Verilog. `Delay` holds a block RAM, and the
+// ports include a struct input and a tuple output.
+
+// One sample on its way through the delay line.
+struct Sample {
+    v: u8,
+    en: u1,
+}
+
+// A 16-deep delay line in block RAM: each enabled sample comes out 16
+// enabled samples later.
+#[module]
+struct Delay {
+    ram: mem<u8, 16> = 0,
+    ptr: u4 = 0,
+}
+
+struct DelayOut {
+    y: u8,
+}
+
+impl Delay {
+    fn step(self, s: Sample) -> (Self, DelayOut) {
+        let next_ptr = if s.en == 1 { (self.ptr + 1) as u4 wrap } else { self.ptr };
+        (
+            Self { ram: self.ram.next(next_ptr, s.en, self.ptr, s.v), ptr: next_ptr },
+            DelayOut { y: self.ram.value() },
+        )
+    }
+}
+
+// Two delay lines in series, and their sum.
+#[module]
+struct Pair {
+    first: Delay,
+    second: Delay,
+    sum: u9 = 0,
+}
+
+struct PairOut {
+    sum: u9,
+    taps: (u8, u8),
+}
+
+impl Pair {
+    fn step(self, s: Sample) -> (Self, PairOut) {
+        let (first, a) = self.first.step(s);
+        let (second, b) = self.second.step(Sample { v: a.y, ..s });
+        (
+            Self { first: first, second: second, sum: a.y + b.y },
+            PairOut { sum: self.sum, taps: (a.y, b.y) },
+        )
+    }
+}
+
+struct Top {
+    pair: Pair,
+    pub total: u9 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, v: u8, en: u1) -> (Top, (u8, u8)) {
+        let (pair, o) = self.pair.step(Sample { v: v, en: en });
+        (Top { pair: pair, total: o.sum }, o.taps)
+    }
+}

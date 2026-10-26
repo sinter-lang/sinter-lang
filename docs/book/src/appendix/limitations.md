@@ -32,6 +32,13 @@ What Sinter doesn't do yet, gathered in one place. Most of these are planned.
   pipeline can only stall as a whole.
 - Pipelines and multiplex functions have fixed latency.
 
+## Hierarchy
+
+- A `#[module]`'s outputs are its step's `Out` struct; its parent can't read
+  its state or call its other methods.
+- `sinter build --faults` doesn't support designs with `#[module]`
+  instances.
+
 ## Clocks and hardware
 
 - Clocks have fixed integer periods: no derived or related clocks, no clock

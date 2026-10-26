@@ -25,8 +25,9 @@ compiles with 1.x keeps compiling, to hardware that behaves the same**:
    valid program stays valid, and computes the same values, cycle for cycle.
 2. **The generated module's interface.** Its name, its ports (names, order,
    directions, and widths), and its clock and reset behaviour, as documented
-   in [The generated Verilog](https://github.com/sinter-lang/sinter-lang/blob/master/docs/generated-verilog.md). Verilog that
-   instantiates a Sinter module keeps working.
+   in [The generated Verilog](https://github.com/sinter-lang/sinter-lang/blob/master/docs/generated-verilog.md), and of each
+   `#[module]` sub-module. Verilog that instantiates a Sinter module keeps
+   working.
 3. **The `sinter` command.** Its subcommands and flags and what they do, its
    exit statuses, and the files it reads: `.snt` projects, stimulus CSV
    files, pin maps, and `include_hex!` files.

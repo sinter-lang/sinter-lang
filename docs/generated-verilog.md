@@ -153,6 +153,27 @@ a number (`end_w`, `x_1`). Wire names are not part of the interface and may
 change between releases. Registers and ports must not be named after a
 SystemVerilog keyword; that is a compile error.
 
+## `#[module]` sub-modules
+
+Each `#[module]` struct (see the book's Hierarchy chapter) becomes a module
+of its own, written to `<Struct>.sv` beside the top module, once however
+many times it is used. Its interface follows the same rules as the top
+module's, except that it has no `_q` register outputs:
+
+- `clk` and `rst_n` first;
+- an input per leaf of each parameter of its step method;
+- an output per leaf of each field of its `Out` struct, named
+  `out_<field>` (`out_tick`, `out_taps_0`), flattened as above.
+
+A struct in another source module has its `::` replaced by `__` in the
+module name. The parent instantiates it as `u_<field>`, after the state
+field that holds it, connecting each port to a wire named
+`u_<field>_<port>` (without the `out_` prefix for outputs). The child runs on
+the clock of the domain that steps it.
+
+Give your synthesis and simulation tools every `.sv` file `sinter build`
+writes; the top module is the one named after the `#[clock]` root's struct.
+
 ## Foreign module instances
 
 A `#[verilog(module = "...")]` binding becomes an instance of

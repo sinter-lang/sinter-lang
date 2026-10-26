@@ -261,6 +261,15 @@ the functional surface is the only one.)
     `--faults on|off` (`compile_str_faults` / CLI `build --faults`). `off` is
     byte-identical to the assert-free module; `on` co-simulates the sideband
     bit-for-bit (`fn_fault`).
+- **Hierarchy** (v1.0.0-rc.1, DESIGN §4.3) — a `#[module]` struct becomes its own
+  Verilog module. It is a binding whose Verilog Sinter writes itself:
+  `lower_binding_step` inlines it into the parent (the simulator stays flat,
+  so `Design.modules[0]` is complete) and records an `ir::Instance` with
+  `generated` set (its memories in `model_mems`); `elaborate` then builds
+  each `#[module]` struct as a module of its own (`child` mode: ports from
+  `step`'s parameters and `out_<field>` from its `Out`), appended to
+  `Design.modules`. Inside a `#[module]` model, nested bindings are inlined.
+  The oracle's `co_simulate` takes the child modules for the tools.
 - **Simulators** (DESIGN §7.2) — the interpreter (`sim.rs`, behind `sinter sim`
   and the oracle) and the generated crate (`rust_sim.rs`, `--emit rust`) share
   one arithmetic, `sim_runtime.rs`: `eval.rs` wraps it, and it is copied into

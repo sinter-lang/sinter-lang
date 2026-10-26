@@ -225,6 +225,19 @@ const EXAMPLES: &[Example] = &[
     // (arithmetic), with `sh: u4` exercising shifts past the 8-bit width (-> 0 /
     // sign fill) — co-simulated sim vs a native Verilog barrel shift bit-for-bit
     // (DESIGN §6.13 / §9.10 / §7.4).
+    // v1.0.0-rc.1 conveniences: folded constants, `Self`, `..self`, and
+    // tuple / nested `match` patterns, lowered to the same muxes as ever.
+    Example {
+        name: "fn_ergonomics",
+        source: include_str!("../../../examples/fn_ergonomics.snt"),
+    },
+    // Hierarchy: three `#[module]` levels (one used twice), a block RAM inside
+    // a module, struct and tuple ports. The flat simulator against the
+    // hierarchical Verilog.
+    Example {
+        name: "fn_hier",
+        source: include_str!("../../../examples/fn_hier.snt"),
+    },
     Example {
         name: "fn_barrel",
         source: include_str!("../../../examples/fn_barrel.snt"),
@@ -326,8 +339,14 @@ const PROJECTS: &[Project] = &[
 ];
 
 fn compile_one(source: &str) -> Module {
+    compile_all(source).swap_remove(0)
+}
+
+/// The top module first, then any `#[module]` children.
+fn compile_all(source: &str) -> Vec<Module> {
     let design = compile_str(source).expect("example should compile");
-    design.modules.into_iter().next().expect("one module")
+    assert!(!design.modules.is_empty(), "a module");
+    design.modules
 }
 
 /// FLT1b: examples compiled with `--faults=on` so the synthesized silicon fault
@@ -351,25 +370,45 @@ fn compile_project_one(root: &str) -> Module {
     design.modules.into_iter().next().expect("one module")
 }
 
-/// Every oracle case as `(name, module, cycles)` — the single-file examples
-/// plus the multi-file projects.
-fn all_cases() -> Vec<(String, Module, usize)> {
-    let mut cases: Vec<(String, Module, usize)> = EXAMPLES
+fn compile_project_all(root: &str) -> Vec<Module> {
+    sinter_compiler::compile_project(std::path::Path::new(root))
+        .expect("project should compile")
+        .modules
+}
+
+/// One oracle case: the top module first, then its `#[module]` children.
+struct Case {
+    name: String,
+    modules: Vec<Module>,
+    cycles: usize,
+}
+
+impl Case {
+    fn top(&self) -> &Module {
+        &self.modules[0]
+    }
+}
+
+/// Every oracle case — the single-file examples plus the multi-file projects.
+fn all_cases() -> Vec<Case> {
+    let mut cases: Vec<Case> = EXAMPLES
         .iter()
-        .map(|ex| (ex.name.to_string(), compile_one(ex.source), CYCLES))
+        .map(|ex| Case {
+            name: ex.name.to_string(),
+            modules: compile_all(ex.source),
+            cycles: CYCLES,
+        })
         .collect();
-    cases.extend(
-        PROJECTS
-            .iter()
-            .map(|p| (p.name.to_string(), compile_project_one(p.root), p.cycles)),
-    );
+    cases.extend(PROJECTS.iter().map(|p| Case {
+        name: p.name.to_string(),
+        modules: compile_project_all(p.root),
+        cycles: p.cycles,
+    }));
     // FLT1b fault-latch examples, compiled in `--faults=on` mode.
-    cases.extend(FAULT_EXAMPLES.iter().map(|ex| {
-        (
-            ex.name.to_string(),
-            compile_one_faults_on(ex.source),
-            CYCLES,
-        )
+    cases.extend(FAULT_EXAMPLES.iter().map(|ex| Case {
+        name: ex.name.to_string(),
+        modules: vec![compile_one_faults_on(ex.source)],
+        cycles: CYCLES,
     }));
     cases
 }
@@ -377,9 +416,16 @@ fn all_cases() -> Vec<(String, Module, usize)> {
 #[test]
 fn examples_pass_the_oracle() {
     let tools = tools();
-    for (name, module, cycles) in &all_cases() {
-        let stimulus = gen_stimulus(module, *cycles, 0xDEAD_BEEF);
-        co_simulate(&tools, name, module, &stimulus, Lint::Strict);
+    for case in &all_cases() {
+        let stimulus = gen_stimulus(case.top(), case.cycles, 0xDEAD_BEEF);
+        co_simulate(
+            &tools,
+            &case.name,
+            case.top(),
+            &case.modules[1..],
+            &stimulus,
+            Lint::Strict,
+        );
     }
 }
 
@@ -449,6 +495,7 @@ fn directed_examples_pass_the_oracle() {
             &tools,
             &format!("{}-directed", ex.name),
             &module,
+            &[],
             &stim.inputs,
             Lint::Strict,
         );
@@ -528,19 +575,19 @@ const RUST_SIM_EXTRA: &[Example] = &[
 #[test]
 fn examples_match_the_generated_rust_simulator() {
     let mut cases = all_cases();
-    cases.extend(
-        RUST_SIM_EXTRA
-            .iter()
-            .map(|ex| (ex.name.to_string(), compile_one(ex.source), CYCLES)),
-    );
+    cases.extend(RUST_SIM_EXTRA.iter().map(|ex| Case {
+        name: ex.name.to_string(),
+        modules: vec![compile_one(ex.source)],
+        cycles: CYCLES,
+    }));
     let stimuli: Vec<Vec<Vec<u64>>> = cases
         .iter()
-        .map(|(_, module, cycles)| gen_stimulus(module, *cycles, 0xDEAD_BEEF))
+        .map(|c| gen_stimulus(c.top(), c.cycles, 0xDEAD_BEEF))
         .collect();
     let runs: Vec<(String, &Module, &[Vec<u64>])> = cases
         .iter()
         .zip(&stimuli)
-        .map(|((name, module, _), stim)| (name.clone(), module, stim.as_slice()))
+        .map(|(c, stim)| (c.name.clone(), c.top(), stim.as_slice()))
         .collect();
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rust-sim");
     for ((name, module, stimulus), got) in runs.iter().zip(rust_sim_traces(&root, &runs)) {
@@ -628,6 +675,6 @@ fn fuzz_regressions_pass_the_oracle() {
     for ex in FUZZ_REGRESSIONS {
         let module = compile_one(ex.source);
         let stimulus = gen_stimulus(&module, CYCLES, 6);
-        co_simulate(&tools, ex.name, &module, &stimulus, Lint::Design);
+        co_simulate(&tools, ex.name, &module, &[], &stimulus, Lint::Design);
     }
 }

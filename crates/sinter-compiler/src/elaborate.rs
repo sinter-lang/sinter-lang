@@ -171,38 +171,111 @@ struct Tables<'p> {
 /// Lexical environment: names (`self`, parameters, `let`s) to their values.
 type Env = HashMap<String, Val>;
 
-/// Elaborate the functional surface of `program` into an [`ir::Module`].
+/// Elaborate the functional surface of `program` into its modules: the
+/// `#[clock]` root's first, then one for each `#[module]` struct it (or one
+/// of those) instantiates, each once. No `#[clock]` root, no modules.
+///
+/// The root module is complete for simulation: every `#[module]` instance's
+/// logic is inlined into it, and only its Verilog instantiates the child
+/// module instead.
 ///
 /// Assumes `program` has already passed `functional::check_functional`.
 ///
 /// # Errors
 /// Returns a [`CompileError`] if the design uses a construct not yet lowered.
-pub fn elaborate(program: &Program) -> Result<Option<ir::Module>, CompileError> {
-    let tables = build_tables(program);
+pub fn elaborate(program: &Program) -> Result<Vec<ir::Module>, CompileError> {
     let Some((state_ty, roots)) = find_clock_roots(program)? else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
-    let el = Elaborator {
-        ctx: state_ty.to_string(),
-        tables,
-        consts: const_values(program)?,
-        branch_depth: Cell::new(0),
-        guards: RefCell::new(Vec::new()),
-        asserts: RefCell::new(Vec::new()),
-        // Pre-seed the backtrace with the root frame (the `#[clock]` state type);
-        // it is never popped, so an assert at the root body reproduces the FLT0
-        // `"<ctx> (line N)"` loc exactly, and inlined bodies stack on top.
-        frames: RefCell::new(vec![state_ty.to_string()]),
-        wires: RefCell::new(Vec::new()),
-        instances: RefCell::new(Vec::new()),
-        in_model: Cell::new(false),
-        reserved: RefCell::new(std::collections::HashSet::new()),
-        wire_names: RefCell::new(std::collections::HashSet::new()),
-        cur_domain: Cell::new(0),
-        domain_names: RefCell::new(Vec::new()),
-        cdc_calls: RefCell::new(Vec::new()),
-    };
-    el.build(state_ty, &roots).map(Some)
+    let mut modules = vec![Elaborator::new(program, state_ty, false)?.build(state_ty, &roots)?];
+    let mut i = 0;
+    while i < modules.len() {
+        // Each child runs on the clock of the domain that steps it.
+        let children: Vec<(String, String, String)> = modules[i]
+            .instances
+            .iter()
+            .filter(|inst| inst.generated)
+            .map(|inst| {
+                let domain = modules[i]
+                    .domains
+                    .get(inst.domain)
+                    .map_or_else(|| modules[i].clock_domain.clone(), |d| d.name.clone());
+                (inst.model.clone(), inst.module.clone(), domain)
+            })
+            .collect();
+        for (model, module, domain) in children {
+            if modules.iter().any(|m| m.name == module) {
+                continue;
+            }
+            let step = step_method(program, &model)?;
+            let root = Root {
+                tick: step,
+                domain,
+                period: 1,
+            };
+            let mut child = Elaborator::new(program, &model, true)?.build(&model, &[root])?;
+            child.name = module;
+            modules.push(child);
+        }
+        i += 1;
+    }
+    Ok(modules)
+}
+
+/// The step method of `#[module]` struct `name`: its one method returning
+/// `(Self, Out)`.
+fn step_method<'p>(program: &'p Program, name: &str) -> Result<&'p Func, CompileError> {
+    let steps: Vec<&Func> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Impl(im) if im.type_name == name => Some(im.methods.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter(|m| matches!(&m.ret, TypeRef::Tuple(ts) if ts.len() == 2))
+        .collect();
+    match steps.as_slice() {
+        [step] => Ok(step),
+        _ => Err(err(
+            name,
+            Pos::default(),
+            format!(
+                "a `#[module]` struct has exactly one step method, returning `(Self, Out)`; \
+                 `{name}` has {}",
+                steps.len()
+            ),
+        )),
+    }
+}
+
+impl<'p> Elaborator<'p> {
+    /// An elaborator for state struct `state_ty`; `child` builds it as a
+    /// `#[module]` instantiated by a parent.
+    fn new(program: &'p Program, state_ty: &str, child: bool) -> Result<Self, CompileError> {
+        Ok(Elaborator {
+            ctx: state_ty.to_string(),
+            tables: build_tables(program),
+            consts: const_values(program)?,
+            branch_depth: Cell::new(0),
+            guards: RefCell::new(Vec::new()),
+            asserts: RefCell::new(Vec::new()),
+            // Pre-seed the backtrace with the root frame (the `#[clock]` state type);
+            // it is never popped, so an assert at the root body reproduces the FLT0
+            // `"<ctx> (line N)"` loc exactly, and inlined bodies stack on top.
+            frames: RefCell::new(vec![state_ty.to_string()]),
+            wires: RefCell::new(Vec::new()),
+            instances: RefCell::new(Vec::new()),
+            in_model: Cell::new(false),
+            in_generated: Cell::new(false),
+            child,
+            reserved: RefCell::new(std::collections::HashSet::new()),
+            wire_names: RefCell::new(std::collections::HashSet::new()),
+            cur_domain: Cell::new(0),
+            domain_names: RefCell::new(Vec::new()),
+            cdc_calls: RefCell::new(Vec::new()),
+        })
+    }
 }
 
 fn build_tables(program: &Program) -> Tables<'_> {
@@ -313,6 +386,12 @@ struct Elaborator<'p> {
     /// Set while lowering a `#[verilog]` reference model, whose body may not
     /// step another binding (that instance would exist only in simulation).
     in_model: Cell<bool>,
+    /// Set while lowering a `#[module]` model, whose nested instances are
+    /// inlined (they belong to the generated module's own Verilog).
+    in_generated: Cell<bool>,
+    /// Lowering a `#[module]` struct as its own module: its outputs are its
+    /// step's `Out` fields, and its registers are never ports.
+    child: bool,
     /// Names the emitted module already uses (registers and their `_q` / `_next`
     /// nets, ports, memories, `clk` / `rst_n`), which a shared wire must avoid.
     reserved: RefCell<std::collections::HashSet<String>>,
@@ -717,6 +796,17 @@ impl Elaborator<'_> {
                 }
             }
             if let Some(out) = extra_out {
+                // A `#[module]`'s outputs are its `Out` struct's fields, named
+                // as the parent's instance connects them.
+                // (They are named like a top module's: `out_<field>`.)
+                if self.child && !matches!(out, Val::Struct(..)) {
+                    return Err(err(
+                        &self.ctx,
+                        tick.body.pos,
+                        "a `#[module]`'s step must return `(Self, Out)` with `Out` a struct, \
+                         whose fields are the module's outputs",
+                    ));
+                }
                 // With several clocks, each tick's outputs carry its domain name.
                 let prefix = if multi {
                     format!("{}_out", root.domain)
@@ -739,11 +829,15 @@ impl Elaborator<'_> {
         self.binding_fields(&state, "", &mut bound, first.body.pos)?;
         for (path, model) in bound {
             if !instances.iter().any(|i| i.name == format!("u_{path}")) {
+                let what = match self.binding(&model, first.body.pos)? {
+                    Some(b) if b.generated => "#[module]",
+                    _ => "#[verilog]",
+                };
                 return Err(err(
                     &self.ctx,
                     first.body.pos,
                     format!(
-                        "`#[verilog]` instance `self.{}` (`{model}`) is never stepped; the real \
+                        "`{what}` instance `self.{}` (`{model}`) is never stepped; the real \
                          module runs every cycle, so call its `step` once per cycle",
                         path.replace('_', ".")
                     ),
@@ -760,9 +854,15 @@ impl Elaborator<'_> {
                         &self.ctx,
                         first.body.pos,
                         format!(
-                            "the state of `#[verilog]` instance `{}` (`{}`) must be the result \
-                             of its `step`, passed into the next state unchanged",
-                            inst.name, inst.model
+                            "the state of `{}` instance `{}` (`{}`) must be the result of its \
+                             `step`, passed into the next state unchanged",
+                            if inst.generated {
+                                "#[module]"
+                            } else {
+                                "#[verilog]"
+                            },
+                            inst.name,
+                            inst.model
                         ),
                     ));
                 }
@@ -789,7 +889,12 @@ impl Elaborator<'_> {
         // Observation outputs: the registers of the state struct's `pub`
         // fields, plus any explicit outputs. Each `_q` name must be fresh in the
         // flat namespace (`seen`).
-        let exported = self.exported_regs(state_ty, first.pos)?;
+        // A `#[module]`'s registers are internal: its outputs are its `Out`.
+        let exported = if self.child {
+            std::collections::HashSet::new()
+        } else {
+            self.exported_regs(state_ty, first.pos)?
+        };
         let mut out_drives = Vec::new();
         // A `#[verilog]` model's registers exist only in simulation, so they get
         // no `_q` port.
@@ -1808,10 +1913,14 @@ impl Elaborator<'_> {
                 self.check_cdc_call(receiver, &type_name, &arg.key, method, pos)?;
             }
         }
+        // Inside a `#[module]` model, a nested instance is part of that
+        // module's own Verilog, so here it is simply inlined.
         if let Some(binding) = self.binding(&type_name, pos)? {
-            return self.lower_binding_step(
-                env, receiver, recv, &type_name, &binding, m, args, depth, pos,
-            );
+            if !self.in_generated.get() {
+                return self.lower_binding_step(
+                    env, receiver, recv, &type_name, &binding, m, args, depth, pos,
+                );
+            }
         }
         let inner = self.bind_params(env, Some(recv), &m.params, args, depth, pos)?;
         // Backtrace frame for a method: `<ReceiverType>::<method>@<call-site line>`
@@ -1922,10 +2031,13 @@ impl Elaborator<'_> {
     ) -> Result<(), CompileError> {
         match ty {
             Ty::Struct(name) => {
-                if self.binding(name, pos)?.is_some() {
+                // The state struct itself (path "") is never its own instance.
+                if !path.is_empty() && self.binding(name, pos)?.is_some() {
                     let mut leaves = Vec::new();
                     self.flatten_ty(ty, "", &mut leaves);
-                    if !leaves.is_empty() {
+                    let mut mems = Vec::new();
+                    self.collect_mem_decls(&self.default_val(ty, None, pos)?, "", &mut mems, pos)?;
+                    if !leaves.is_empty() || !mems.is_empty() {
                         out.push((path.to_string(), name.clone()));
                     }
                     return Ok(());
@@ -2003,12 +2115,13 @@ impl Elaborator<'_> {
                 ),
             ));
         }
-        // A memory is not a register leaf, so model-only memories would leak
-        // into the emitted Verilog.
-        if self
-            .struct_fields(type_name, pos)?
-            .iter()
-            .any(|(_, t)| matches!(t, Ty::Mem { .. }))
+        // A memory is not a register leaf, so a foreign model's memories would
+        // leak into the emitted Verilog. A `#[module]`'s are its own (below).
+        if !binding.generated
+            && self
+                .struct_fields(type_name, pos)?
+                .iter()
+                .any(|(_, t)| matches!(t, Ty::Mem { .. }))
         {
             return Err(err(
                 &self.ctx,
@@ -2016,16 +2129,41 @@ impl Elaborator<'_> {
                 format!("the `#[verilog]` model `{type_name}` cannot hold a `mem` / `rom` in EXT1"),
             ));
         }
+        if binding.generated && !matches!(&m.ret, TypeRef::Tuple(ts) if ts.len() == 2) {
+            return Err(err(
+                &self.ctx,
+                pos,
+                format!(
+                    "`{type_name}` is a `#[module]`; from outside it, only its step method \
+                     (returning `(Self, Out)`) can be called, not `{}`: the module's state is \
+                     internal, so output what you need",
+                    m.name
+                ),
+            ));
+        }
+        let what = if binding.generated {
+            "#[module]"
+        } else {
+            "#[verilog]"
+        };
         let mut leaves = Vec::new();
         self.flatten_ty(&Ty::Struct(type_name.to_string()), "", &mut leaves);
-        let stateful = !leaves.is_empty();
+        let model_mems = if binding.generated {
+            let default = self.default_val(&Ty::Struct(type_name.to_string()), None, pos)?;
+            let mut mems = Vec::new();
+            self.collect_mem_decls(&default, "", &mut mems, pos)?;
+            mems
+        } else {
+            Vec::new()
+        };
+        let stateful = !leaves.is_empty() || !model_mems.is_empty();
         let path = if stateful {
             if self.branch_depth.get() > 0 {
                 return Err(err(
                     &self.ctx,
                     pos,
                     format!(
-                        "the `#[verilog]` instance `{type_name}` must be stepped every cycle, \
+                        "the `{what}` instance `{type_name}` must be stepped every cycle, \
                          outside any `if` / `match` arm (the real module is always clocked); \
                          select its inputs instead"
                     ),
@@ -2036,7 +2174,7 @@ impl Elaborator<'_> {
                     &self.ctx,
                     pos,
                     format!(
-                        "step the `#[verilog]` instance `{type_name}` through its state field, \
+                        "step the `{what}` instance `{type_name}` through its state field, \
                          e.g. `self.{}.{}(..)`",
                         type_name.to_lowercase(),
                         m.name
@@ -2064,13 +2202,36 @@ impl Elaborator<'_> {
             ));
         }
 
-        // Inputs: route each scalar argument through a named port wire.
+        // Inputs: route each scalar argument (each leaf of an aggregate one,
+        // for a `#[module]`) through a named port wire.
         let mut inner = self.bind_params(env, Some(recv), &m.params, args, depth, pos)?;
         let mut inputs = Vec::new();
         for p in &m.params {
             let Param::Typed { name, .. } = p else {
                 continue;
             };
+            if binding.generated {
+                let Some(v) = inner.remove(name) else {
+                    continue;
+                };
+                let mut leaves = Vec::new();
+                flatten_leaves(&v, name, &mut leaves);
+                let mut renamed = HashMap::new();
+                for (leaf, e, frac) in leaves {
+                    let wire = format!("{inst}_{leaf}");
+                    self.wire_names.borrow_mut().insert(wire.clone());
+                    self.wires.borrow_mut().push(ir::Let {
+                        name: wire.clone(),
+                        ty: e.ty,
+                        frac_bits: frac,
+                        value: e,
+                    });
+                    renamed.insert(leaf.clone(), wire.clone());
+                    inputs.push((leaf, wire));
+                }
+                inner.insert(name.clone(), rename_leaves(&v, name, &renamed));
+                continue;
+            }
             let Some(Val::Scalar(e, frac)) = inner.remove(name) else {
                 return Err(err(
                     &self.ctx,
@@ -2101,6 +2262,7 @@ impl Elaborator<'_> {
         // its body creates are part of the model, so simulation-only.
         let first_model_wire = self.wires.borrow().len();
         self.in_model.set(true);
+        self.in_generated.set(binding.generated);
         let result = self.lower_body(
             &inner,
             m,
@@ -2108,6 +2270,7 @@ impl Elaborator<'_> {
             depth + 1,
         );
         self.in_model.set(false);
+        self.in_generated.set(false);
         let body_wires: Vec<String> = self.wires.borrow()[first_model_wire..]
             .iter()
             .map(|l| l.name.clone())
@@ -2117,7 +2280,7 @@ impl Elaborator<'_> {
                 &self.ctx,
                 pos,
                 format!(
-                    "the `#[verilog]` model `{type_name}::{}` must return `(Self, Out)`",
+                    "the `{what}` model `{type_name}::{}` must return `(Self, Out)`",
                     m.name
                 ),
             ));
@@ -2127,7 +2290,7 @@ impl Elaborator<'_> {
                 &self.ctx,
                 pos,
                 format!(
-                    "the `#[verilog]` model `{type_name}::{}` must return `(Self, Out)`",
+                    "the `{what}` model `{type_name}::{}` must return `(Self, Out)`",
                     m.name
                 ),
             ));
@@ -2138,14 +2301,44 @@ impl Elaborator<'_> {
             return Err(err(
                 &self.ctx,
                 pos,
-                format!(
-                    "the `#[verilog]` model `{type_name}`'s outputs must be a struct of scalars"
-                ),
+                if binding.generated {
+                    format!(
+                        "`{type_name}::{}` must return `(Self, Out)` with `Out` a struct, whose \
+                         fields are the module's outputs",
+                        m.name
+                    )
+                } else {
+                    format!(
+                        "the `{what}` model `{type_name}`'s outputs must be a struct of scalars"
+                    )
+                },
             ));
         };
         let mut outputs = Vec::new();
         let mut out_fields = Vec::new();
         for (port, v) in fields {
+            if binding.generated {
+                // Each leaf of the field is a port, named by its path.
+                let mut leaves = Vec::new();
+                flatten_leaves(&v, &port, &mut leaves);
+                let mut renamed = HashMap::new();
+                for (leaf, e, frac) in leaves {
+                    let wire = format!("{inst}_{leaf}");
+                    self.wire_names.borrow_mut().insert(wire.clone());
+                    self.wires.borrow_mut().push(ir::Let {
+                        name: wire.clone(),
+                        ty: e.ty,
+                        frac_bits: frac,
+                        value: e,
+                    });
+                    renamed.insert(leaf.clone(), wire.clone());
+                    // The generated module names its outputs as a top module
+                    // does its extra outputs: `out_<field>`.
+                    outputs.push((format!("out_{leaf}"), wire));
+                }
+                out_fields.push((port.clone(), rename_leaves(&v, &port, &renamed)));
+                continue;
+            }
             let Val::Scalar(e, frac) = v else {
                 return Err(err(
                     &self.ctx,
@@ -2212,6 +2405,15 @@ impl Elaborator<'_> {
             model_regs,
             model_lets,
             src: binding.src.clone(),
+            generated: binding.generated,
+            model_mem_regs: model_mems
+                .iter()
+                .flat_map(|mm| {
+                    let mem = join(&path, &mm.name);
+                    (0..mm.read_ports).map(move |i| rdata_name(&mem, mm.read_ports, i))
+                })
+                .collect(),
+            model_mems: model_mems.iter().map(|mm| join(&path, &mm.name)).collect(),
         });
         Ok(Val::Tuple(vec![state, Val::Struct(out_ty, out_fields)]))
     }

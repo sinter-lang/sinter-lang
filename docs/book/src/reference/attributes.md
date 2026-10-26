@@ -11,6 +11,7 @@ name, an integer, or a string, or `key` alone.
 | `#[domain(d)]` | a state field | puts the field's registers in domain `d` ([Clock domains](clock-domains.md)) |
 | `#[encoding(binary)]`, `#[encoding(onehot)]` | an enum | how its variants are encoded ([Types](types.md#enums)) |
 | `#[storage(regs)]`, `#[storage(bram)]` | a `fifo` field | build the queue from registers or block RAM ([Channels](channels.md#storage)) |
+| `#[module]` | a struct | make it a Verilog module of its own, instantiated by its parent ([Hierarchy](hierarchy.md)) |
 | `#[verilog(module = "m", ...)]` | a struct | bind the struct to Verilog module `m` ([Foreign Verilog](foreign-verilog.md)) |
 
 Any other attribute, an attribute in the wrong place, or an argument it
@@ -30,5 +31,5 @@ struct Queue {
 ```
 
 ```text
-error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `verilog`
+error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `module`, `verilog`
 ```

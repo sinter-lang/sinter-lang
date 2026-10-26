@@ -22,7 +22,7 @@ use crate::ir::{self, Expr, ExprKind, Module};
 /// `<module.name>.sv` (filename matches the module name, per the skill).
 #[must_use]
 pub fn emit_module(m: &Module) -> String {
-    let hoisted = hoist_zero_extensions(m);
+    let hoisted = hoist_zero_extensions(&without_model_mems(m));
     let m = &hoisted;
     let mut out = String::new();
     let _ = writeln!(out, "`default_nettype none");
@@ -51,6 +51,22 @@ pub fn emit_module(m: &Module) -> String {
     let _ = writeln!(out);
     let _ = writeln!(out, "`default_nettype wire");
     out
+}
+
+/// A copy of `m` without the memories that exist only in an instance's model
+/// (a `#[module]` holding a `mem`), or their read and write ports: the
+/// instantiated module has them instead.
+fn without_model_mems(m: &Module) -> Module {
+    let mut m = m.clone();
+    let model: std::collections::HashSet<String> = m
+        .instances
+        .iter()
+        .flat_map(|i| i.model_mems.iter().cloned())
+        .collect();
+    m.mems.retain(|x| !model.contains(&x.name));
+    m.mem_reads.retain(|r| !model.contains(&r.mem));
+    m.mem_writes.retain(|w| !model.contains(&w.mem));
+    m
 }
 
 /// A copy of `m` in which every cast that zero-extends an unsigned value into
@@ -535,11 +551,15 @@ fn emit_mem_writes(out: &mut String, m: &Module) {
 /// outputs, each wired to its port wire.
 fn emit_instances(out: &mut String, m: &Module) {
     for inst in &m.instances {
-        let _ = writeln!(
-            out,
-            "    // Foreign Verilog module `{}`, modelled in simulation by `{}`",
-            inst.module, inst.model
-        );
+        if inst.generated {
+            let _ = writeln!(out, "    // Sinter module `{}`", inst.module);
+        } else {
+            let _ = writeln!(
+                out,
+                "    // Foreign Verilog module `{}`, modelled in simulation by `{}`",
+                inst.module, inst.model
+            );
+        }
         let (clk_wire, rst_wire) = (clk_net(m, inst.domain), rst_net(m, inst.domain));
         let mut conns: Vec<(&str, &str)> = Vec::new();
         if let Some(clk) = &inst.clk {

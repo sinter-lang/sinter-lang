@@ -200,8 +200,17 @@ pub fn tools() -> Tools {
 
 /// Run one oracle case: emit the SV + harness, compute the reference trace over
 /// `stimulus`, then (tools permitting) synthesize, lint, and co-simulate the SV,
-/// asserting its trace matches the reference bit-for-bit.
-pub fn co_simulate(tools: &Tools, name: &str, module: &Module, stimulus: &[Vec<u64>], lint: Lint) {
+/// asserting its trace matches the reference bit-for-bit. `children` are the
+/// modules generated for `module`'s `#[module]` instances, which the tools read
+/// alongside it; the reference simulates `module` alone (it inlines them).
+pub fn co_simulate(
+    tools: &Tools,
+    name: &str,
+    module: &Module,
+    children: &[Module],
+    stimulus: &[Vec<u64>],
+    lint: Lint,
+) {
     let dir = workdir(name);
 
     // Emit artifacts.
@@ -215,7 +224,15 @@ pub fn co_simulate(tools: &Tools, name: &str, module: &Module, stimulus: &[Vec<u
     std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
     let reference = run_reference(module, stimulus);
 
-    let extra = foreign_sources(module);
+    let mut extra = foreign_sources(module);
+    for child in children {
+        let path = dir.join(format!("{}.sv", child.name));
+        std::fs::write(&path, verilog::emit_module(child)).expect("write child sv");
+        extra.push(path);
+        extra.extend(foreign_sources(child));
+    }
+    extra.sort();
+    extra.dedup();
     if tools.yosys {
         run_yosys(&sv, &extra, &module.name);
     }

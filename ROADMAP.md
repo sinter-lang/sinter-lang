@@ -186,7 +186,7 @@ nothing goes to crates.io.
 - [x] **Ergonomics:** struct update `S { a: x, ..base }`; `Self` in `impl`
       blocks; constant arithmetic (`const` values and array lengths from
       expressions over constants); tuple and nested patterns in `match`.
-- [ ] **Hierarchy:** a `#[module]` struct becomes its own Verilog module,
+- [x] **Hierarchy:** a `#[module]` struct becomes its own Verilog module,
       instantiated by its parent, so a large design keeps its structure in
       synthesis reports and waveforms. Simulation semantics are unchanged; the
       oracle checks the flat simulator against the hierarchical Verilog.

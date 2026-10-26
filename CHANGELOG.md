@@ -25,6 +25,15 @@ to crates.io.
   checked properly (all four `(u1, u1)` pairs need no `_` arm), and a
   non-exhaustive match names a value no arm matches.
 - `examples/fn_ergonomics.snt` puts all four through the oracle.
+- **Hierarchy**: `#[module]` on a state struct makes it a Verilog module of
+  its own, which its parent instantiates (`u_<field>`), so a large design
+  keeps its structure in synthesis reports and waveforms. Its ports are its
+  step method's parameters and its `Out` struct's fields (`out_<field>`),
+  aggregates flattened as for the top module. It can hold anything a state
+  struct can, including memories and other `#[module]`s. `sinter build`
+  writes one `.sv` per module; the simulators still run the whole design
+  flat, and the oracle checks them against the hierarchical Verilog
+  (`examples/fn_hier.snt`).
 
 ### Changed (breaking)
 
