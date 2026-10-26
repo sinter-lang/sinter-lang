@@ -1225,7 +1225,7 @@ impl Elaborator<'_> {
                 method,
                 args,
             } => self.lower_method(env, receiver, method, args, depth, pos),
-            ExprKind::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields, .. } => {
                 let sty = self.resolve_named(name, pos)?;
                 let mut out = Vec::new();
                 for (fname, fty) in self.struct_fields(name, pos)? {
@@ -2567,22 +2567,37 @@ impl Elaborator<'_> {
                     Type::Uint(1),
                 )))
             }
-            Pattern::Tuple(_) => Err(err(&self.ctx, pos, "tuple patterns in match are F3+")),
-            // `Some(p)` selects when `is_some` is set and binds the payload; `None`
-            // selects when it is clear. (Match exhaustiveness is checked in F1.)
+            // A tuple pattern matches when every element does.
+            Pattern::Tuple(pats) => {
+                let Val::Tuple(vals) = scrut else {
+                    return Err(err(&self.ctx, pos, "tuple pattern on a non-tuple"));
+                };
+                if pats.len() != vals.len() {
+                    return Err(err(&self.ctx, pos, "tuple pattern arity mismatch"));
+                }
+                let mut cond = None;
+                for (p, v) in pats.iter().zip(vals) {
+                    cond = and_cond(cond, self.arm_cond(v, p, env, pos)?);
+                }
+                Ok(cond)
+            }
+            // `Some(p)` selects when `is_some` is set and `p` matches the payload;
+            // `None` selects when it is clear. (Exhaustiveness is checked in
+            // `functional`.)
             Pattern::Some(inner) => {
                 let Val::Option { is_some, payload } = scrut else {
                     return Err(err(&self.ctx, pos, "`Some(..)` pattern on a non-`Option`"));
                 };
-                self.bind(inner, (**payload).clone(), env, pos)?;
-                Ok(Some(typed(
+                let present = typed(
                     binary(
                         BinOp::Eq,
                         is_some.clone(),
                         typed(ir::ExprKind::Literal(1), Type::Uint(1)),
                     ),
                     Type::Uint(1),
-                )))
+                );
+                let inner = self.arm_cond(payload, inner, env, pos)?;
+                Ok(and_cond(Some(present), inner))
             }
             Pattern::None => {
                 let Val::Option { is_some, .. } = scrut else {
@@ -2964,7 +2979,7 @@ impl Elaborator<'_> {
                         .collect::<Result<_, _>>()?,
                 ))
             }
-            (ExprKind::StructLit { name, fields }, Ty::Struct(_)) => {
+            (ExprKind::StructLit { name, fields, .. }, Ty::Struct(_)) => {
                 let mut out = Vec::new();
                 for (fname, fty) in self.struct_fields(name, pos)? {
                     let init = fields
@@ -3603,6 +3618,15 @@ fn bits_for(max_value: u64) -> u32 {
 
 fn mask_u128(v: u128, w: u32) -> u64 {
     mask(u64::try_from(v).unwrap_or(0), w)
+}
+
+/// The conjunction of two optional arm conditions (`None` matches anything).
+fn and_cond(a: Option<ir::Expr>, b: Option<ir::Expr>) -> Option<ir::Expr> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(typed(binary(BinOp::And, a, b), Type::Uint(1))),
+        (a, None) => a,
+        (None, b) => b,
+    }
 }
 
 fn mux_expr(cond: &ir::Expr, t: &ir::Expr, e: &ir::Expr) -> ir::Expr {

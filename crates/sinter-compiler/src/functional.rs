@@ -24,6 +24,7 @@ use sinter_syntax::ast::{
 };
 
 use crate::error::CompileError;
+use crate::exhaustive;
 
 /// The widest scalar the current backends support (`u64`-bounded evaluation).
 const MAX_WIDTH: u32 = 64;
@@ -1160,7 +1161,7 @@ impl Checker<'_> {
                 method,
                 args,
             } => self.check_method(receiver, method, args, env, ctx, pos)?,
-            ExprKind::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields, .. } => {
                 self.check_struct_lit(name, fields, env, ctx, pos)?
             }
             ExprKind::Tuple(items) => {
@@ -2016,19 +2017,9 @@ impl Checker<'_> {
     ) -> Result<FType, CompileError> {
         let st = self.check_expr(scrutinee, env, None, ctx, pos)?;
         let mut result: Option<FType> = None;
-        let mut covered = std::collections::HashSet::new();
-        let mut has_wildcard = false;
         for arm in arms {
             let mut local = env.clone();
-            self.check_arm_pattern(
-                &arm.pattern,
-                &st,
-                &mut local,
-                &mut covered,
-                &mut has_wildcard,
-                ctx,
-                pos,
-            )?;
+            self.check_arm_pattern(&arm.pattern, &st, &mut local, ctx, pos)?;
             let exp = expected.or(result.as_ref());
             let bt = self.check_expr(&arm.body, &local, exp, ctx, pos)?;
             match &result {
@@ -2036,73 +2027,115 @@ impl Checker<'_> {
                 None => result = Some(bt),
             }
         }
-        // Exhaustiveness: an enum match must cover every variant or have a
-        // catch-all; a scalar match must have a catch-all.
-        if !has_wildcard {
-            match &st {
-                FType::Enum(e) => {
-                    if let Some(info) = self.tables.enums.get(e) {
-                        let missing: Vec<&str> = info
-                            .variants
-                            .iter()
-                            .map(String::as_str)
-                            .filter(|v| !covered.contains(*v))
-                            .collect();
-                        if !missing.is_empty() {
-                            return Err(sem(
-                                ctx,
-                                pos,
-                                format!(
-                                    "non-exhaustive match on `{e}`: missing {}",
-                                    missing.join(", ")
-                                ),
-                            ));
-                        }
-                    }
-                }
-                FType::Option(_) => {
-                    let missing: Vec<&str> = ["Some", "None"]
-                        .into_iter()
-                        .filter(|v| !covered.contains(*v))
-                        .collect();
-                    if !missing.is_empty() {
-                        return Err(sem(
-                            ctx,
-                            pos,
-                            format!(
-                                "non-exhaustive match on `{st}`: missing {}",
-                                missing.join(", ")
-                            ),
-                        ));
-                    }
-                }
-                _ => {
-                    return Err(sem(
-                        ctx,
-                        pos,
-                        format!("non-exhaustive match on `{st}`: add a `_` arm"),
-                    ))
-                }
-            }
+        let pats: Vec<exhaustive::Pat> = arms.iter().map(|a| to_pat(&a.pattern)).collect();
+        if let Some(witness) = exhaustive::missing(&pats, &self.shape(&st)) {
+            return Err(sem(ctx, pos, self.non_exhaustive(arms, &st, &witness)));
         }
         result.ok_or_else(|| sem(ctx, pos, "match has no arms".to_string()))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// The message for a `match` on `st` that misses `witness`. A flat match
+    /// (no tuple or nested patterns) lists everything it misses.
+    fn non_exhaustive(
+        &self,
+        arms: &[sinter_syntax::ast::MatchArm],
+        st: &FType,
+        witness: &str,
+    ) -> String {
+        let flat = arms.iter().all(|a| match &a.pattern {
+            Pattern::Tuple(_) => false,
+            Pattern::Some(inner) => matches!(**inner, Pattern::Wildcard | Pattern::Binding(_)),
+            _ => true,
+        });
+        let covered: Vec<&str> = arms
+            .iter()
+            .filter_map(|a| match &a.pattern {
+                Pattern::Path(segs) => segs.last().map(String::as_str),
+                Pattern::Some(_) => Some("Some"),
+                Pattern::None => Some("None"),
+                _ => None,
+            })
+            .collect();
+        match st {
+            FType::Enum(e) if flat => {
+                let missing: Vec<&str> = self
+                    .tables
+                    .enums
+                    .get(e)
+                    .map(|info| {
+                        info.variants
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|v| !covered.contains(v))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                format!("non-exhaustive match on `{e}`: missing {}", missing.join(", "))
+            }
+            FType::Option(_) if flat => {
+                let missing: Vec<&str> = ["Some", "None"]
+                    .into_iter()
+                    .filter(|v| !covered.contains(v))
+                    .collect();
+                format!("non-exhaustive match on `{st}`: missing {}", missing.join(", "))
+            }
+            _ if witness == "_" => format!("non-exhaustive match on `{st}`: add a `_` arm"),
+            _ => format!("non-exhaustive match on `{st}`: no arm matches `{witness}`; add an arm for it, or a `_` arm"),
+        }
+    }
+
+    /// What patterns can tell apart in a value of type `t`.
+    fn shape(&self, t: &FType) -> exhaustive::Shape {
+        use exhaustive::{Ctor, Shape};
+        let unit = |key: String, display: String| Ctor {
+            key,
+            display,
+            fields: Vec::new(),
+        };
+        match t {
+            FType::Uint(1) => Shape::Finite(vec![
+                unit("0".to_string(), "0".to_string()),
+                unit("1".to_string(), "1".to_string()),
+            ]),
+            FType::Enum(e) => match self.tables.enums.get(e) {
+                Some(info) => Shape::Finite(
+                    info.variants
+                        .iter()
+                        .map(|v| unit(v.clone(), format!("{e}::{v}")))
+                        .collect(),
+                ),
+                None => Shape::Infinite,
+            },
+            FType::Option(inner) => Shape::Finite(vec![
+                Ctor {
+                    key: "Some".to_string(),
+                    display: "Some".to_string(),
+                    fields: vec![self.shape(inner)],
+                },
+                unit("None".to_string(), "None".to_string()),
+            ]),
+            FType::Tuple(ts) => Shape::Finite(vec![Ctor {
+                key: "()".to_string(),
+                display: "()".to_string(),
+                fields: ts.iter().map(|t| self.shape(t)).collect(),
+            }]),
+            _ => Shape::Infinite,
+        }
+    }
+
+    /// Type-check a `match` arm's pattern against `st`, binding its names into
+    /// `env`. Patterns nest: `(Some(x), 0)`, `Some(Some(_))`.
     fn check_arm_pattern(
         &self,
         pat: &Pattern,
         st: &FType,
         env: &mut Env,
-        covered: &mut std::collections::HashSet<String>,
-        has_wildcard: &mut bool,
         ctx: &str,
         pos: Pos,
     ) -> Result<(), CompileError> {
         match pat {
-            Pattern::Wildcard => *has_wildcard = true,
+            Pattern::Wildcard => {}
             Pattern::Binding(name) => {
-                *has_wildcard = true;
                 env.insert(name.clone(), st.clone());
             }
             Pattern::Literal(v) => {
@@ -2117,9 +2150,6 @@ impl Checker<'_> {
             Pattern::Path(segs) => {
                 let pty = self.check_path(segs, ctx, pos)?;
                 self.expect(st, &pty, ctx, pos)?;
-                if let [_, variant] = segs.as_slice() {
-                    covered.insert(variant.clone());
-                }
             }
             Pattern::Tuple(pats) => {
                 let FType::Tuple(ts) = st else {
@@ -2133,12 +2163,9 @@ impl Checker<'_> {
                     return Err(sem(ctx, pos, "tuple pattern arity mismatch".to_string()));
                 }
                 for (p, t) in pats.iter().zip(ts) {
-                    self.check_arm_pattern(p, t, env, covered, has_wildcard, ctx, pos)?;
+                    self.check_arm_pattern(p, t, env, ctx, pos)?;
                 }
             }
-            // `Some(p)` / `None` cover one arm of an `Option` scrutinee — neither is
-            // a `_`-style wildcard for the whole match. `Some`'s payload pattern is
-            // an irrefutable binding (a refutable inner pattern is deferred).
             Pattern::Some(inner) => {
                 let FType::Option(payload) = st else {
                     return Err(sem(
@@ -2147,8 +2174,7 @@ impl Checker<'_> {
                         format!("`Some(..)` pattern against non-`Option` `{st}`"),
                     ));
                 };
-                self.bind_pattern(inner, payload, env, ctx, pos)?;
-                covered.insert("Some".to_string());
+                self.check_arm_pattern(inner, payload, env, ctx, pos)?;
             }
             Pattern::None => {
                 if !matches!(st, FType::Option(_)) {
@@ -2158,7 +2184,6 @@ impl Checker<'_> {
                         format!("`None` pattern against non-`Option` `{st}`"),
                     ));
                 }
-                covered.insert("None".to_string());
             }
         }
         Ok(())
@@ -2429,6 +2454,19 @@ fn literal_fits(v: u128, ty: &FType) -> bool {
 /// The bit width of the narrowest unsigned type holding `v` (at least 1).
 pub(crate) fn literal_bits(v: u128) -> u32 {
     (128 - v.leading_zeros()).max(1)
+}
+
+/// A `match` arm's pattern for the exhaustiveness check.
+fn to_pat(p: &Pattern) -> exhaustive::Pat {
+    use exhaustive::Pat;
+    match p {
+        Pattern::Wildcard | Pattern::Binding(_) => Pat::Wild,
+        Pattern::Literal(v) => Pat::Ctor(v.to_string(), Vec::new()),
+        Pattern::Path(segs) => Pat::Ctor(segs.last().cloned().unwrap_or_default(), Vec::new()),
+        Pattern::Tuple(ps) => Pat::Ctor("()".to_string(), ps.iter().map(to_pat).collect()),
+        Pattern::Some(inner) => Pat::Ctor("Some".to_string(), vec![to_pat(inner)]),
+        Pattern::None => Pat::Ctor("None".to_string(), Vec::new()),
+    }
 }
 
 fn sem(ctx: &str, pos: Pos, msg: impl Into<String>) -> CompileError {

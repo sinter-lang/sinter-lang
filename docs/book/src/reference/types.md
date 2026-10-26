@@ -100,7 +100,9 @@ apart with a `let` pattern:
 let (next, carry) = self.digit.step(cmd);
 ```
 
-There is no `.0` field access, and tuples can't be matched in a `match`.
+There is no `.0` field access. A `match` can take tuples apart too, which is a
+convenient way to decide on several values at once (see
+[`match`](expressions.md#match)).
 
 ## Arrays
 

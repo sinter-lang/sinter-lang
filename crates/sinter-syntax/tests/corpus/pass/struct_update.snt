@@ -1,0 +1,10 @@
+// Struct update: the fields not listed come from the base, which is last.
+struct P { a: u8 = 0, b: u8 = 0 }
+
+fn with_a(p: P, x: u8) -> P {
+    P { a: x, ..p }
+}
+
+fn copy(p: P) -> P {
+    P { ..p }
+}

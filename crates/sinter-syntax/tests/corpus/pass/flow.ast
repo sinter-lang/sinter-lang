@@ -143,6 +143,7 @@ Program {
                                                 },
                                             },
                                         ],
+                                        base: None,
                                     },
                                     Ident(
                                         "sample",

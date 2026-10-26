@@ -11,12 +11,22 @@ const DEPTH: u8 = 16;
 const IDLE_LEVEL: u1 = 1;
 pub const BAUD_DIV: u16 = 217;
 const ALIAS: u16 = BAUD_DIV;
+// Computed at compile time, with the usual width rules.
+const LAST: u8 = (DEPTH - 1) as u8 wrap;
+const FLAGGED: u8 = DEPTH | 0x80;
 ```
 
-A constant has a name, a type, and a value. The value must be a literal or
-the name of another constant; constants can't do arithmetic yet. A constant
-can be used anywhere an expression can, and as an array length, repeat count,
-memory depth, or bit-slice bound.
+A constant has a name, a type, and a value. An integer constant's value can
+be computed from literals and other constants with the operators (arithmetic,
+bitwise, shifts, comparisons, concatenation), casts, and bit slices. The
+compiler works it out when it compiles the design, typing the expression
+exactly as it would at run time, so it must have precisely the declared
+type: `DEPTH - 1` is a `u9`, and needs the cast to become a `u8`. Constants
+can refer to each other in any order, but not in a cycle. A fixed-point
+constant must be a literal.
+
+A constant can be used anywhere an expression can, and as an array length,
+repeat count, memory depth, or bit-slice bound.
 
 ## Functions
 
@@ -79,8 +89,15 @@ A struct value is built with every field named, in any order:
 Pixel { r: 31, g: 0, b: 0 }
 ```
 
-There is no shorthand for "the same as before except": write each field. A
-field is read with `.`: `p.r`.
+A **struct update** lists only the fields that change, and takes the rest
+from another value of the same struct, written last after `..`:
+
+```sinter,ignore
+Pixel { r: 31, ..p }      // p, with `r` replaced
+```
+
+The base is any expression (often `self`) and is computed once. A field is
+read with `.`: `p.r`.
 
 ## Enums
 
@@ -136,10 +153,30 @@ An `impl` block defines methods on a struct. A method's first parameter is
 `self.edge.rising(x)`. Methods, like functions, are pure and inlined: `step`
 doesn't change `self`, it returns a new `Edge`.
 
-An `impl` must be in the same module as its struct. Every method must take
-`self`; functions that don't belong at module level. One method may be marked
-`#[clock]`, which makes it the design's clock root (see
-[State and the clock](state.md)).
+Inside an `impl`, `Self` is another name for the struct, usable as a type and
+in struct values:
+
+```sinter
+struct Counter {
+    pub n: u8 = 0,
+}
+
+impl Counter {
+    fn reset(self) -> Self {
+        Self { n: 0 }
+    }
+
+    #[clock(domain = sys)]
+    fn tick(self, clear: u1) -> Self {
+        if clear == 1 { self.reset() } else { Self { n: (self.n + 1) as u8 wrap } }
+    }
+}
+```
+
+An `impl` is for a struct (enums have no methods), and must be in the same
+module as its struct. Every method must take `self`; functions that don't
+belong at module level. One method may be marked `#[clock]`, which makes it
+the design's clock root (see [State and the clock](state.md)).
 
 ## Modules
 

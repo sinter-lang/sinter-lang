@@ -583,11 +583,13 @@ fn parse_impl(pair: Pair<Rule>) -> Result<ImplItem, ParseError> {
             other => return Err(unexpected(other, "impl")),
         }
     }
-    Ok(ImplItem {
+    let mut im = ImplItem {
         type_name,
         methods,
         pos,
-    })
+    };
+    crate::self_ty::expand(&mut im);
+    Ok(im)
 }
 
 fn parse_fn(pair: Pair<Rule>) -> Result<Func, ParseError> {
@@ -1103,6 +1105,7 @@ fn parse_struct_lit(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     let pos = pos_of(&pair);
     let mut name = String::new();
     let mut fields = Vec::new();
+    let mut base = None;
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::ident => name = inner.as_str().to_string(),
@@ -1112,10 +1115,14 @@ fn parse_struct_lit(pair: Pair<Rule>) -> Result<Expr, ParseError> {
                 let value = parse_expr(next_pair(&mut fi, "field value")?)?;
                 fields.push(FieldInit { name: fname, value });
             }
+            Rule::f_struct_base => {
+                let mut bi = inner.into_inner();
+                base = Some(Box::new(parse_expr(next_pair(&mut bi, "struct base")?)?));
+            }
             other => return Err(unexpected(other, "struct literal")),
         }
     }
-    Ok(Expr::new(ExprKind::StructLit { name, fields }, pos))
+    Ok(Expr::new(ExprKind::StructLit { name, fields, base }, pos))
 }
 
 fn parse_fpath(pair: Pair<Rule>) -> Result<Expr, ParseError> {

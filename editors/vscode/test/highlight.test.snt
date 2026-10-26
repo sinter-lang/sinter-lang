@@ -38,3 +38,7 @@ fn bump(self, x: i16) -> Option<u8> {
 //                                         ^^ variable.other.enummember.sinter
 //                                                     ^ entity.name.function.call.sinter
 }
+
+fn same(self) -> Self { Self { n: 0, ..self } }
+//               ^^^^ entity.name.type.self.sinter
+//                      ^^^^ entity.name.type.self.sinter

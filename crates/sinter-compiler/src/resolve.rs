@@ -630,12 +630,15 @@ impl Resolver {
                 self.rewrite_expr(hi, cur, locals, src)?;
                 self.rewrite_expr(lo, cur, locals, src)?;
             }
-            ExprKind::StructLit { name, fields } => {
+            ExprKind::StructLit { name, fields, base } => {
                 if let Some(canon) = self.scope_lookup(cur, name) {
                     *name = canon;
                 }
                 for f in fields {
                     self.rewrite_expr(&mut f.value, cur, locals, src)?;
+                }
+                if let Some(b) = base {
+                    self.rewrite_expr(b, cur, locals, src)?;
                 }
             }
             ExprKind::Tuple(es) | ExprKind::Array(es) => {

@@ -168,6 +168,80 @@ impl Expr {
     pub fn new(kind: ExprKind, pos: Pos) -> Self {
         Expr { kind, pos }
     }
+
+    /// Call `f` on each direct sub-expression, in source order. A block's
+    /// sub-expressions are its statements' expressions and its tail. Types
+    /// (and the expressions inside them, such as array lengths) aren't
+    /// visited.
+    pub fn for_each_child_mut(&mut self, f: &mut dyn FnMut(&mut Expr)) {
+        match &mut self.kind {
+            ExprKind::Unary { expr, .. }
+            | ExprKind::Some(expr)
+            | ExprKind::Try(expr)
+            | ExprKind::Field { base: expr, .. }
+            | ExprKind::Cast { expr, .. } => f(expr),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                f(lhs);
+                f(rhs);
+            }
+            ExprKind::If { cond, then, els } => {
+                f(cond);
+                f(then);
+                f(els);
+            }
+            ExprKind::ArrayRepeat { value, len } => {
+                f(value);
+                f(len);
+            }
+            ExprKind::Call { func, args } => {
+                f(func);
+                args.iter_mut().for_each(f);
+            }
+            ExprKind::MethodCall { receiver, args, .. } => {
+                f(receiver);
+                args.iter_mut().for_each(f);
+            }
+            ExprKind::Index { base, index } => {
+                f(base);
+                f(index);
+            }
+            ExprKind::Slice { base, hi, lo } => {
+                f(base);
+                f(hi);
+                f(lo);
+            }
+            ExprKind::StructLit { fields, base, .. } => {
+                fields.iter_mut().for_each(|fi| f(&mut fi.value));
+                if let Some(b) = base {
+                    f(b);
+                }
+            }
+            ExprKind::Tuple(items) | ExprKind::Array(items) => items.iter_mut().for_each(f),
+            ExprKind::Match { scrutinee, arms } => {
+                f(scrutinee);
+                arms.iter_mut().for_each(|a| f(&mut a.body));
+            }
+            ExprKind::Block(b) => {
+                for s in &mut b.stmts {
+                    match s {
+                        Stmt::Let { value, .. } => f(value),
+                        Stmt::Yield { value, .. } => {
+                            if let Some(v) = value {
+                                f(v);
+                            }
+                        }
+                        Stmt::Assert { cond, .. } => f(cond),
+                    }
+                }
+                f(&mut b.tail);
+            }
+            ExprKind::Literal(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Path(_)
+            | ExprKind::IncludeHex(_)
+            | ExprKind::None => {}
+        }
+    }
 }
 
 /// A synthesized expression, with no source position.
@@ -288,12 +362,16 @@ pub enum ExprKind {
         /// The low (least-significant) bit index, inclusive.
         lo: Box<Expr>,
     },
-    /// A struct literal `Name { field: value, ... }`.
+    /// A struct literal `Name { field: value, ... }`, optionally ending with
+    /// `..base` (struct update).
     StructLit {
         /// The struct type name.
         name: String,
         /// The field initializers, in source order.
         fields: Vec<FieldInit>,
+        /// The `..base` the unlisted fields come from. Expanded away by the
+        /// compiler before type checking (`struct_update`).
+        base: Option<Box<Expr>>,
     },
     /// A tuple `(a, b, ...)` (≥ 2 elements).
     Tuple(Vec<Expr>),

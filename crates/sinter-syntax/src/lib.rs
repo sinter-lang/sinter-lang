@@ -15,6 +15,7 @@
 pub mod ast;
 pub mod loader;
 pub mod parser;
+mod self_ty;
 
 pub use ast::{
     Attr, AttrArg, AttrValue, BinOp, Block, CastMode, CdcKind, ConstItem, Dir, EnumItem,

@@ -1,0 +1,13 @@
+// `Self` in an impl block names the implementing struct.
+struct Counter { n: u8 = 0 }
+
+impl Counter {
+    fn bump(self) -> Self {
+        Self { n: (self.n + 1) as u8 wrap }
+    }
+
+    fn same(self, other: Self) -> Self {
+        let s: Self = other;
+        s
+    }
+}

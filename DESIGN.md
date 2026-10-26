@@ -1882,6 +1882,10 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   reserved now and the implementation after 1.0 (§4.4, v0.6).
 - Memory is a distinct primitive type whose interface is a latency-contracted
   stateful instance (§6.9, MEM1).
+- Conveniences (v1.0.0-rc.1): struct update `S { a: x, ..base }`; `Self` in
+  `impl` blocks; integer `const`s folded from expressions over constants,
+  typed as at run time; tuple and nested `match` patterns with
+  usefulness-based exhaustiveness.
 
 **Open:** none that would change 1.0 syntax.
 

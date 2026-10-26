@@ -1,0 +1,160 @@
+Program {
+    items: [
+        Struct(
+            StructItem {
+                attrs: [],
+                vis: Private,
+                name: "P",
+                fields: [
+                    StructField {
+                        attrs: [],
+                        vis: Private,
+                        name: "a",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 2,
+                            col: 12,
+                        },
+                    },
+                    StructField {
+                        attrs: [],
+                        vis: Private,
+                        name: "b",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        default: Some(
+                            Literal(
+                                0,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 2,
+                            col: 23,
+                        },
+                    },
+                ],
+                pos: Pos {
+                    line: 2,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "with_a",
+                params: [
+                    Typed {
+                        name: "p",
+                        ty: Named(
+                            "P",
+                        ),
+                        pos: Pos {
+                            line: 4,
+                            col: 11,
+                        },
+                    },
+                    Typed {
+                        name: "x",
+                        ty: Scalar(
+                            Uint(
+                                8,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 4,
+                            col: 17,
+                        },
+                    },
+                ],
+                ret: Named(
+                    "P",
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: StructLit {
+                        name: "P",
+                        fields: [
+                            FieldInit {
+                                name: "a",
+                                value: Ident(
+                                    "x",
+                                ),
+                            },
+                        ],
+                        base: Some(
+                            Ident(
+                                "p",
+                            ),
+                        ),
+                    },
+                    pos: Pos {
+                        line: 4,
+                        col: 29,
+                    },
+                },
+                pos: Pos {
+                    line: 4,
+                    col: 1,
+                },
+            },
+        ),
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "copy",
+                params: [
+                    Typed {
+                        name: "p",
+                        ty: Named(
+                            "P",
+                        ),
+                        pos: Pos {
+                            line: 8,
+                            col: 9,
+                        },
+                    },
+                ],
+                ret: Named(
+                    "P",
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: StructLit {
+                        name: "P",
+                        fields: [],
+                        base: Some(
+                            Ident(
+                                "p",
+                            ),
+                        ),
+                    },
+                    pos: Pos {
+                        line: 8,
+                        col: 20,
+                    },
+                },
+                pos: Pos {
+                    line: 8,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

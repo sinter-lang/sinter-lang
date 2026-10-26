@@ -1,0 +1,9 @@
+// Tuple and nested patterns in `match` arms.
+fn pick(a: u1, o: Option<Option<u8>>) -> u8 {
+    match (a, o) {
+        (1, Some(Some(v))) => v,
+        (0, Some(None)) => 1,
+        (_, None) => 2,
+        _ => 3,
+    }
+}

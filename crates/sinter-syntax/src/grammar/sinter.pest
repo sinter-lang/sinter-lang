@@ -245,7 +245,10 @@ f_none = @{ "None" ~ !(ASCII_ALPHANUMERIC | "_") }
 f_if         = { "if" ~ f_expr ~ f_block ~ "else" ~ (f_if | f_block) }
 f_match      = { "match" ~ f_expr ~ "{" ~ (f_match_arm ~ ("," ~ f_match_arm)* ~ ","?)? ~ "}" }
 f_match_arm  = { f_pattern ~ "=>" ~ f_expr }
-f_struct_lit = { ident ~ "{" ~ f_field_init ~ ("," ~ f_field_init)* ~ ","? ~ "}" }
+// `S { a: x, ..base }`: the fields not listed come from `base`. The base is
+// last; `S { ..base }` alone is allowed too.
+f_struct_lit  = { ident ~ "{" ~ ((f_field_init ~ ("," ~ f_field_init)* ~ ("," ~ f_struct_base)? ~ ","?) | f_struct_base) ~ "}" }
+f_struct_base = { ".." ~ f_expr }
 f_field_init = { ident ~ ":" ~ !":" ~ f_expr }
 f_path       = { ident ~ ("::" ~ ident)+ }
 // A parenthesized group (one element) or a tuple (two or more).

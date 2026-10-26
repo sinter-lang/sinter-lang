@@ -71,10 +71,12 @@ reset, `rst_n`. In simulation, cycle 0 starts from the reset state.
 
 The value the clock root returns is the next state, so **each register gets
 exactly one next value per cycle**. There is no way to assign a register in
-two places, or to forget one: a struct value must name every field.
+two places, or to forget one: a struct value names every field, or says where
+the rest come from with `..`.
 
 To hold a register, give it its current value (`level: self.level`). To hold
-everything, return `self`.
+everything, return `self`. To change a few fields and hold the rest, use a
+struct update: `Top { count: n, ..self }`.
 
 A state struct can contain other state structs, as `Top` contains a
 `Debounce`. A method on the inner struct computes *its* next state, and that

@@ -209,20 +209,56 @@ match op {
 
 `match` compares a value against patterns, top to bottom, and evaluates the
 first arm that matches. Arms are separated by commas, and all arms must have
-the same type. The scrutinee can be an integer, an enum, or an `Option`, and
-an arm's pattern can be:
+the same type. The scrutinee can be an integer, an enum, an `Option`, or a
+tuple of these, and an arm's pattern can be:
 
 | Pattern | Matches |
 |---|---|
 | `3`, `0x1F` | that integer |
 | `Op::Add` | that enum variant |
-| `Some(v)`, `Some(_)`, `None` | an `Option` (see [Option](option.md)) |
+| `Some(p)`, `None` | an `Option` whose value matches `p` (see [Option](option.md)) |
+| `(p, q)` | a tuple whose elements match `p` and `q` |
 | `name` | anything, binding it to `name` |
 | `_` | anything |
 
-A `match` must be **exhaustive**: an enum `match` lists every variant or ends
-with `_`, an integer `match` ends with `_` (or a binding), and an `Option`
-`match` covers both `Some` and `None`.
+Patterns nest, so one `match` can decide on several values:
+
+```sinter
+~enum Op { Add, Sub }
+fn apply(op: Op, arg: Option<u8>, x: u8) -> u8 {
+    match (op, arg) {
+        (Op::Add, Some(v)) => (v + x) as u8 wrap,
+        (Op::Sub, Some(v)) => (v - x) as u8 wrap,
+        (_, None) => x,
+    }
+}
+~struct T { pub v: u8 = 0 }
+~impl T { #[clock(domain = sys)] fn tick(self, op: Op, a: Option<u8>, x: u8) -> T { T { v: apply(op, a, x) } } }
+```
+
+A `match` must be **exhaustive**: some arm must match every possible value.
+Enum variants, `Some` / `None`, and the values 0 and 1 of a `u1` can each be
+listed exhaustively; any other integer needs a `_` arm (or a binding). When
+an arm is missing, the error shows a value that no arm matches:
+
+```sinter,fail
+~enum Op { Add, Sub }
+fn apply(op: Op, arg: Option<u8>, x: u8) -> u8 {
+    match (op, arg) {
+        (Op::Add, Some(v)) => (v + x) as u8 wrap,
+        (_, None) => x,
+    }
+}
+~struct T { pub v: u8 = 0 }
+~impl T { #[clock(domain = sys)] fn tick(self, op: Op, a: Option<u8>, x: u8) -> T { T { v: apply(op, a, x) } } }
+```
+
+```text
+error: non-exhaustive match on `(Op, Option<u8>)`: no arm matches `(Op::Sub, Some(_))`
+```
+
+In hardware, each arm's pattern is a comparison on the bits it inspects, and
+the arms form a priority multiplexer.
 
 ## Calls and methods
 

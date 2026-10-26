@@ -1,0 +1,123 @@
+Program {
+    items: [
+        Func(
+            Func {
+                attrs: [],
+                vis: Private,
+                color: Comb,
+                name: "pick",
+                params: [
+                    Typed {
+                        name: "a",
+                        ty: Scalar(
+                            Uint(
+                                1,
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 2,
+                            col: 9,
+                        },
+                    },
+                    Typed {
+                        name: "o",
+                        ty: Option(
+                            Option(
+                                Scalar(
+                                    Uint(
+                                        8,
+                                    ),
+                                ),
+                            ),
+                        ),
+                        pos: Pos {
+                            line: 2,
+                            col: 16,
+                        },
+                    },
+                ],
+                ret: Scalar(
+                    Uint(
+                        8,
+                    ),
+                ),
+                body: Block {
+                    stmts: [],
+                    tail: Match {
+                        scrutinee: Tuple(
+                            [
+                                Ident(
+                                    "a",
+                                ),
+                                Ident(
+                                    "o",
+                                ),
+                            ],
+                        ),
+                        arms: [
+                            MatchArm {
+                                pattern: Tuple(
+                                    [
+                                        Literal(
+                                            1,
+                                        ),
+                                        Some(
+                                            Some(
+                                                Binding(
+                                                    "v",
+                                                ),
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                                body: Ident(
+                                    "v",
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Tuple(
+                                    [
+                                        Literal(
+                                            0,
+                                        ),
+                                        Some(
+                                            None,
+                                        ),
+                                    ],
+                                ),
+                                body: Literal(
+                                    1,
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Tuple(
+                                    [
+                                        Wildcard,
+                                        None,
+                                    ],
+                                ),
+                                body: Literal(
+                                    2,
+                                ),
+                            },
+                            MatchArm {
+                                pattern: Wildcard,
+                                body: Literal(
+                                    3,
+                                ),
+                            },
+                        ],
+                    },
+                    pos: Pos {
+                        line: 2,
+                        col: 45,
+                    },
+                },
+                pos: Pos {
+                    line: 2,
+                    col: 1,
+                },
+            },
+        ),
+    ],
+}

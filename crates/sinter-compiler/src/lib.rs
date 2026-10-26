@@ -15,9 +15,11 @@
 pub mod board;
 pub mod cdc_desugar;
 pub mod channel_desugar;
+pub mod const_fold;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
+mod exhaustive;
 pub mod fault_latch;
 pub mod foreign;
 pub mod functional;
@@ -32,6 +34,7 @@ pub mod rust_sim;
 pub mod sim;
 mod sim_runtime;
 pub mod stimulus;
+pub mod struct_update;
 pub mod surface;
 pub mod vcd;
 pub mod verilator;
@@ -115,6 +118,8 @@ fn compile_program(
     surface::check_attributes(&program)?;
     surface::check_pub_internal_state(&program)?;
     let mut program = program;
+    struct_update::expand(&mut program)?;
+    const_fold::fold(&mut program)?;
     include_expand::expand_includes(&mut program, base)?;
     // Lower channel fields (`fifo`/`ring`/`flow`) to synthesized struct + impl
     // (DESIGN §9.8) before the staged-color desugars, so they see only ordinary

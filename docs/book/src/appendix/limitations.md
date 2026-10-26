@@ -8,12 +8,8 @@ What Sinter doesn't do yet, gathered in one place. Most of these are planned.
 - No division or remainder operator.
 - Enum variants carry no data, and there are no user-defined generic types.
 - Enum encodings are binary, one-hot, or explicit; no Gray or Johnson codes.
-- `match` patterns can't be tuples or nested (`Some(Some(x))`).
-- Constants are literals or other constants; constant arithmetic isn't
-  supported.
-- Struct values must list every field; there is no update syntax
-  (`..self`).
-- There is no `Self` type: write the struct's name.
+- Fixed-point constants must be literals (integer constants can be
+  computed).
 - `impl` blocks are for structs, and every method takes `self`: there are no
   enum methods or associated functions.
 - `debug_assert!` behaves exactly like `assert!`.

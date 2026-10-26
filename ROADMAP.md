@@ -183,7 +183,7 @@ nothing goes to crates.io.
   - [x] A `multiplex fn` waits in phase 0 until `in_valid` is 1 (it ignored
         `in_valid` and free-ran).
   - [x] `sinter sim | head` exits quietly instead of panicking.
-- [ ] **Ergonomics:** struct update `S { a: x, ..base }`; `Self` in `impl`
+- [x] **Ergonomics:** struct update `S { a: x, ..base }`; `Self` in `impl`
       blocks; constant arithmetic (`const` values and array lengths from
       expressions over constants); tuple and nested patterns in `match`.
 - [ ] **Hierarchy:** a `#[module]` struct becomes its own Verilog module,

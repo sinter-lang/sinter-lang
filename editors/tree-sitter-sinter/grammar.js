@@ -334,12 +334,22 @@ module.exports = grammar({
     some_expression: $ => seq('Some', '(', $._expression, optional(','), ')'),
     none: _ => 'None',
 
+    // `S { a: x, ..base }`: the base is last, and may stand alone.
     struct_expression: $ => seq(
       field('name', alias($.identifier, $.type_identifier)),
       '{',
-      commaSep1($.field_initializer),
+      choice(
+        seq(
+          $.field_initializer,
+          repeat(seq(',', $.field_initializer)),
+          optional(seq(',', $.struct_base)),
+          optional(','),
+        ),
+        $.struct_base,
+      ),
       '}',
     ),
+    struct_base: $ => seq('..', field('value', $._expression)),
     field_initializer: $ => seq(
       field('field', alias($.identifier, $.field_identifier)),
       ':',

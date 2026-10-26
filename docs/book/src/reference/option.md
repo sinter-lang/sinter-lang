@@ -34,7 +34,8 @@ impl Top {
 - `match` takes an option apart. `Some(v)` binds the payload to `v`;
   `Some(_)` matches any present value. A `match` must cover both `Some` and
   `None` (or end with `_`).
-- Patterns don't nest: write `Some(v)`, not `Some(Some(v))`.
+- Patterns nest: `Some(Some(v))` matches an `Option<Option<T>>` holding a
+  value, and `(Some(a), Some(b))` two options that both hold one.
 - `Option` values can't be compared with `==`; use `match`.
 
 An `Option` field with no reset value resets to `None`. In the generated

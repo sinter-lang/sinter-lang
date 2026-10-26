@@ -10,6 +10,22 @@ minor release (`0.x`) may change the language or CLI incompatibly. See
 A version to build a real project with before 1.0 is frozen. Not published
 to crates.io.
 
+### Added
+
+- **Struct update**: `S { a: x, ..base }` takes the fields not listed from
+  `base`, so holding most of a state struct is `Top { n: n, ..self }`.
+- **`Self`** inside an `impl` names the struct, as a type and in struct
+  values.
+- **Constant arithmetic**: an integer `const` can be computed from literals
+  and other constants with operators, casts, and bit slices, typed exactly as
+  at run time, and declared in any order. Computed constants work as array
+  lengths, memory depths, and slice bounds.
+- **Tuple and nested `match` patterns**: `match (op, arg) { (Op::Add,
+  Some(v)) => .., (_, None) => .. }`, `Some(Some(x))`. Exhaustiveness is
+  checked properly (all four `(u1, u1)` pairs need no `_` arm), and a
+  non-exhaustive match names a value no arm matches.
+- `examples/fn_ergonomics.snt` puts all four through the oracle.
+
 ### Changed (breaking)
 
 - **Unknown attributes are errors**, as are attributes in the wrong place

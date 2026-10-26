@@ -93,6 +93,7 @@ Program {
                                                 },
                                             },
                                         ],
+                                        base: None,
                                     },
                                     Cast {
                                         expr: Binary {

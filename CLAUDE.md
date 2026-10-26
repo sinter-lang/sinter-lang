@@ -78,19 +78,24 @@ backends. The stages, in order:
 1. **parse** (`sinter-syntax`) → `Program`; multi-file projects first go through
    `load_project` + `resolve` (cross-module names + visibility) into one flat
    program.
-2. **`include_expand`** — replace `include_hex!("f.hex")` with an array literal
+2. **checks on the source + early rewrites** — `surface` (every attribute is
+   known and placed right; no clock-root `pub` field holds compiler-internal
+   state), `struct_update` (expand `S { .., ..base }`), and `const_fold`
+   (integer `const`s become literals). `Self` is already gone: the parser
+   replaces it inside each `impl` (`sinter-syntax/src/self_ty.rs`).
+3. **`include_expand`** — replace `include_hex!("f.hex")` with an array literal
    (compile-time file read, resolved relative to the source `.snt`).
-3. **staged-color desugars** — `pipeline_desugar` then `multiplex_desugar` rewrite
+4. **staged-color desugars** — `pipeline_desugar` then `multiplex_desugar` rewrite
    `pipeline fn` / `multiplex fn` into a synthesized instance `struct` + `advance`
    method, so the rest of the pipeline treats them as ordinary functional items.
-4. **type checking** — `functional::check_functional`.
-5. **`elaborate`** — lower the `#[clock]` transition root to an `ir::Module` by
+5. **type checking** — `functional::check_functional`.
+6. **`elaborate`** — lower the `#[clock]` transition root to an `ir::Module` by
    symbolic inlining + SROA (scalar-replacement of aggregates). Memories/ROMs are
    held opaque (`ir::Mem`, never SROA-flattened). Each non-trivial `let` / call
    argument becomes a named `ir::Let` wire (`Elaborator::share`), so values are
    not copied into every use; `ir::Module::lets` stays topologically ordered.
    The Verilog backend emits only the wires hardware reads (`live_wires`).
-6. **`ir_cse::share_muls`** (multiplex only) — collapse the desugar's shared,
+7. **`ir_cse::share_muls`** (multiplex only) — collapse the desugar's shared,
    SROA-duplicated multiply into one physical multiplier, inserting each shared
    wire just before its first reader.
 

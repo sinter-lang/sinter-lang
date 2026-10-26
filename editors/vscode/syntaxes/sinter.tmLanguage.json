@@ -139,6 +139,10 @@
           "match": "\\bself\\b"
         },
         {
+          "name": "entity.name.type.self.sinter",
+          "match": "\\bSelf\\b"
+        },
+        {
           "name": "constant.language.sinter",
           "match": "\\b(Some|None)\\b"
         }

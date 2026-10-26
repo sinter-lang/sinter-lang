@@ -158,6 +158,7 @@ Program {
                                         },
                                     },
                                 ],
+                                base: None,
                             },
                             pos: Pos {
                                 line: 12,
@@ -249,6 +250,7 @@ Program {
                                         },
                                     },
                                 ],
+                                base: None,
                             },
                             pos: Pos {
                                 line: 16,

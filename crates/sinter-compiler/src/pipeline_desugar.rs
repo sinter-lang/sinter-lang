@@ -502,6 +502,7 @@ impl Plan {
         let next_struct = ExprKind::StructLit {
             name: struct_name.to_string(),
             fields: sfields,
+            base: None,
         };
         let payload = self.rewrite(&self.tail, self.latency);
         let valid = self_field(&format!("v{}", self.latency - 1));
@@ -614,7 +615,8 @@ impl Plan {
                 hi: Box::new(self.rewrite(hi, seg)),
                 lo: Box::new(self.rewrite(lo, seg)),
             }),
-            ExprKind::StructLit { name, fields } => Expr::from(ExprKind::StructLit {
+            ExprKind::StructLit { name, fields, .. } => Expr::from(ExprKind::StructLit {
+                base: None,
                 name: name.clone(),
                 fields: fields
                     .iter()

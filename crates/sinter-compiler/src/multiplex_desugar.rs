@@ -373,6 +373,7 @@ fn synth_impl(plan: &Plan, struct_name: &str) -> ImplItem {
     let next_struct = ExprKind::StructLit {
         name: struct_name.to_string(),
         fields: sfields,
+        base: None,
     };
     let valid = eq_ph(n); // valid at the final phase
     let tail = ExprKind::Tuple(vec![Expr::from(next_struct), payload, valid]);
@@ -511,7 +512,8 @@ fn mux_rewrite(plan: &Plan, e: &Expr, seg: usize, muls: &mut Vec<(usize, Expr, E
             hi: Box::new(mux_rewrite(plan, hi, seg, muls)),
             lo: Box::new(mux_rewrite(plan, lo, seg, muls)),
         }),
-        ExprKind::StructLit { name, fields } => Expr::from(ExprKind::StructLit {
+        ExprKind::StructLit { name, fields, .. } => Expr::from(ExprKind::StructLit {
+            base: None,
             name: name.clone(),
             fields: fields
                 .iter()

@@ -29,6 +29,7 @@
 (field_initializer field: (field_identifier) @property)
 (scoped_identifier (identifier) @type . (identifier) @constant .)
 (self) @variable.builtin
+((type_identifier) @type.builtin (#eq? @type.builtin "Self"))
 (none) @constant.builtin
 
 ; Attributes

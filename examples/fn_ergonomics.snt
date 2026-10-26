@@ -1,0 +1,53 @@
+// The v1.0.0-rc.1 conveniences, through the oracle: computed constants,
+// `Self`, struct update (`..self`), and tuple / nested `match` patterns.
+
+const STEPS: u8 = 6;
+// A constant computed from another, folded at compile time.
+const LAST: u8 = (STEPS - 1) as u8 wrap;
+const SLOTS: u3 = 1_u2 << 1;
+
+enum Op {
+    Add,
+    Sub,
+}
+
+struct Counter {
+    n: u8 = 0,
+    wraps: u8 = 0,
+}
+
+impl Counter {
+    // `Self` names the struct; `..self` keeps the fields not listed.
+    fn bump(self) -> Self {
+        if self.n == LAST {
+            Self { n: 0, wraps: (self.wraps + 1) as u8 wrap }
+        } else {
+            Self { n: (self.n + 1) as u8 wrap, ..self }
+        }
+    }
+}
+
+struct Top {
+    count: Counter,
+    pub last: [u8; SLOTS] = [0; SLOTS],
+    pub n: u8 = 0,
+    pub wraps: u8 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, go: u1, hold: u1, op: Op, arg: Option<Option<u8>>, x: u8) -> (Top, u8) {
+        let count = match (go, hold) {
+            (1, 0) => self.count.bump(),
+            (_, _) => self.count,
+        };
+        let value: u8 = match (op, arg) {
+            (Op::Add, Some(Some(v))) => (v + x) as u8 wrap,
+            (Op::Sub, Some(Some(v))) => (v - x) as u8 wrap,
+            (_, Some(None)) => x,
+            (_, None) => 0,
+        };
+        let next = Top { count: count, n: count.n, wraps: count.wraps, ..self };
+        (Top { last: [value, self.last[0]], ..next }, value)
+    }
+}
