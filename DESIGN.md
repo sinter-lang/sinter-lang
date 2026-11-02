@@ -969,8 +969,8 @@ Top { uart: uart, busy: o.busy, ... }
 - **Model state is private.** The model's registers exist only in
   simulation, so nothing outside the model may read them (for example,
   `self.uart.count` from the parent). Read the module's outputs instead.
-- **Verilog parameters.** `#(...)` overrides are deferred. EXT1 instantiates
-  the module with its default parameters.
+- **Verilog parameters.** `params(NAME = value, …)` gives `#(...)` overrides
+  (EXT2, §9.15); without it, the module gets its default parameters.
 
 **The oracle checks the model.** `src = "path.v"` gives the Verilog source,
 resolved relative to the `.snt` file. `sinter build` copies it next to the
@@ -1164,6 +1164,11 @@ be `PINMISSING`/`PINCONNECTEMPTY`), 1-bit taps are not bit-selected, and bits no
 sent to a pin are tied into a single `_unused`-named sink (exempt from
 `UNUSEDSIGNAL`). The wrapper rejects a path flattening to a reserved internal
 name (`rst_n`/`por_count`/…) and a physical pin bound twice.
+
+**ECP5 LPF (LPF1, §9.15).** `--constraints F.lpf` writes the same bindings as
+`LOCATE COMP "<port>" SITE "<pin>";`, plus `IOBUF PORT … IO_TYPE=<std>;` for a
+line with `io_type=<std>` and `FREQUENCY PORT "<clk>" <n> MHZ;` for a `clock`
+line with `freq=<n>MHz`.
 
 ---
 
@@ -1708,10 +1713,11 @@ that the oracle checks against the real Verilog (§6.15).
 | Phase | Scope | Done when |
 |---|---|---|
 | **EXT1** | ✅ String attribute values in the grammar (attribute keys may be keywords, for `module = …`). `#[verilog(module, src, clk, rst_n)]` on a state struct with one `step(self, ..) -> (Self, Out)` model method, using scalar ports only. A new IR `Instance` node carries the port connections and the model's flattened logic. The sim evaluates the model. The Verilog backend emits a named-port instance (`clk` / `rst_n` wired for stateful models) and leaves the model out. `sinter build` copies `src` beside the emitted SV, and the conformance harness adds it to the Verilator build. | An example that instantiates a small hand-written Verilog module, such as a registered adder, passes the oracle bit-for-bit. A deliberately wrong model fails it. |
-| **EXT2** | `#(...)` parameter overrides (`#[verilog(params(BAUD_DIV = 217))]`), port renaming, and aggregate ports flattened by the `docs/generated-verilog.md` rules. | A parameterized vendor primitive (for example an iCE40 `SB_MAC16` against `cells_sim.v`) passes the oracle. |
+| **EXT2** | `#(...)` parameter overrides (`#[verilog(params(BAUD_DIV = 217))]`) — scheduled before 1.0 in §9.15. | See §9.15. |
 
-Deferred: clock-generating modules (§6.7); inout / tristate ports; Rust-side
-models; `mem` / `rom` state inside a model.
+Deferred: port renaming and aggregate ports (flattened by the
+`docs/generated-verilog.md` rules); clock-generating modules (§6.7); inout /
+tristate ports; Rust-side models; `mem` / `rom` state inside a model.
 
 ### 9.14 Clock domains — milestone (CLK1–CLK4)
 
@@ -1728,6 +1734,28 @@ Several clocks in one design, with clock-domain crossings that are type-checked
 Deferred: clock gating, derived or related clocks (ratios, phases), PLL
 instantiation from Sinter, dual-clock `mem` as a user-visible type, and
 multi-domain `pipeline` / `multiplex` functions.
+
+### 9.15 Board and build controls — milestone (STOR1, LPF1, RST1, EXT2, DEF1, COSIM1)
+
+Requirements from **pico_gs2** (an ECP5 graphics pipeline written in Sinter),
+scheduled before 1.0. Each is additive: no existing design changes meaning.
+
+pico_gs2's triangle setup engine is a microcode executor: a fixed datapath
+(a pipelined shared multiplier, two register-file banks, an ALU) driven by a
+micro-word `rom`. The 40–70 setup steps are data in that ROM, **not** phases
+of a `multiplex fn`, so `multiplex fn` is not extended for it (no pipelined
+shared units, early exit, or memory access in staged functions). Its
+requirement for a faster `async_fifo` write side is parked until it is
+measured.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **STOR1** | `#[storage(regs \| lutram \| bram)]` on `mem` and `rom` fields (and `lutram` on a `fifo`, passed to its backing `mem`). A placement hint only: the Verilog array carries `(* ram_style = "logic" \| "distributed" \| "block" *)`, and the simulators are unchanged. A `lutram` memory deeper than 256 entries is rejected, so a hint can't silently eat the device. | `#[storage(lutram)]` on a 32 × 36 `mem<_, 32, 4>` maps to `TRELLIS_DPR16X4` and `bram` on a 1024 × 18 `rom` to one `DP16KD` under `synth_ecp5`; both pass the oracle |
+| **LPF1** | ECP5 constraints from the pin map. `sinter build --pins F.pins --constraints F.lpf \| F.pcf` picks the format from the extension (without `--constraints`, the PCF is written to the out dir as today). A `.pins` line may carry `io_type=<std>` (LPF `IOBUF PORT … IO_TYPE=`), and a `clock` line `freq=<n>MHz` (LPF `FREQUENCY PORT`). The frequency lives in the pin map, not `#[clock]`, because `period` is in abstract units (§6.7). PCF output ignores both, with a warning. | an LPF for `examples/` places and routes under `nextpnr-ecp5` with the stated frequency reported; the PCF path is byte-identical to before |
+| **RST1** | `#[no_reset]` on a state field: every register it flattens to (nested structs, arrays, `Option`s) takes its default value **at power-on only** (a Verilog `initial`, an FPGA configuration value) and ignores `rst_n`, in a reset-less `always_ff`. The simulators model the same: `new()` sets the value, `reset()` keeps it. Memories already have no reset (§9.6), so the attribute changes nothing there. Rejected on a field whose type holds a staged function, channel, CDC primitive, or `#[module]` / `#[verilog]` instance (their reset is part of their contract). CSV stimulus gains an optional `rst` column (1 = assert reset for that cycle), replayed by `sinter sim`, the generated crate's tests, and the Verilator harness. | a design with `#[no_reset]` datapath registers passes the oracle with resets asserted mid-run, its no-reset registers keep their values across them, and their flip-flops have no reset under `synth_ecp5` |
+| **EXT2** | `params(NAME = value, …)` on `#[verilog]`: integer or string literals, or integer `const` references (so DEF1 overrides flow into them), emitted as a named `#(.NAME(value))` override. The model must agree with the chosen parameters; the oracle checks it. | a parameterized module (for example a registered multiplier whose stage count is a parameter) passes the oracle at two parameter values, and a model that ignores the parameter fails it |
+| **DEF1** | Build-time constant overrides: `-D NAME=VALUE` (repeatable) on `check`, `build`, and `sim`, and `--defines F` (one `NAME = VALUE` per line, `#` comments). Only integer `pub const`s can be overridden, named by path from the root module (`N_MUL`, `setup::N_MUL`); the value must fit the constant's type, and an unknown name is an error. The override happens before `const_fold`, so the output is specialized and still plain Verilog. | `-D` changes a width and a loop bound in an example; both values pass the oracle; a bad name, a non-`pub` const, and an out-of-range value are rejected |
+| **COSIM1** | `sinter sim --cosim`: with the same random or CSV stimulus (and `expect.` columns), also emit the SystemVerilog and Verilator harness, build and run them (`verilator` from `PATH`, including foreign `src` files and `#[module]` children), and diff the two traces cycle by cycle. The first mismatch is reported (cycle, output, both values) and the exit code is non-zero. The runner moves from `tests/support/oracle.rs` into the compiler library so the oracle and the CLI share it. | the oracle uses the library runner; `--cosim` passes on every example and reports a deliberately broken foreign model |
 
 ---
 
@@ -1902,6 +1930,12 @@ version / build-manifest format (cf. the M5 build-system line in §9).
   `impl` blocks; integer `const`s folded from expressions over constants,
   typed as at run time; tuple and nested `match` patterns with
   usefulness-based exhaustiveness.
+- Board and build controls (§9.15): memory placement is a hint
+  (`#[storage]`), never a semantic change; `#[no_reset]` means power-on
+  initialization, never "don't care", so the oracle stays exact; build-time
+  parameters are overridden `pub const`s, so the Verilog stays specialized
+  (no user-defined generics); microcode engines are a datapath plus a `rom`,
+  not a long `multiplex fn`.
 
 **Open:** none that would change 1.0 syntax.
 
