@@ -49,7 +49,8 @@ the devcontainer, and CI (`just ci` reproduces the GitHub pipeline step for step
   `FUZZ_REGRESSIONS` in `conformance.rs`. The oracle's tool runners are shared
   in `tests/support/oracle.rs`.
 - `just verilog` — emit SystemVerilog for every example into `build/verilog/`
-  (git-ignored); `just board` emits the board-top wrapper + nextpnr PCF.
+  (git-ignored); `just board` emits the board-top wrapper + nextpnr PCF (or
+  an ECP5 LPF for a map with `io_type=` / `freq=`, LPF1).
 - `just book [serve]` — build the book into `build/book/` with the pinned
   mdBook. `cargo test` compiles every ```` ```sinter ```` block in it
   (`crates/sinter-compiler/tests/book.rs`, which documents the `~` hidden-line
@@ -61,7 +62,8 @@ The `sinter` CLI has three subcommands (a `.snt` path is compiled as the root of
 a possibly-multi-file project — sibling `mod`s are pulled in automatically):
 
 - `sinter check <file.snt>` — parse + type-check, report errors.
-- `sinter build <file.snt> --emit verilog|harness|rust|all [--out DIR] [--pins F.pins]`
+- `sinter build <file.snt> --emit verilog|harness|rust|all [--out DIR] [--pins F.pins
+  [--constraints F.pcf|F.lpf]]`
   — emit backend artifacts (default out dir `build/`); `rust` is a standalone
   simulator crate, `<out>/<module>-sim/` (`rust_sim.rs`, `docs/generated-rust.md`).
 - `sinter sim <file.snt> [--cycles N --seed S | --stimulus F.csv] [--trace

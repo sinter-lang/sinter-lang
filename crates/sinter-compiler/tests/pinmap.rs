@@ -73,7 +73,7 @@ fn unknown_direction_is_rejected() {
 
 #[test]
 fn too_few_tokens_is_rejected() {
-    reject("set_io 3 out", "needs `<pin#> <dir> <path> [low]`");
+    reject("set_io 3 out", "needs `<pin#> <dir> <path> [low]");
 }
 
 #[test]
@@ -87,4 +87,64 @@ fn unexpected_trailing_token_is_rejected() {
 #[test]
 fn clock_cannot_be_active_low() {
     reject("set_io 15 clock sys low", "cannot be marked `low`");
+}
+
+// --- LPF1: ECP5-only extras (DESIGN §9.15) ---------------------------------
+
+#[test]
+fn io_type_and_freq_are_parsed() {
+    let map = parse(
+        "set_io G2 clock sys io_type=LVCMOS33 freq=25MHz\n\
+         set_io R1 in btn.inc low io_type=LVCMOS25\n\
+         set_io B1 clock sys freq=12.5mhz",
+    )
+    .expect("parse");
+    let b = &map.bindings;
+    assert_eq!(b[0].io_type.as_deref(), Some("LVCMOS33"));
+    assert_eq!(b[0].freq_mhz.as_deref(), Some("25"));
+    assert!(b[1].active_low);
+    assert_eq!(b[1].io_type.as_deref(), Some("LVCMOS25"));
+    assert_eq!(b[1].freq_mhz, None);
+    assert_eq!(b[2].freq_mhz.as_deref(), Some("12.5"));
+}
+
+#[test]
+fn ecp5_example_pins_parse() {
+    let map = parse(include_str!("../../../examples/go_board_ecp5.pins")).expect("parse");
+    assert_eq!(map.bindings.len(), 17);
+    assert!(map
+        .bindings
+        .iter()
+        .all(|b| b.io_type.as_deref() == Some("LVCMOS33")));
+    assert_eq!(map.bindings[0].freq_mhz.as_deref(), Some("25"));
+}
+
+#[test]
+fn freq_only_on_a_clock_pin() {
+    reject(
+        "set_io R1 in btn.inc freq=25MHz",
+        "only a `clock` pin takes `freq=`",
+    );
+}
+
+#[test]
+fn bad_freq_is_rejected() {
+    for f in ["25", "MHz", "0MHz", "1.2.3MHz", ".5MHz", "25kHz", "-5MHz"] {
+        reject(
+            &format!("set_io G2 clock sys freq={f}"),
+            "`freq=` takes a frequency in MHz",
+        );
+    }
+}
+
+#[test]
+fn bad_io_type_is_rejected() {
+    reject(
+        "set_io R1 in btn.inc io_type=",
+        "`io_type=` takes an I/O standard",
+    );
+    reject(
+        "set_io R1 in btn.inc io_type=LV\"CMOS",
+        "`io_type=` takes an I/O standard",
+    );
 }

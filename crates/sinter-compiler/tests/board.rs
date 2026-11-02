@@ -220,6 +220,114 @@ fn go_board_wrapper_and_pcf_generate() {
     assert!(pcf.contains("set_io seg_1_6 7"));
 }
 
+// --- LPF1: ECP5 constraints (DESIGN §9.15) ---------------------------------
+
+const ECP5_PINS: &str = include_str!("../../../examples/go_board_ecp5.pins");
+
+#[test]
+fn lpf_locates_every_port_with_its_io_type_and_clock_frequency() {
+    let board = emit(ECP5_PINS).expect("generate");
+    let lpf = &board.lpf;
+    assert!(
+        lpf.starts_with("# Auto-generated ECP5 LPF from `test.pins`."),
+        "{lpf}"
+    );
+    for line in [
+        "LOCATE COMP \"clk\" SITE \"G2\";  # sys clock",
+        "IOBUF PORT \"clk\" IO_TYPE=LVCMOS33;",
+        "FREQUENCY PORT \"clk\" 25 MHZ;",
+        "LOCATE COMP \"btn_inc\" SITE \"R1\";  # btn.inc",
+        "LOCATE COMP \"seg_1_6\" SITE \"C7\";  # seg[1][6], active-low",
+        "IOBUF PORT \"seg_1_6\" IO_TYPE=LVCMOS33;",
+    ] {
+        assert!(lpf.contains(line), "missing `{line}`:\n{lpf}");
+    }
+    assert_eq!(lpf.matches("LOCATE COMP").count(), 17, "{lpf}");
+    assert_eq!(lpf.matches("FREQUENCY").count(), 1, "{lpf}");
+    assert!(board.lpf_only);
+}
+
+#[test]
+fn a_plain_pin_map_needs_no_lpf_and_keeps_its_pcf() {
+    let board = emit(GO_BOARD_PINS).expect("generate");
+    assert!(!board.lpf_only);
+    assert!(!board.lpf.contains("IOBUF") && !board.lpf.contains("FREQUENCY"));
+    // The PCF never carries LPF-only settings: the ECP5 map's is the same
+    // `set_io` list as a map without them.
+    let ecp5 = emit(ECP5_PINS).expect("generate");
+    assert!(!ecp5.pcf.contains("LVCMOS") && !ecp5.pcf.contains("MHZ"));
+    assert!(
+        ecp5.pcf.contains("set_io clk G2  # sys clock"),
+        "{}",
+        ecp5.pcf
+    );
+}
+
+/// With Yosys and nextpnr-ecp5 present, the ECP5 wrapper synthesizes, and
+/// places and routes on an LFE5U-25F against its LPF, with the clock
+/// constrained to the pin map's 25 MHz.
+#[test]
+fn ecp5_wrapper_places_and_routes_against_its_lpf() {
+    let have = tool_available("yosys") && tool_available("nextpnr-ecp5");
+    if require_tools() {
+        assert!(
+            have,
+            "SINTER_REQUIRE_TOOLS=1 but yosys or nextpnr-ecp5 is missing"
+        );
+    }
+    if !have {
+        eprintln!("skipping ECP5 place-and-route: yosys or nextpnr-ecp5 not found");
+        return;
+    }
+    let module = go_board_module();
+    let map = PinMap::parse(ECP5_PINS, "go_board_ecp5.pins").expect("parse pins");
+    let board = emit_board(&module, &map, "go_board_ecp5").expect("emit board");
+
+    let dir = std::env::temp_dir().join("sinter-board-ecp5");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create workdir");
+    let inner = dir.join(format!("{}.sv", module.name));
+    let wrapper = dir.join("go_board_ecp5.sv");
+    let lpf = dir.join("go_board_ecp5.lpf");
+    let json = dir.join("top.json");
+    std::fs::write(&inner, verilog::emit_module(&module)).expect("write inner");
+    std::fs::write(&wrapper, &board.verilog).expect("write wrapper");
+    std::fs::write(&lpf, &board.lpf).expect("write lpf");
+
+    let synth = Command::new("yosys")
+        .arg("-q")
+        .arg("-p")
+        .arg(format!(
+            "read_verilog -sv {} {}; synth_ecp5 -top go_board_ecp5 -json {}",
+            inner.display(),
+            wrapper.display(),
+            json.display()
+        ))
+        .output()
+        .expect("spawn yosys");
+    assert!(
+        synth.status.success(),
+        "yosys failed:\n{}",
+        String::from_utf8_lossy(&synth.stderr)
+    );
+    let pnr = Command::new("nextpnr-ecp5")
+        .args(["--25k", "--package", "CABGA381", "--json"])
+        .arg(&json)
+        .arg("--lpf")
+        .arg(&lpf)
+        .arg("--textcfg")
+        .arg(dir.join("top.config"))
+        .output()
+        .expect("spawn nextpnr-ecp5");
+    let log = String::from_utf8_lossy(&pnr.stderr);
+    assert!(pnr.status.success(), "nextpnr-ecp5 failed:\n{log}");
+    assert!(
+        log.contains("constraining clock net 'clk' to 25.00 MHz"),
+        "the LPF's FREQUENCY was not applied:\n{log}"
+    );
+    assert!(log.contains("(PASS at 25.00 MHz)"), "timing:\n{log}");
+}
+
 #[test]
 fn clock_domain_mismatch_is_rejected() {
     reject(

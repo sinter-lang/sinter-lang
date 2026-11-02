@@ -1,4 +1,5 @@
-//! Lower a pin map (DESIGN §7.6) to a board-top Verilog wrapper + nextpnr PCF.
+//! Lower a pin map (DESIGN §7.6) to a board-top Verilog wrapper + its pin
+//! constraints: an iCE40 PCF and an ECP5 LPF (LPF1, DESIGN §9.15).
 //!
 //! The functional surface has no top-level Verilog ports (DESIGN §2.1): the
 //! elaborated [`Module`] exposes its inputs plus *every* leaf register as an
@@ -10,7 +11,7 @@
 //! 2. synthesizes a wrapper module with one 1-bit port per pin, a power-on reset
 //!    (the map has no reset pin), an instance of the inner module wired up, and
 //!    polarity inversion for `low` (active-low) signals; and
-//! 3. emits the matching nextpnr PCF naming the generated wrapper ports.
+//! 3. emits the matching PCF and LPF naming the generated wrapper ports.
 //!
 //! The emitted Verilog conforms to the `claude-skill-verilog` standard: every
 //! inner port is connected by name to a real net (so there is neither
@@ -43,8 +44,13 @@ pub struct Board {
     pub module_name: String,
     /// The wrapper SystemVerilog source.
     pub verilog: String,
-    /// The nextpnr physical-constraints file.
+    /// The nextpnr physical-constraints file (iCE40).
     pub pcf: String,
+    /// The ECP5 logical preference file (LPF1, DESIGN §9.15).
+    pub lpf: String,
+    /// Whether the pin map sets anything only an LPF carries (`io_type=` or
+    /// `freq=`), which a PCF drops.
+    pub lpf_only: bool,
 }
 
 /// One pin tap of an observation output: `(bit, wrapper port, invert)`.
@@ -140,6 +146,8 @@ pub fn emit_board(
                         dir: Dir::In,
                         pin: b.pin.clone(),
                         comment: format!("{} clock", b.path),
+                        io_type: b.io_type.clone(),
+                        freq_mhz: b.freq_mhz.clone(),
                     },
                 )?;
                 clock_port = Some(name);
@@ -160,6 +168,8 @@ pub fn emit_board(
                         dir: Dir::In,
                         pin: b.pin.clone(),
                         comment: pin_comment(&b.path, b.active_low),
+                        io_type: b.io_type.clone(),
+                        freq_mhz: b.freq_mhz.clone(),
                     },
                 )?;
                 in_drives
@@ -183,6 +193,8 @@ pub fn emit_board(
                         dir: Dir::Out,
                         pin: b.pin.clone(),
                         comment: pin_comment(&b.path, b.active_low),
+                        io_type: b.io_type.clone(),
+                        freq_mhz: b.freq_mhz.clone(),
                     },
                 )?;
                 let entry = out_taps.entry(port).or_insert((width, Vec::new()));
@@ -275,11 +287,17 @@ pub fn emit_board(
         &out_taps,
     );
     let pcf = emit_pcf(&module_name, src, &wrap_ports);
+    let lpf = emit_lpf(&module_name, src, &wrap_ports);
+    let lpf_only = wrap_ports
+        .iter()
+        .any(|p| p.io_type.is_some() || p.freq_mhz.is_some());
 
     Ok(Board {
         module_name,
         verilog,
         pcf,
+        lpf,
+        lpf_only,
     })
 }
 
@@ -289,6 +307,10 @@ struct WrapPort {
     dir: Dir,
     pin: String,
     comment: String,
+    /// The I/O standard, for the LPF only.
+    io_type: Option<String>,
+    /// A clock pin's frequency in MHz, for the LPF only.
+    freq_mhz: Option<String>,
 }
 
 fn register_port(
@@ -462,8 +484,8 @@ fn emit_verilog(
     let _ = writeln!(
         out,
         "// Auto-generated board wrapper. Do not edit by hand.\n\
-         // Binds module `{}` (clock domain `{}`) to physical pins; emit the\n\
-         // matching `{wrapper}.pcf` for nextpnr.",
+         // Binds module `{}` (clock domain `{}`) to physical pins; use the\n\
+         // matching constraints (`{wrapper}.pcf` or `.lpf`) with nextpnr.",
         module.name, module.clock_domain
     );
 
@@ -658,6 +680,31 @@ fn emit_pcf(wrapper: &str, source: &str, ports: &[WrapPort]) -> String {
     );
     for p in ports {
         let _ = writeln!(out, "set_io {} {}  # {}", p.name, p.pin, p.comment);
+    }
+    out
+}
+
+/// The ECP5 LPF: a `LOCATE` per port, an `IOBUF` per port with an
+/// `io_type=`, and a `FREQUENCY` for a clock with a `freq=`.
+fn emit_lpf(wrapper: &str, source: &str, ports: &[WrapPort]) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "# Auto-generated ECP5 LPF from `{source}`. Do not edit by hand.\n\
+         # `{wrapper}.sv` is the synthesis top."
+    );
+    for p in ports {
+        let _ = writeln!(
+            out,
+            "LOCATE COMP \"{}\" SITE \"{}\";  # {}",
+            p.name, p.pin, p.comment
+        );
+        if let Some(std) = &p.io_type {
+            let _ = writeln!(out, "IOBUF PORT \"{}\" IO_TYPE={std};", p.name);
+        }
+        if let Some(mhz) = &p.freq_mhz {
+            let _ = writeln!(out, "FREQUENCY PORT \"{}\" {mhz} MHZ;", p.name);
+        }
     }
     out
 }

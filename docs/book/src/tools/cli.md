@@ -2,7 +2,7 @@
 
 ```text
 sinter check <FILE>
-sinter build <FILE> [--emit verilog|harness|rust|all] [--out DIR] [--pins FILE] [--faults]
+sinter build <FILE> [--emit verilog|harness|rust|all] [--out DIR] [--pins FILE [--constraints FILE]] [--faults]
 sinter sim   <FILE> [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE]
 ```
 
@@ -33,7 +33,9 @@ Also:
 
 - the `src` file of every [`#[verilog]` binding](../reference/foreign-verilog.md)
   is copied into the output directory;
-- `--pins FILE` writes a board-level wrapper and a nextpnr PCF file
+- `--pins FILE` writes a board-level wrapper and a nextpnr PCF file, and
+  `--constraints FILE` writes the pin constraints there instead, as an iCE40
+  PCF or an ECP5 LPF depending on its extension (`.pcf` or `.lpf`)
   ([Board pin maps](pin-maps.md));
 - `--faults` adds the fault latch and writes `<Module>.faults.json`
   ([Assertions and faults](../reference/faults.md#faults-in-hardware)).

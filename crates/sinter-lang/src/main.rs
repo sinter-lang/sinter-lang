@@ -57,6 +57,11 @@ enum Command {
         /// wrapper and the matching nextpnr PCF (DESIGN §7.6).
         #[arg(long)]
         pins: Option<PathBuf>,
+        /// Where to write the pin constraints, as an iCE40 PCF (`.pcf`) or an
+        /// ECP5 LPF (`.lpf`), chosen by the extension (needs `--pins`;
+        /// default `<out>/<wrapper>.pcf`).
+        #[arg(long, requires = "pins")]
+        constraints: Option<PathBuf>,
         /// Emit the silicon fault latch (DESIGN §6.12, FLT1b): a sticky bitmap +
         /// a priority-encoded `fault_code` sideband, plus a `<module>.faults.json`
         /// `code -> backtrace` table. Off by default (functional-neutral).
@@ -114,8 +119,16 @@ fn main() -> Result<()> {
             emit,
             out,
             pins,
+            constraints,
             faults,
-        } => cmd_build(&file, emit, &out, pins.as_deref(), faults),
+        } => cmd_build(
+            &file,
+            emit,
+            &out,
+            pins.as_deref(),
+            constraints.as_deref(),
+            faults,
+        ),
         Command::Sim {
             file,
             cycles,
@@ -191,7 +204,14 @@ fn cmd_check(file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: bool) -> Result<()> {
+fn cmd_build(
+    file: &Path,
+    emit: Emit,
+    out: &Path,
+    pins: Option<&Path>,
+    constraints: Option<&Path>,
+    faults: bool,
+) -> Result<()> {
     let mode = if faults {
         FaultMode::On
     } else {
@@ -250,7 +270,7 @@ fn cmd_build(file: &Path, emit: Emit, out: &Path, pins: Option<&Path>, faults: b
 
     copy_verilog_sources(&modules, out)?;
     if let Some(pins) = pins {
-        emit_board(&modules, pins, out)?;
+        emit_board(&modules, pins, constraints, out)?;
     }
     Ok(())
 }
@@ -297,8 +317,14 @@ fn copy_verilog_sources(modules: &[Module], out: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Emit the board-top wrapper + PCF around the design's top module.
-fn emit_board(modules: &[Module], pins: &Path, out: &Path) -> Result<()> {
+/// Emit the board-top wrapper + its pin constraints (a PCF, or an LPF when
+/// `constraints` names a `.lpf`) around the design's top module.
+fn emit_board(
+    modules: &[Module],
+    pins: &Path,
+    constraints: Option<&Path>,
+    out: &Path,
+) -> Result<()> {
     let Some(module) = modules.first() else {
         anyhow::bail!(
             "`--pins` needs a design with a `#[clock]` root, but `{}` has none",
@@ -315,9 +341,30 @@ fn emit_board(modules: &[Module], pins: &Path, out: &Path) -> Result<()> {
     let sv = out.join(format!("{}.sv", board.module_name));
     fs::write(&sv, &board.verilog).with_context(|| format!("writing `{}`", sv.display()))?;
     info!("wrote {}", sv.display());
-    let pcf = out.join(format!("{}.pcf", board.module_name));
-    fs::write(&pcf, &board.pcf).with_context(|| format!("writing `{}`", pcf.display()))?;
-    info!("wrote {}", pcf.display());
+    let path = constraints.map_or_else(
+        || out.join(format!("{}.pcf", board.module_name)),
+        Path::to_path_buf,
+    );
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let text = match ext.to_ascii_lowercase().as_str() {
+        "pcf" => {
+            if board.lpf_only {
+                warn!(
+                    "`{}` sets `io_type=` or `freq=`, which a PCF can't carry; they are \
+                     ignored (write an `.lpf` to keep them)",
+                    pins.display()
+                );
+            }
+            &board.pcf
+        }
+        "lpf" => &board.lpf,
+        _ => anyhow::bail!(
+            "`--constraints {}`: the extension picks the format, `.pcf` (iCE40) or `.lpf` (ECP5)",
+            path.display()
+        ),
+    };
+    fs::write(&path, text).with_context(|| format!("writing `{}`", path.display()))?;
+    info!("wrote {}", path.display());
     Ok(())
 }
 
