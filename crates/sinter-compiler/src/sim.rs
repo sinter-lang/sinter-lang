@@ -319,6 +319,27 @@ impl<'a> Simulator<'a> {
     /// the port width here; missing inputs read 0). Returns the outputs sampled
     /// this cycle.
     pub fn step(&mut self, inputs: &HashMap<String, u64>) -> HashMap<String, u64> {
+        self.advance(inputs, false)
+    }
+
+    /// Advance one cycle with `rst_n` held low (RST1, DESIGN §9.15): every
+    /// register without `#[no_reset]` reads its reset value this cycle and
+    /// keeps it through the clock edge, while `#[no_reset]` registers and
+    /// memory writes update as in [`Simulator::step`] — what the Verilog does
+    /// with its reset asserted for a cycle. For a single-clock design; with
+    /// several clocks, the reset synchronizers' release isn't modeled.
+    pub fn step_in_reset(&mut self, inputs: &HashMap<String, u64>) -> HashMap<String, u64> {
+        self.advance(inputs, true)
+    }
+
+    fn advance(&mut self, inputs: &HashMap<String, u64>, in_reset: bool) -> HashMap<String, u64> {
+        if in_reset {
+            for (v, r) in self.state.iter_mut().zip(&self.module.regs) {
+                if !r.no_reset {
+                    *v = r.reset;
+                }
+            }
+        }
         // The next edge time, and the domains with an edge then.
         let t = self.next_edge.iter().copied().min().unwrap_or(0);
         for (d, tick) in self.ticking.iter_mut().enumerate() {
@@ -392,6 +413,15 @@ impl<'a> Simulator<'a> {
             next[r.rdata] = self.mem[r.mem].get(idx).copied().unwrap_or(0);
         }
 
+        // In reset, the reset registers hold their reset values through the edge.
+        if in_reset {
+            for (v, r) in next.iter_mut().zip(&self.module.regs) {
+                if !r.no_reset {
+                    *v = r.reset;
+                }
+            }
+        }
+
         // Memory write ports: commit after the reads above, so they see the
         // pre-edge array.
         for w in self.writes.iter().filter(|w| ticking[w.domain]) {
@@ -431,6 +461,14 @@ pub fn gen_stimulus(module: &Module, cycles: usize, seed: u64) -> Vec<Vec<u64>> 
         .collect()
 }
 
+/// Serialize a reset schedule to the binary format the Verilator harness
+/// reads as its optional fourth argument: one byte per cycle, `1` for a cycle
+/// with `rst_n` asserted (RST1).
+#[must_use]
+pub fn resets_to_bytes(resets: &[bool]) -> Vec<u8> {
+    resets.iter().map(|&r| u8::from(r)).collect()
+}
+
 /// Serialize a stimulus to the binary format the Verilator harness reads:
 /// 8 little-endian bytes per value, ports in declaration order, row by row.
 #[must_use]
@@ -449,18 +487,34 @@ pub fn stimulus_to_bytes(stimulus: &[Vec<u64>]) -> Vec<u8> {
 /// output value, ports in declaration order, one row per cycle.
 #[must_use]
 pub fn run_reference(module: &Module, stimulus: &[Vec<u64>]) -> Vec<u8> {
+    run_reference_with_resets(module, stimulus, &[])
+}
+
+/// [`run_reference`], with `rst_n` asserted in each cycle `k` for which
+/// `resets[k]` is true (RST1; [`Simulator::step_in_reset`]). A cycle past the
+/// end of `resets` isn't in reset.
+#[must_use]
+pub fn run_reference_with_resets(
+    module: &Module,
+    stimulus: &[Vec<u64>],
+    resets: &[bool],
+) -> Vec<u8> {
     let input_names: Vec<String> = module.inputs().map(|p| p.name.clone()).collect();
     let output_order: Vec<String> = module.outputs().map(|p| p.name.clone()).collect();
 
     let mut sim = Simulator::new(module);
     let mut trace = Vec::new();
-    for row in stimulus {
+    for (k, row) in stimulus.iter().enumerate() {
         let inputs: HashMap<String, u64> = input_names
             .iter()
             .cloned()
             .zip(row.iter().copied())
             .collect();
-        let outputs = sim.step(&inputs);
+        let outputs = if resets.get(k).copied().unwrap_or(false) {
+            sim.step_in_reset(&inputs)
+        } else {
+            sim.step(&inputs)
+        };
         for name in &output_order {
             let v = outputs.get(name).copied().unwrap_or(0);
             trace.extend_from_slice(&v.to_le_bytes());

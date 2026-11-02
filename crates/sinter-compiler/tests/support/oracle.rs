@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sinter_compiler::ir::Module;
-use sinter_compiler::sim::{run_reference, stimulus_to_bytes};
+use sinter_compiler::sim::{resets_to_bytes, run_reference_with_resets, stimulus_to_bytes};
 use sinter_compiler::{rust_sim, verilator, verilog};
 
 /// How strict the Verilator lint pass is.
@@ -113,6 +113,21 @@ pub fn run_verilator(
     stim: &Path,
     cycles: usize,
 ) -> Vec<u8> {
+    run_verilator_with_resets(dir, sv, extra, harness, top, stim, cycles, None)
+}
+
+/// [`run_verilator`], with the harness's optional reset schedule (RST1).
+#[allow(clippy::too_many_arguments)]
+pub fn run_verilator_with_resets(
+    dir: &Path,
+    sv: &Path,
+    extra: &[PathBuf],
+    harness: &Path,
+    top: &str,
+    stim: &Path,
+    cycles: usize,
+    resets: Option<&Path>,
+) -> Vec<u8> {
     let obj = dir.join("obj");
     let build_once = || {
         let _ = std::fs::remove_dir_all(&obj);
@@ -161,6 +176,7 @@ pub fn run_verilator(
         .arg(stim)
         .arg(&trace)
         .arg(cycles.to_string())
+        .args(resets)
         .output()
         .expect("run verilated sim");
     assert!(
@@ -211,6 +227,21 @@ pub fn co_simulate(
     stimulus: &[Vec<u64>],
     lint: Lint,
 ) {
+    co_simulate_with_resets(tools, name, module, children, stimulus, &[], lint);
+}
+
+/// [`co_simulate`], with `rst_n` asserted in each cycle `k` where
+/// `resets[k]` (RST1): the reference uses `step_in_reset`, the Verilator
+/// harness its reset schedule.
+pub fn co_simulate_with_resets(
+    tools: &Tools,
+    name: &str,
+    module: &Module,
+    children: &[Module],
+    stimulus: &[Vec<u64>],
+    resets: &[bool],
+    lint: Lint,
+) {
     let dir = workdir(name);
 
     // Emit artifacts.
@@ -222,7 +253,9 @@ pub fn co_simulate(
     // Stimulus + reference trace.
     let stim_path = dir.join("stimulus.bin");
     std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
-    let reference = run_reference(module, stimulus);
+    let reference = run_reference_with_resets(module, stimulus, resets);
+    let resets_path = dir.join("resets.bin");
+    std::fs::write(&resets_path, resets_to_bytes(resets)).expect("write resets");
 
     let mut extra = foreign_sources(module);
     for child in children {
@@ -239,7 +272,7 @@ pub fn co_simulate(
     if tools.verilator {
         // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
         lint_verilator(&sv, &extra, &module.name, lint);
-        let dut = run_verilator(
+        let dut = run_verilator_with_resets(
             &dir,
             &sv,
             &extra,
@@ -247,6 +280,7 @@ pub fn co_simulate(
             &module.name,
             &stim_path,
             stimulus.len(),
+            (!resets.is_empty()).then_some(resets_path.as_path()),
         );
         assert_eq!(
             dut.len(),
@@ -283,6 +317,17 @@ pub fn write_if_changed(path: &Path, contents: &str) {
 /// that runs any of them over a raw stimulus file. Unchanged files aren't
 /// rewritten, so reruns are incremental.
 pub fn rust_sim_traces(root: &Path, cases: &[(String, &Module, &[Vec<u64>])]) -> Vec<Vec<u8>> {
+    rust_sim_traces_with_resets(root, cases, &[])
+}
+
+/// [`rust_sim_traces`], where case `i` asserts `rst_n` in each cycle `k`
+/// with `resets[i][k]` (RST1; the generated `step_in_reset`). A case past
+/// the end of `resets` has no resets.
+pub fn rust_sim_traces_with_resets(
+    root: &Path,
+    cases: &[(String, &Module, &[Vec<u64>])],
+    resets: &[&[bool]],
+) -> Vec<Vec<u8>> {
     if cases.is_empty() {
         return Vec::new();
     }
@@ -311,8 +356,12 @@ pub fn rust_sim_traces(root: &Path, cases: &[(String, &Module, &[Vec<u64>])]) ->
              \x20           // `step`'s outputs without changing anything.\n\
              \x20           let mut sim = {lib}::{model}::new();\n\
              \x20           let mut out = Vec::new();\n\
-             \x20           for row in &rows {{\n\
+             \x20           for (k, row) in rows.iter().enumerate() {{\n\
              \x20               let ins = {lib}::Inputs::from_raw(row);\n\
+             \x20               if rst.get(k) == Some(&1) {{\n\
+             \x20                   out.extend(sim.step_in_reset(&ins).to_raw());\n\
+             \x20                   continue;\n\
+             \x20               }}\n\
              \x20               let predicted = sim.eval(&ins);\n\
              \x20               assert_eq!(predicted, sim.eval(&ins), \"eval changed the state\");\n\
              \x20               let o = sim.step(&ins);\n\
@@ -342,7 +391,7 @@ pub fn rust_sim_traces(root: &Path, cases: &[(String, &Module, &[Vec<u64>])]) ->
         &root.join("harness/src/main.rs"),
         &format!(
             "//! Run one case's generated simulator over a raw stimulus file:\n\
-             //! `harness <case> <cycles> <stimulus.bin> <trace.bin>`.\n\n\
+             //! `harness <case> <cycles> <stimulus.bin> <trace.bin> [<resets.bin>]`.\n\n\
              fn main() {{\n\
              \x20   let args: Vec<String> = std::env::args().collect();\n\
              \x20   let cycles: usize = args[2].parse().expect(\"cycles\");\n\
@@ -351,6 +400,7 @@ pub fn rust_sim_traces(root: &Path, cases: &[(String, &Module, &[Vec<u64>])]) ->
              \x20       .chunks_exact(8)\n\
              \x20       .map(|b| u64::from_le_bytes(b.try_into().expect(\"8 bytes\")))\n\
              \x20       .collect();\n\
+             \x20   let rst: Vec<u8> = args.get(5).map(|p| std::fs::read(p).expect(\"read resets\")).unwrap_or_default();\n\
              \x20   let out: Vec<u64> = match args[1].as_str() {{\n\
              {arms}\
              \x20       other => panic!(\"unknown case {{other}}\"),\n\
@@ -373,17 +423,22 @@ pub fn rust_sim_traces(root: &Path, cases: &[(String, &Module, &[Vec<u64>])]) ->
 
     cases
         .iter()
-        .map(|(name, _, stimulus)| {
+        .enumerate()
+        .map(|(i, (name, _, stimulus))| {
             let stim_path = root.join(format!("{name}.stim"));
             let trace_path = root.join(format!("{name}.trace"));
             std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
-            let status = Command::new(&harness)
-                .arg(name)
+            let mut cmd = Command::new(&harness);
+            cmd.arg(name)
                 .arg(stimulus.len().to_string())
                 .arg(&stim_path)
-                .arg(&trace_path)
-                .status()
-                .expect("run harness");
+                .arg(&trace_path);
+            if let Some(r) = resets.get(i).filter(|r| !r.is_empty()) {
+                let rst_path = root.join(format!("{name}.rst"));
+                std::fs::write(&rst_path, resets_to_bytes(r)).expect("write resets");
+                cmd.arg(&rst_path);
+            }
+            let status = cmd.status().expect("run harness");
             assert!(status.success(), "{name}: the generated simulator failed");
             std::fs::read(&trace_path).expect("read trace")
         })

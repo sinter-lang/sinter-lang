@@ -200,6 +200,7 @@ pub fn apply(module: &mut ir::Module) -> Result<(), CompileError> {
         ty: bits_ty,
         frac_bits: 0,
         reset: 0,
+        no_reset: false,
     });
     module.reg_updates.push((BITS.to_string(), next));
 

@@ -451,6 +451,9 @@ impl Elaborator<'_> {
         let mut leaves = Vec::new();
         self.flatten_ty(&state, "", &mut leaves);
         let resets = self.state_resets(state_ty, first.pos)?;
+        // `#[no_reset]` leaves and memories (RST1).
+        let mut no_reset = std::collections::HashSet::new();
+        self.no_reset_names(&state, "", false, &mut no_reset);
         let mut regs = Vec::new();
         let mut seen = HashMap::new();
         for (name, ty, frac_bits) in &leaves {
@@ -470,6 +473,7 @@ impl Elaborator<'_> {
                 ty: *ty,
                 frac_bits: *frac_bits,
                 reset,
+                no_reset: no_reset.contains(name),
             });
         }
 
@@ -503,6 +507,8 @@ impl Elaborator<'_> {
                 ty: mem.elem_ty,
                 frac_bits: 0,
                 reset: 0,
+                // A `#[no_reset]` memory's read registers have no reset either.
+                no_reset: no_reset.contains(&mem.name),
             });
         }
 
@@ -3326,6 +3332,53 @@ impl Elaborator<'_> {
             Ty::Option(inner) => {
                 out.push((join(path, "is_some"), Type::Uint(1), 0));
                 self.flatten_ty(inner, &join(path, "payload"), out);
+            }
+        }
+    }
+
+    /// The leaf registers and memories of `ty` (at `path`, as [`Self::flatten_ty`]
+    /// names them) under a `#[no_reset]` field (RST1), or all of them when
+    /// `inherited`.
+    fn no_reset_names(
+        &self,
+        ty: &Ty,
+        path: &str,
+        inherited: bool,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        match ty {
+            Ty::Scalar(_) | Ty::Fixed { .. } | Ty::Enum(..) | Ty::Mem { .. } => {
+                if inherited {
+                    out.insert(path.to_string());
+                }
+            }
+            Ty::Struct(name) => {
+                let Some(s) = self.tables.structs.get(name.as_str()) else {
+                    return;
+                };
+                for f in &s.fields {
+                    let Ok(fty) = self.resolve(&f.ty, f.pos) else {
+                        continue;
+                    };
+                    let tagged = inherited || f.attrs.iter().any(|a| a.name == "no_reset");
+                    self.no_reset_names(&fty, &join(path, &f.name), tagged, out);
+                }
+            }
+            Ty::Array(et, n) => {
+                for i in 0..*n {
+                    self.no_reset_names(et, &join(path, &i.to_string()), inherited, out);
+                }
+            }
+            Ty::Tuple(ts) => {
+                for (i, t) in ts.iter().enumerate() {
+                    self.no_reset_names(t, &join(path, &i.to_string()), inherited, out);
+                }
+            }
+            Ty::Option(inner) => {
+                if inherited {
+                    out.insert(join(path, "is_some"));
+                }
+                self.no_reset_names(inner, &join(path, "payload"), inherited, out);
             }
         }
     }

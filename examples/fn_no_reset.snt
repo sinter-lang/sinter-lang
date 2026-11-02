@@ -1,0 +1,38 @@
+// RST1 (DESIGN §9.15): registers without a reset.
+//
+// A reset net that reaches every flip-flop is expensive to route. Datapath
+// registers rarely need one: they hold values the control state decides
+// when to use. `#[no_reset]` on a field gives its registers (and those of
+// every field inside it) a power-on value only: they start at their default
+// when the FPGA is configured, and `rst_n` leaves them alone afterwards.
+//
+// Here `phase` is control state and resets; the accumulator datapath and
+// the register bank (its read register too) don't. `fn_no_reset.csv`
+// asserts `rst_n` mid-run and checks that only `phase` returns to 0.
+struct Datapath {
+    acc: u16 = 0,
+    last: u8 = 0,
+}
+
+struct Engine {
+    pub phase: u4 = 0,
+    #[no_reset]
+    pub dp: Datapath,
+    #[no_reset]
+    bank: mem<u8, 16> = 0,
+}
+
+impl Engine {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8, we: u1, a: u4) -> (Engine, (u16, u8)) {
+        let rd = self.bank.value();
+        (
+            Engine {
+                phase: (self.phase + 1) as u4 wrap,
+                dp: Datapath { acc: (self.dp.acc + x) as u16 wrap, last: rd },
+                bank: self.bank.next(a, we, a, x),
+            },
+            (self.dp.acc, rd),
+        )
+    }
+}

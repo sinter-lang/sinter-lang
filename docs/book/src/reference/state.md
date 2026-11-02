@@ -67,6 +67,52 @@ Any other field without a reset value is an error.
 In the generated Verilog, all registers share one active-low asynchronous
 reset, `rst_n`. In simulation, cycle 0 starts from the reset state.
 
+### Registers without a reset
+
+A reset net that reaches every flip-flop costs routing, and datapath
+registers rarely need one: the control state decides when their values
+matter. `#[no_reset]` on a field takes its registers off the reset:
+
+```sinter
+struct Datapath {
+    acc: u16 = 0,
+    last: u8 = 0,
+}
+
+struct Engine {
+    pub phase: u4 = 0,
+    #[no_reset]
+    pub dp: Datapath,
+}
+
+impl Engine {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8) -> (Engine, u16) {
+        (
+            Engine {
+                phase: (self.phase + 1) as u4 wrap,
+                dp: Datapath { acc: (self.dp.acc + x) as u16 wrap, last: x },
+            },
+            self.dp.acc,
+        )
+    }
+}
+```
+
+A `#[no_reset]` register starts at its `= value` at power-on (a Verilog
+`initial`, which the FPGA's configuration loads), and `rst_n` leaves it alone
+afterwards. The attribute applies to every register inside the field, and on
+a `mem` or `rom` field to its read registers. The value is still exact, so
+the simulators and the Verilog agree after a reset, too.
+
+It can't go on a field that holds a channel, a clock-domain crossing, a
+staged function, or a `#[module]` or `#[verilog]` instance, whose reset is
+part of how it works, or inside a `#[verilog]` model. Put it on the plain
+registers instead.
+
+A [stimulus file](../tools/stimulus.md#reset)'s `rst_n` column asserts the
+reset mid-run, to test what survives it.
+
 ## The next state
 
 The value the clock root returns is the next state, so **each register gets

@@ -17,9 +17,10 @@ en, expect.value_q
 
 The first non-comment line is the header. Each column is either:
 
-- an **input** port name: the value to drive that cycle, or
+- an **input** port name: the value to drive that cycle,
 - `expect.` followed by an **output** port name: the value the output must
-  have that cycle.
+  have that cycle, or
+- `rst_n`: the design's reset that cycle (see [Reset](#reset)).
 
 The port names are the flattened names in the generated Verilog, as printed
 in the header of `sinter sim`'s output table: a parameter `p: Pair` gives
@@ -42,6 +43,24 @@ Each row's inputs are applied for that cycle, and its expectations are
 compared with the outputs during that cycle, before the clock edge. A `pub`
 register's `_q` output shows its value *before* the edge, so it reflects
 inputs from earlier rows; an extra output can react to the same row's inputs.
+
+## Reset
+
+An `rst_n` column drives the active-low reset: `0` holds it asserted for
+that cycle, `1` (or no column) leaves it released. In a cycle with `rst_n` at
+0, every register reads its reset value and keeps it through the clock edge,
+except [`#[no_reset]`](../reference/state.md#registers-without-a-reset)
+registers, which update as usual, as do memories. `sinter sim` marks those
+rows `(in reset)`. The column works in single-clock designs.
+
+```text
+x, rst_n, expect.phase_q
+1, 1,     0
+2, 1,     1
+3, 0,     0      # reset: phase reads 0, and stays 0 through the edge
+4, 1,     0
+5, 1,     1
+```
 
 ## Results
 

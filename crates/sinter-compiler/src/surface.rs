@@ -8,6 +8,9 @@
 //! - [`check_pub_internal_state`]: no clock root's `pub` field exposes the
 //!   registers a desugar synthesizes (a channel's, a crossing's, or a staged function's),
 //!   whose names are the compiler's, as output ports.
+//! - [`check_no_reset`]: `#[no_reset]` (RST1) is only on state whose reset
+//!   isn't part of a contract: not a channel's, a crossing's, a staged
+//!   function's, or an instance's.
 
 use std::collections::{HashMap, HashSet};
 
@@ -70,6 +73,12 @@ const KNOWN: &[Known] = &[
         site: Site::Field,
         keys: Some(&["regs", "lutram", "bram"]),
         usage: "`#[storage(regs)]`, `#[storage(lutram)]`, or `#[storage(bram)]` on a `fifo`, `mem`, or `rom` field",
+    },
+    Known {
+        name: "no_reset",
+        site: Site::Field,
+        keys: Some(&[]),
+        usage: "`#[no_reset]` on a state field",
     },
     Known {
         name: "module",
@@ -256,6 +265,98 @@ pub fn check_pub_internal_state(program: &Program) -> Result<(), CompileError> {
                          compiler and can't be output ports; make the field private, and \
                          output the values you need (such as `len()` or `front()`) through \
                          a `pub` register or the clock root's extra outputs",
+                        f.name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The first `#[module]` / `#[verilog]` instance `ty` holds, by struct name.
+fn instance_in<'a>(
+    ty: &TypeRef,
+    structs: &HashMap<&'a str, &'a StructItem>,
+    seen: &mut HashSet<String>,
+) -> Option<String> {
+    let is_binding = |s: &StructItem| {
+        s.attrs
+            .iter()
+            .any(|a| a.name == "module" || a.name == "verilog")
+    };
+    match ty {
+        TypeRef::Option(inner) | TypeRef::Array { elem: inner, .. } => {
+            instance_in(inner, structs, seen)
+        }
+        TypeRef::Tuple(items) => items.iter().find_map(|t| instance_in(t, structs, seen)),
+        TypeRef::Named(name) => {
+            let s = structs.get(name.as_str())?;
+            if is_binding(s) {
+                return Some(format!("the instance `{name}`"));
+            }
+            if !seen.insert(name.clone()) {
+                return None;
+            }
+            s.fields.iter().find_map(|f| {
+                instance_in(&f.ty, structs, seen)
+                    .map(|what| format!("{what} (in field `{}` of `{name}`)", f.name))
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Reject `#[no_reset]` (RST1, DESIGN §9.15) where a reset is part of a
+/// contract: on a field holding a channel, a clock-domain crossing, a staged
+/// function, or a `#[module]` / `#[verilog]` instance, and inside a
+/// `#[verilog]` model, whose registers the real module's reset governs.
+///
+/// # Errors
+/// A [`CompileError`] naming the first such field.
+pub fn check_no_reset(program: &Program) -> Result<(), CompileError> {
+    let mut structs = HashMap::new();
+    let mut staged = HashSet::new();
+    for item in &program.items {
+        match item {
+            Item::Struct(s) => {
+                structs.insert(s.name.as_str(), s);
+            }
+            Item::Func(f) if f.color != FnColor::Comb => {
+                staged.insert(f.name.as_str());
+            }
+            _ => {}
+        }
+    }
+    for s in program.items.iter().filter_map(|it| match it {
+        Item::Struct(s) => Some(s),
+        _ => None,
+    }) {
+        let model = s.attrs.iter().any(|a| a.name == "verilog");
+        for f in &s.fields {
+            let Some(attr) = f.attrs.iter().find(|a| a.name == "no_reset") else {
+                continue;
+            };
+            if model {
+                return Err(sem(
+                    &s.name,
+                    attr.pos,
+                    format!(
+                        "`#[no_reset]` on `{}`: `{}` is a `#[verilog]` model, and the real \
+                         module decides what its reset does",
+                        f.name, s.name
+                    ),
+                ));
+            }
+            let what = internal_state(&f.ty, &structs, &staged, &mut HashSet::new())
+                .or_else(|| instance_in(&f.ty, &structs, &mut HashSet::new()));
+            if let Some(what) = what {
+                return Err(sem(
+                    &s.name,
+                    attr.pos,
+                    format!(
+                        "`#[no_reset]` on `{}`, which holds {what}: its reset is part of how \
+                         it works; put `#[no_reset]` on the plain registers instead",
                         f.name
                     ),
                 ));

@@ -323,10 +323,27 @@ fn rst_net(m: &Module, d: usize) -> String {
 /// releases it two of its own clock edges later, so its registers leave reset
 /// synchronously.
 fn emit_reset_syncs(out: &mut String, m: &Module) {
+    let used: Vec<usize> = (0..m.domains.len().max(1))
+        .filter(|&d| uses_reset(m, d))
+        .collect();
+    if used.is_empty() {
+        // Every register is `#[no_reset]` (RST1): nothing reads `rst_n`, so sink
+        // it (an `_unused` name is exempt from Verilator's UNUSEDSIGNAL).
+        let _ = writeln!(
+            out,
+            "    // rst_n is unused: every register is power-on initialized"
+        );
+        let _ = writeln!(out, "    wire _unused_rst_n = rst_n;");
+    }
     if !m.is_multi_clock() {
         return;
     }
-    for (d, dom) in m.domains.iter().enumerate() {
+    for (d, dom) in m
+        .domains
+        .iter()
+        .enumerate()
+        .filter(|(d, _)| used.contains(d))
+    {
         let meta = format!("rst_{}_meta", dom.name);
         let rst = rst_net(m, d);
         let clk = clk_net(m, d);
@@ -347,6 +364,15 @@ fn emit_reset_syncs(out: &mut String, m: &Module) {
         let _ = writeln!(out, "        end");
         let _ = writeln!(out, "    end");
     }
+}
+
+/// Whether anything in domain `d` reads its reset: a register without
+/// `#[no_reset]`, or a foreign instance's `rst_n`.
+fn uses_reset(m: &Module, d: usize) -> bool {
+    hw_regs(m).any(|r| r.domain == d && !r.no_reset)
+        || m.instances
+            .iter()
+            .any(|i| i.domain == d && i.rst_n.is_some())
 }
 
 /// The registers that exist in the emitted Verilog: all but the reference-model
@@ -589,15 +615,37 @@ fn emit_instances(out: &mut String, m: &Module) {
 
 fn emit_seq(out: &mut String, m: &Module) {
     for d in 0..m.domains.len().max(1) {
-        let regs: Vec<_> = hw_regs(m).filter(|r| r.domain == d).collect();
-        if regs.is_empty() {
-            continue;
-        }
         let name = m
             .domains
             .get(d)
             .map_or(m.clock_domain.as_str(), |dom| dom.name.as_str());
         let (clk, rst) = (clk_net(m, d), rst_net(m, d));
+        // `#[no_reset]` registers (RST1): a power-on value, then a plain clocked
+        // update that `rst_n` doesn't touch.
+        let bare: Vec<_> = hw_regs(m).filter(|r| r.domain == d && r.no_reset).collect();
+        if !bare.is_empty() {
+            let _ = writeln!(
+                out,
+                "    // Power-on values of the no-reset registers ({name} domain)"
+            );
+            let _ = writeln!(out, "    initial begin");
+            for r in &bare {
+                let _ = writeln!(out, "        {} = {}'h{:x};", r.name, r.ty.width(), r.reset);
+            }
+            let _ = writeln!(out, "    end");
+            let _ = writeln!(out, "    // Sequential state without reset ({name} domain)");
+            let _ = writeln!(out, "    always_ff @(posedge {clk}) begin");
+            for r in &bare {
+                let _ = writeln!(out, "        {} <= {}_next;", r.name, r.name);
+            }
+            let _ = writeln!(out, "    end");
+        }
+        let regs: Vec<_> = hw_regs(m)
+            .filter(|r| r.domain == d && !r.no_reset)
+            .collect();
+        if regs.is_empty() {
+            continue;
+        }
         let _ = writeln!(out, "    // Sequential state ({name} domain)");
         let _ = writeln!(out, "    always_ff @(posedge {clk} or negedge {rst}) begin");
         let _ = writeln!(out, "        if (!{rst}) begin");

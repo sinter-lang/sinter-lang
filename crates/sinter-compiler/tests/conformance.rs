@@ -17,9 +17,14 @@ mod oracle;
 
 use std::path::{Path, PathBuf};
 
-use oracle::{co_simulate, foreign_sources, run_verilator, rust_sim_traces, tools, workdir, Lint};
+use oracle::{
+    co_simulate, co_simulate_with_resets, foreign_sources, run_verilator, rust_sim_traces,
+    rust_sim_traces_with_resets, tools, workdir, Lint,
+};
 use sinter_compiler::ir::Module;
-use sinter_compiler::sim::{gen_stimulus, run_reference, stimulus_to_bytes, Simulator};
+use sinter_compiler::sim::{
+    gen_stimulus, run_reference, run_reference_with_resets, stimulus_to_bytes, Simulator,
+};
 use sinter_compiler::stimulus::Stimulus;
 use sinter_compiler::{compile_str, verilator, verilog};
 
@@ -146,6 +151,12 @@ const EXAMPLES: &[Example] = &[
     Example {
         name: "fn_storage",
         source: include_str!("../../../examples/fn_storage.snt"),
+    },
+    // RST1: `#[no_reset]` datapath registers and a no-reset memory bank
+    // (resets mid-run are in its directed case below).
+    Example {
+        name: "fn_no_reset",
+        source: include_str!("../../../examples/fn_no_reset.snt"),
     },
     // CLK1 (DESIGN §6.7 / §9.14): two clock domains with coprime periods (3, 7)
     // and no crossing. The sim and the Verilator harness replay the same edge
@@ -482,6 +493,12 @@ const DIRECTED: &[Directed] = &[
         source: include_str!("../../../examples/fn_signed.snt"),
         csv: include_str!("../../../examples/fn_signed.csv"),
     },
+    // RST1: `rst_n` asserted mid-run; `#[no_reset]` registers carry on.
+    Directed {
+        name: "fn_no_reset",
+        source: include_str!("../../../examples/fn_no_reset.snt"),
+        csv: include_str!("../../../examples/fn_no_reset.csv"),
+    },
 ];
 
 /// Directed stimulus: the CSV's expected outputs hold on the reference model,
@@ -503,7 +520,12 @@ fn directed_examples_pass_the_oracle() {
                 .map(|p| p.name.clone())
                 .zip(row.iter().copied())
                 .collect();
-            mismatches.extend(stim.check_cycle(&module, k, &sim.step(&inputs)));
+            let out = if stim.resets[k] {
+                sim.step_in_reset(&inputs)
+            } else {
+                sim.step(&inputs)
+            };
+            mismatches.extend(stim.check_cycle(&module, k, &out));
         }
         assert!(
             mismatches.is_empty(),
@@ -516,13 +538,41 @@ fn directed_examples_pass_the_oracle() {
                 .join("\n")
         );
 
-        co_simulate(
+        co_simulate_with_resets(
             &tools,
             &format!("{}-directed", ex.name),
             &module,
             &[],
             &stim.inputs,
+            &stim.resets,
             Lint::Strict,
+        );
+    }
+}
+
+/// The directed examples, resets included, on their generated Rust simulators.
+#[test]
+fn directed_examples_match_the_generated_rust_simulator() {
+    let cases: Vec<(Module, Stimulus)> = DIRECTED
+        .iter()
+        .map(|ex| {
+            let module = compile_one(ex.source);
+            let stim = Stimulus::parse_csv(&module, ex.csv).expect("example CSV parses");
+            (module, stim)
+        })
+        .collect();
+    let runs: Vec<(String, &Module, &[Vec<u64>])> = DIRECTED
+        .iter()
+        .zip(&cases)
+        .map(|(ex, (m, stim))| (ex.name.to_string(), m, stim.inputs.as_slice()))
+        .collect();
+    let resets: Vec<&[bool]> = cases.iter().map(|(_, s)| s.resets.as_slice()).collect();
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rust-sim-directed");
+    let traces = rust_sim_traces_with_resets(&root, &runs, &resets);
+    for (((name, module, stimulus), r), got) in runs.iter().zip(&resets).zip(traces) {
+        assert!(
+            got == run_reference_with_resets(module, stimulus, r),
+            "{name}: the generated Rust simulator diverges from the interpreter"
         );
     }
 }

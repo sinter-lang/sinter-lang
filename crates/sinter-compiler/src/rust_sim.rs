@@ -267,6 +267,13 @@ impl<'a> Gen<'a> {
         );
         let _ = writeln!(
             s,
+            "/// Whether each register is reset by `rst_n` (`false`: `#[no_reset]`).\n\
+             const HAS_RESET: [bool; {}] = [{}];",
+            m.regs.len(),
+            join(m.regs.iter().map(|r| (!r.no_reset).to_string()))
+        );
+        let _ = writeln!(
+            s,
             "/// Memory names, in state order.\nconst MEM_NAMES: [&str; {}] = [{}];\n",
             m.mems.len(),
             join(m.mems.iter().map(|x| format!("{:?}", x.name)))
@@ -452,7 +459,24 @@ impl<'a> Gen<'a> {
             "\n    /// Advance to the next clock edge: the domains with an edge take\n\
              \x20   /// their new inputs and commit their next state; the others hold.\n\
              \x20   /// Returns the outputs sampled before the edge.\n\
-             \x20   pub fn step(&mut self, inputs: &Inputs) -> Outputs {\n",
+             \x20   pub fn step(&mut self, inputs: &Inputs) -> Outputs {\n\
+             \x20       self.advance(inputs, false)\n\
+             \x20   }\n\n\
+             \x20   /// [`Self::step`] with `rst_n` held low: every register without\n\
+             \x20   /// `#[no_reset]` reads its reset value and keeps it through the edge,\n\
+             \x20   /// while `#[no_reset]` registers and memory writes update as usual.\n\
+             \x20   /// For a single-clock design.\n\
+             \x20   pub fn step_in_reset(&mut self, inputs: &Inputs) -> Outputs {\n\
+             \x20       self.advance(inputs, true)\n\
+             \x20   }\n\n\
+             \x20   fn advance(&mut self, inputs: &Inputs, in_reset: bool) -> Outputs {\n\
+             \x20       if in_reset {\n\
+             \x20           for (v, (&init, &has)) in self.regs.iter_mut().zip(RESET.iter().zip(&HAS_RESET)) {\n\
+             \x20               if has {\n\
+             \x20                   *v = init;\n\
+             \x20               }\n\
+             \x20           }\n\
+             \x20       }\n",
         );
         self.eval_prelude(s, true);
         for a in &m.asserts {
@@ -539,7 +563,16 @@ impl<'a> Gen<'a> {
                 wr.we.ty.width()
             );
         }
-        s.push_str("        self.regs = n;\n        out\n    }\n");
+        s.push_str(
+            "        if in_reset {\n\
+             \x20           for (v, (&init, &has)) in n.iter_mut().zip(RESET.iter().zip(&HAS_RESET)) {\n\
+             \x20               if has {\n\
+             \x20                   *v = init;\n\
+             \x20               }\n\
+             \x20           }\n\
+             \x20       }\n\
+             \x20       self.regs = n;\n        out\n    }\n",
+        );
     }
 
     /// `e` as a Rust `u64` expression.

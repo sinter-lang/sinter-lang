@@ -60,7 +60,13 @@ for cycle in 0..10 {
   and memories update.
 - **`eval(&Inputs) -> Outputs`** returns the outputs `step` would return
   for these inputs, without committing anything (see below).
-- **`reset()`** returns to the reset state. `new()` and `Default` start there.
+- **`reset()`** returns to the power-on state: every register and memory at
+  its initial value. `new()` and `Default` start there.
+- **`step_in_reset(&Inputs) -> Outputs`** is one cycle with `rst_n` held low,
+  as the Verilog sees a reset asserted mid-run: registers read their reset
+  values and keep them through the edge, except `#[no_reset]` ones, which
+  update as in `step`; memories are written as usual. (For a single-clock
+  design.)
 - **`register(name)`** and **`memory(name)`** read state by its flattened name
   (a nested field `a.b` is `a_b`), as `Option<u64>` / `Option<&[u64]>`.
 - **`assert_failures()`** lists the sim-only `assert!`s that read false, with

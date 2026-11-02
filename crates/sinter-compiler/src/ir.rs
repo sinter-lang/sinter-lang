@@ -124,6 +124,9 @@ pub struct Reg {
     pub frac_bits: u32,
     /// Reset value (already constant-folded to a masked bit pattern).
     pub reset: u64,
+    /// `#[no_reset]` (RST1, DESIGN §9.15): `reset` is the power-on value
+    /// only, and `rst_n` leaves the register alone.
+    pub no_reset: bool,
 }
 
 /// A block-RAM memory primitive (DESIGN §6.6/§6.9). Held as one indexed array,

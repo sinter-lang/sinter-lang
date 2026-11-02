@@ -117,6 +117,7 @@ fn compile_program(
 ) -> Result<Design, CompileError> {
     surface::check_attributes(&program)?;
     surface::check_pub_internal_state(&program)?;
+    surface::check_no_reset(&program)?;
     let mut program = program;
     struct_update::expand(&mut program)?;
     const_fold::fold(&mut program)?;

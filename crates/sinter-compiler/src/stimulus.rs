@@ -12,7 +12,9 @@
 //! ```
 //!
 //! A column is either an **input port** name, or `expect.` + an **output
-//! port** name. Input ports with no column are driven `0` every cycle. Values
+//! port** name, or `rst_n`: the module's active-low reset for that cycle (`0`
+//! asserts it; RST1, DESIGN §9.15), single-clock designs only. Input ports
+//! with no column are driven `0` every cycle, and `rst_n` is `1`. Values
 //! are decimal (a leading `-` only for signed ports), `0x` hex, or `0b`
 //! binary, with optional `_` separators; each must fit the port's type.
 //!
@@ -30,6 +32,9 @@ use crate::ir::Module;
 
 /// Column-name prefix that marks an expected-output column.
 const EXPECT_PREFIX: &str = "expect.";
+
+/// The column that drives the module's active-low reset (RST1).
+const RESET_COLUMN: &str = "rst_n";
 
 /// An error in a stimulus file, with the 1-based line it occurred on.
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +64,9 @@ pub struct Stimulus {
     pub lines: Vec<usize>,
     /// Input ports the file has no column for (driven `0` every cycle).
     pub defaulted: Vec<String>,
+    /// One entry per cycle: whether `rst_n` is asserted (low) in it. All
+    /// `false` without an `rst_n` column.
+    pub resets: Vec<bool>,
 }
 
 /// One expected output that did not match the simulated value.
@@ -106,6 +114,8 @@ enum Column {
     Input(usize),
     /// Index into `module.outputs()`.
     Expect(usize),
+    /// The active-low reset.
+    Reset,
 }
 
 impl Stimulus {
@@ -134,7 +144,18 @@ impl Stimulus {
             if seen.insert(name, ()).is_some() {
                 return Err(invalid(header_line, format!("duplicate column `{name}`")));
             }
-            let col = if let Some(out) = name.strip_prefix(EXPECT_PREFIX) {
+            let col = if name == RESET_COLUMN {
+                if module.is_multi_clock() {
+                    return Err(invalid(
+                        header_line,
+                        format!(
+                            "`{RESET_COLUMN}` works only in a single-clock design: with \
+                             several clocks, the reset synchronizers' release isn't modeled"
+                        ),
+                    ));
+                }
+                Column::Reset
+            } else if let Some(out) = name.strip_prefix(EXPECT_PREFIX) {
                 outputs
                     .iter()
                     .position(|p| p.name == out)
@@ -183,6 +204,7 @@ impl Stimulus {
             expects: Vec::new(),
             lines: Vec::new(),
             defaulted,
+            resets: Vec::new(),
         };
         for (line, row) in rows {
             let cells: Vec<&str> = row.split(',').map(str::trim).collect();
@@ -198,8 +220,24 @@ impl Stimulus {
             }
             let mut in_row = vec![0; inputs.len()];
             let mut exp_row = vec![None; outputs.len()];
+            let mut reset = false;
             for (col, cell) in columns.iter().zip(&cells) {
                 match *col {
+                    Column::Reset => {
+                        reset = match *cell {
+                            "0" => true,
+                            "1" => false,
+                            _ => {
+                                return Err(invalid(
+                                    line,
+                                    format!(
+                                        "`{RESET_COLUMN}` is `0` (reset asserted) or `1`, not \
+                                         `{cell}`"
+                                    ),
+                                ))
+                            }
+                        };
+                    }
                     Column::Input(i) => {
                         let p = inputs[i];
                         if cell.is_empty() || *cell == "-" {
@@ -225,6 +263,7 @@ impl Stimulus {
             stim.inputs.push(in_row);
             stim.expects.push(exp_row);
             stim.lines.push(line);
+            stim.resets.push(reset);
         }
         Ok(stim)
     }

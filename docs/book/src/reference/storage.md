@@ -125,7 +125,9 @@ per byte: for a `mem<u32, N>`, a `u4`, where bit *i* enables bits
 
 ### Reset and simulation
 
-A memory's read register (`value()`) resets to 0; its contents don't. The
+A memory's read register (`value()`) resets to 0; its contents don't.
+[`#[no_reset]`](state.md#registers-without-a-reset) on the field takes the
+read register off the reset as well. The
 write port isn't gated by reset, so if `we` can be 1 while `rst_n` is low,
 the hardware writes during reset. Sinter's simulators start after reset, so
 to match them, keep `we` at 0 in the reset state.

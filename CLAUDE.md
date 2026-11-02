@@ -265,6 +265,14 @@ the functional surface is the only one.)
     `--faults on|off` (`compile_str_faults` / CLI `build --faults`). `off` is
     byte-identical to the assert-free module; `on` co-simulates the sideband
     bit-for-bit (`fn_fault`).
+- **Reset opt-out** (RST1, §9.15) — `#[no_reset]` on a state field sets
+  `ir::Reg::no_reset` on every register under it (and a memory's read
+  registers): a power-on `initial` plus a reset-less `always_ff` in Verilog,
+  and `step_in_reset` (one cycle with `rst_n` low) in both simulators. CSV
+  stimulus takes an active-low `rst_n` column; the Verilator harness takes an
+  optional per-cycle reset schedule (`sim::resets_to_bytes`), and the oracle's
+  `co_simulate_with_resets` drives both. `surface::check_no_reset` rejects it
+  on channel / CDC / staged / instance state.
 - **Hierarchy** (v1.0.0-rc.1, DESIGN §4.3) — a `#[module]` struct becomes its own
   Verilog module. It is a binding whose Verilog Sinter writes itself:
   `lower_binding_step` inlines it into the parent (the simulator stays flat,

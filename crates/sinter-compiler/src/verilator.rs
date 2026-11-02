@@ -14,7 +14,10 @@ use crate::ir::Module;
 
 /// Emit `main.cpp` for the Verilator testbench of `m`.
 ///
-/// Invoked as: `./sim <stimulus.bin> <trace.bin> <cycles>`.
+/// Invoked as: `./sim <stimulus.bin> <trace.bin> <cycles> [<resets.bin>]`.
+/// The optional reset schedule (single-clock designs; RST1) has one byte per
+/// cycle, `1` to hold `rst_n` low for that cycle
+/// ([`crate::sim::resets_to_bytes`]).
 #[must_use]
 pub fn emit_cpp_harness(m: &Module) -> String {
     if m.is_multi_clock() {
@@ -36,7 +39,7 @@ pub fn emit_cpp_harness(m: &Module) -> String {
     let _ = writeln!(out, "    if (argc < 4) {{");
     let _ = writeln!(
         out,
-        "        std::fprintf(stderr, \"usage: %s <stimulus.bin> <trace.bin> <cycles>\\n\", argv[0]);"
+        "        std::fprintf(stderr, \"usage: %s <stimulus.bin> <trace.bin> <cycles> [<resets.bin>]\\n\", argv[0]);"
     );
     let _ = writeln!(out, "        return 2;");
     let _ = writeln!(out, "    }}");
@@ -55,6 +58,21 @@ pub fn emit_cpp_harness(m: &Module) -> String {
     );
     let _ = writeln!(out, "        return 3;");
     let _ = writeln!(out, "    }}");
+    let _ = writeln!(
+        out,
+        "    // Optional reset schedule: one byte per cycle, 1 = rst_n held low."
+    );
+    let _ = writeln!(
+        out,
+        "    std::FILE* frst = argc > 4 ? std::fopen(argv[4], \"rb\") : nullptr;"
+    );
+    let _ = writeln!(out, "    if (argc > 4 && !frst) {{");
+    let _ = writeln!(
+        out,
+        "        std::fprintf(stderr, \"cannot open reset schedule\\n\");"
+    );
+    let _ = writeln!(out, "        return 3;");
+    let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "    uint64_t tmp = 0;");
     let _ = writeln!(out, "    (void)tmp;");
     let _ = writeln!(out);
@@ -69,7 +87,16 @@ pub fn emit_cpp_harness(m: &Module) -> String {
     let _ = writeln!(out, "    top->rst_n = 0; top->eval();");
     let _ = writeln!(out);
     let _ = writeln!(out, "    for (long k = 0; k < cycles; ++k) {{");
-    let _ = writeln!(out, "        top->rst_n = 1;");
+    let _ = writeln!(
+        out,
+        "        int in_reset = frst ? std::fgetc(frst) == 1 : 0;"
+    );
+    let _ = writeln!(
+        out,
+        "        // Release (or assert) the asynchronous reset with the clock low."
+    );
+    let _ = writeln!(out, "        top->clk = 0;");
+    let _ = writeln!(out, "        top->rst_n = in_reset ? 0 : 1;");
     for p in m.inputs() {
         let _ = writeln!(
             out,
@@ -90,6 +117,7 @@ pub fn emit_cpp_harness(m: &Module) -> String {
     let _ = writeln!(out, "        top->clk = 1; top->eval();");
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out);
+    let _ = writeln!(out, "    if (frst) std::fclose(frst);");
     let _ = writeln!(out, "    std::fclose(fin);");
     let _ = writeln!(out, "    std::fclose(fout);");
     let _ = writeln!(out, "    delete top;");

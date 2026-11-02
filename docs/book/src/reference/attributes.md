@@ -10,6 +10,7 @@ name, an integer, or a string, or `key` alone.
 | `#[clock(domain = d, period = p)]` | a method | a clock root with period `p`, required with several domains ([Clock domains](clock-domains.md)) |
 | `#[domain(d)]` | a state field | puts the field's registers in domain `d` ([Clock domains](clock-domains.md)) |
 | `#[encoding(binary)]`, `#[encoding(onehot)]` | an enum | how its variants are encoded ([Types](types.md#enums)) |
+| `#[no_reset]` | a state field | its registers take their value at power-on only, not on `rst_n` ([State](state.md#registers-without-a-reset)) |
 | `#[storage(regs)]`, `#[storage(lutram)]`, `#[storage(bram)]` | a `mem`, `rom`, or `fifo` field | place it in flip-flops, LUT RAM, or block RAM ([Memories](storage.md#placement), [Channels](channels.md#storage)) |
 | `#[module]` | a struct | make it a Verilog module of its own, instantiated by its parent ([Hierarchy](hierarchy.md)) |
 | `#[verilog(module = "m", ...)]` | a struct | bind the struct to Verilog module `m` ([Foreign Verilog](foreign-verilog.md)) |
@@ -31,5 +32,5 @@ struct Queue {
 ```
 
 ```text
-error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `module`, `verilog`
+error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `no_reset`, `module`, `verilog`
 ```

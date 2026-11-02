@@ -20,7 +20,7 @@ use log::{error, info, warn};
 
 use sinter_compiler::ir::Module;
 use sinter_compiler::pinmap::PinMap;
-use sinter_compiler::sim::{gen_stimulus, run_reference, Simulator};
+use sinter_compiler::sim::{gen_stimulus, run_reference_with_resets, Simulator};
 use sinter_compiler::stimulus::{format_value, Stimulus};
 use sinter_compiler::vcd::VcdWriter;
 use sinter_compiler::{
@@ -403,8 +403,9 @@ fn cmd_sim(
         None => gen_stimulus(module, cycles, seed),
     };
 
+    let resets: &[bool] = directed.as_ref().map_or(&[], |s| s.resets.as_slice());
     if let Some(path) = trace {
-        let bytes = run_reference(module, &rows);
+        let bytes = run_reference_with_resets(module, &rows, resets);
         fs::write(path, &bytes).with_context(|| format!("writing trace `{}`", path.display()))?;
         info!("wrote {} ({} bytes)", path.display(), bytes.len());
     }
@@ -454,7 +455,12 @@ fn cmd_sim(
             .map(|p| p.name.clone())
             .zip(row.iter().copied())
             .collect();
-        let out = sim.step(&in_map);
+        let in_reset = resets.get(k).copied().unwrap_or(false);
+        let out = if in_reset {
+            sim.step_in_reset(&in_map)
+        } else {
+            sim.step(&in_map)
+        };
         // The inputs in effect: a domain's hold between its edges.
         let in_str = inputs
             .iter()
@@ -490,7 +496,8 @@ fn cmd_sim(
                 ticks.join(",")
             ))?;
         } else {
-            stdout.line(format_args!("{k:5} | {in_str} || {out_str}"))?;
+            let mark = if in_reset { "  (in reset)" } else { "" };
+            stdout.line(format_args!("{k:5} | {in_str} || {out_str}{mark}"))?;
         }
         if let Some(stim) = &directed {
             mismatches.extend(stim.check_cycle(module, k, &out));

@@ -1,0 +1,15 @@
+# Directed stimulus for fn_no_reset.snt (RST1): `rst_n` is asserted (0) in
+# cycle 3. `phase_q` reads 0 there and is held at 0 through the edge, while
+# the no-reset accumulator and the bank's read register carry on.
+x, we, a, rst_n, expect.phase_q, expect.dp_acc_q, expect.out_1
+1, 1,  3, 1,     0,              0,               0
+2, 0,  3, 1,     1,              1,               0
+3, 0,  3, 1,     2,              3,               1
+4, 0,  3, 0,     0,              6,               1
+5, 0,  3, 1,     0,              10,              1
+0, 0,  3, 1,     1,              15,              1
+0, 0,  3, 0,     0,              15,              1
+0, 0,  3, 0,     0,              15,              1
+7, 1,  3, 1,     0,              15,              1
+0, 0,  3, 1,     1,              22,              1
+0, 0,  3, 1,     2,              22,              7
