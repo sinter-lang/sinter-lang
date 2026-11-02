@@ -68,8 +68,8 @@ const KNOWN: &[Known] = &[
     Known {
         name: "storage",
         site: Site::Field,
-        keys: Some(&["regs", "bram"]),
-        usage: "`#[storage(regs)]` or `#[storage(bram)]` on a `fifo` field",
+        keys: Some(&["regs", "lutram", "bram"]),
+        usage: "`#[storage(regs)]`, `#[storage(lutram)]`, or `#[storage(bram)]` on a `fifo`, `mem`, or `rom` field",
     },
     Known {
         name: "module",

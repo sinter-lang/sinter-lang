@@ -79,10 +79,13 @@ fn a_wire_read_only_by_an_assert_is_simulated_but_not_emitted() {
 }
 
 #[test]
-fn registers_and_ports_cannot_be_named_after_verilog_keywords() {
+fn registers_memories_and_ports_cannot_be_named_after_verilog_keywords() {
     for src in [
         "struct S { pub end: u8 = 0, }
          impl S { #[clock(domain = sys)] fn tick(self, x: u8) -> S { S { end: x } } }",
+        "struct S { table: mem<u8, 4> = 0, }
+         impl S { #[clock(domain = sys)] fn tick(self, a: u2) -> (S, u8) {
+             (S { table: self.table.next(a, 0, 0, 0) }, self.table.value()) } }",
         "struct S { pub v: u8 = 0, }
          impl S { #[clock(domain = sys)] fn tick(self, begin: u8) -> S { S { v: begin } } }",
     ] {

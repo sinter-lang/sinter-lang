@@ -183,3 +183,47 @@ The path is relative to the source file. Each line is one word, in hex, with
 an optional `0x`; this is a subset of the `$readmemh` format. The contents are
 written into the generated Verilog, so it needs no data file at synthesis
 time.
+
+## Placement
+
+Synthesis chooses where a memory goes. `#[storage(..)]` on a `mem` or `rom`
+field asks for a particular kind of storage:
+
+| Hint | Storage | Verilog |
+|---|---|---|
+| `#[storage(lutram)]` | distributed (LUT) RAM | `(* ram_style = "distributed" *)` |
+| `#[storage(bram)]` | block RAM | `(* ram_style = "block" *)` |
+| `#[storage(regs)]` | flip-flops | `(* ram_style = "logic" *)` |
+
+```sinter
+struct Banks {
+    #[storage(lutram)]
+    temps: mem<u36, 32, 4> = 0,
+    #[storage(bram)]
+    lut: mem<u18, 1024> = 0,
+}
+
+impl Banks {
+    #[clock(domain = sys)]
+    fn tick(self, ra: [u5; 4], we: u1, wa: u5, wd: u36, ta: u10) -> (Banks, (u36, u18)) {
+        let t = self.temps.value();
+        let out = (t[0], self.lut.value());
+        (
+            Banks {
+                temps: self.temps.next(ra, we, wa, wd),
+                lut: self.lut.next(ta, 0, 0, 0),
+            },
+            out,
+        )
+    }
+}
+```
+
+A hint changes only the Verilog attribute: the memory behaves the same,
+cycle for cycle, wherever it is placed, and the simulators ignore it. Under
+Yosys's `synth_ecp5`, `temps` becomes 72 `TRELLIS_DPR16X4` (each of the four
+read ports gets its own copy) and `lut` one `DP16KD`.
+
+A `lutram` memory can be at most 256 words deep, so a hint can't silently
+fill the device with LUT RAM; use `bram` for a deeper one. A hint on a
+nested struct's field applies to that memory wherever the struct is used.

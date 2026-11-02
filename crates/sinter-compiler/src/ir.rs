@@ -144,6 +144,24 @@ pub struct Mem {
     pub read_ports: u32,
     /// Per-word reset/power-up contents (MEM1: all zero), length `depth`.
     pub reset: Vec<u64>,
+    /// The `#[storage(..)]` placement hint (STOR1, DESIGN §9.15).
+    pub storage: Storage,
+}
+
+/// Where a memory should be placed (STOR1, DESIGN §9.15). A hint to synthesis
+/// only: the Verilog array carries a `ram_style` attribute, and the simulators
+/// ignore it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Storage {
+    /// No hint: synthesis chooses.
+    #[default]
+    Auto,
+    /// Flip-flops (`#[storage(regs)]`).
+    Regs,
+    /// Distributed (LUT) RAM (`#[storage(lutram)]`).
+    Lutram,
+    /// Block RAM (`#[storage(bram)]`).
+    Bram,
 }
 
 /// A synchronous memory write port (MEM1: one per memory). `we`/`addr`/`data` are

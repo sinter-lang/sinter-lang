@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use sinter_syntax::ast::{
     AttrValue, BinOp, CastMode, EnumItem, Expr, ExprKind, Func, Item, Param, Pattern, Pos, Program,
-    Stmt, StructItem, Type, TypeRef, UnaryOp, Visibility,
+    Stmt, StructField, StructItem, Type, TypeRef, UnaryOp, Visibility,
 };
 
 use crate::error::{mask, CompileError};
@@ -44,6 +44,10 @@ const MAX_INLINE_DEPTH: usize = 256;
 /// All IR scalar widths must fit `eval`'s `u64` (DESIGN §6.2). Mirrors
 /// `functional::MAX_WIDTH`.
 const MAX_WIDTH: u32 = 64;
+
+/// The deepest memory `#[storage(lutram)]` accepts (STOR1, DESIGN §9.15), so a
+/// placement hint can't silently fill the device with LUT RAM.
+const MAX_LUTRAM_DEPTH: usize = 256;
 
 /// A resolved functional type.
 #[derive(Debug, Clone)]
@@ -567,11 +571,13 @@ impl Elaborator<'_> {
             envs.push(env);
         }
 
-        // Registers and ports keep their source names in the emitted Verilog
-        // (they are its interface), so a SystemVerilog keyword can't be one.
+        // Registers, memories, and ports keep their source names in the emitted
+        // Verilog (they are its interface), so a SystemVerilog keyword can't be
+        // one.
         for name in regs
             .iter()
             .map(|r| &r.name)
+            .chain(mems.iter().map(|m| &m.name))
             .chain(ports.iter().map(|p| &p.name))
         {
             if crate::verilog::is_keyword(name) {
@@ -579,8 +585,8 @@ impl Elaborator<'_> {
                     &self.ctx,
                     first.pos,
                     format!(
-                        "`{name}` is a SystemVerilog keyword, so it can't name a register or \
-                         port in the emitted Verilog; rename the field or parameter"
+                        "`{name}` is a SystemVerilog keyword, so it can't name a register, \
+                         memory, or port in the emitted Verilog; rename the field or parameter"
                     ),
                 ));
             }
@@ -3344,6 +3350,18 @@ impl Elaborator<'_> {
         out: &mut Vec<ir::Mem>,
         pos: Pos,
     ) -> Result<(), CompileError> {
+        self.collect_mems(v, path, ir::Storage::Auto, out, pos)
+    }
+
+    /// [`Self::collect_mem_decls`], with the enclosing field's `#[storage]`.
+    fn collect_mems(
+        &self,
+        v: &Val,
+        path: &str,
+        storage: ir::Storage,
+        out: &mut Vec<ir::Mem>,
+        pos: Pos,
+    ) -> Result<(), CompileError> {
         match v {
             Val::Mem {
                 elem,
@@ -3359,6 +3377,16 @@ impl Elaborator<'_> {
                 // A `rom` image shorter than the depth is zero-filled.
                 let mut reset = data.clone().unwrap_or_default();
                 reset.resize(depth, 0);
+                if storage == ir::Storage::Lutram && depth > MAX_LUTRAM_DEPTH {
+                    return Err(err(
+                        &self.ctx,
+                        pos,
+                        format!(
+                            "`{path}` is {depth} words deep, too deep for `#[storage(lutram)]` \
+                             (at most {MAX_LUTRAM_DEPTH}); use `bram`"
+                        ),
+                    ));
+                }
                 out.push(ir::Mem {
                     name: path.to_string(),
                     elem_ty,
@@ -3366,20 +3394,27 @@ impl Elaborator<'_> {
                     addr_bits: *addr_bits,
                     read_ports: *ports,
                     reset,
+                    storage,
                 });
                 Ok(())
             }
-            Val::Struct(_, fields) => fields
-                .iter()
-                .try_for_each(|(f, val)| self.collect_mem_decls(val, &join(path, f), out, pos)),
+            Val::Struct(name, fields) => {
+                let decl = self.tables.structs.get(name).copied();
+                fields.iter().try_for_each(|(f, val)| {
+                    let field = decl.and_then(|s| s.fields.iter().find(|sf| &sf.name == f));
+                    let storage = field.map_or(ir::Storage::Auto, field_storage);
+                    let pos = field.map_or(pos, |sf| sf.pos);
+                    self.collect_mems(val, &join(path, f), storage, out, pos)
+                })
+            }
             Val::Array(items) => items.iter().enumerate().try_for_each(|(i, val)| {
-                self.collect_mem_decls(val, &join(path, &i.to_string()), out, pos)
+                self.collect_mems(val, &join(path, &i.to_string()), storage, out, pos)
             }),
             Val::Tuple(items) => items.iter().enumerate().try_for_each(|(i, val)| {
-                self.collect_mem_decls(val, &join(path, &i.to_string()), out, pos)
+                self.collect_mems(val, &join(path, &i.to_string()), storage, out, pos)
             }),
             Val::Option { payload, .. } => {
-                self.collect_mem_decls(payload, &join(path, "payload"), out, pos)
+                self.collect_mems(payload, &join(path, "payload"), storage, out, pos)
             }
             Val::Scalar(..) | Val::Enum(..) => Ok(()),
         }
@@ -3745,6 +3780,22 @@ fn rename_leaves(v: &Val, path: &str, renamed: &HashMap<String, String>) -> Val 
             payload: Box::new(rename_leaves(payload, &join(path, "payload"), renamed)),
         },
         Val::Mem { .. } => v.clone(),
+    }
+}
+
+/// A field's `#[storage(..)]` placement hint (STOR1). The argument was checked
+/// by `channel_desugar`.
+fn field_storage(f: &StructField) -> ir::Storage {
+    let arg = f
+        .attrs
+        .iter()
+        .find(|a| a.name == "storage")
+        .and_then(|a| a.args.first());
+    match arg.map(|a| a.key.as_str()) {
+        Some("regs") => ir::Storage::Regs,
+        Some("lutram") => ir::Storage::Lutram,
+        Some("bram") => ir::Storage::Bram,
+        _ => ir::Storage::Auto,
     }
 }
 

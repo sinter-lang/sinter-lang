@@ -531,7 +531,7 @@ fn storage_attribute_rejections() {
     compile_err(
         "struct Q { #[storage(bram)] pub v: u8 = 0, }
          impl Q { #[clock(domain = sys)] fn tick(self) -> Q { Q { v: self.v } } }",
-        "`#[storage(..)]` applies only to a `fifo` field",
+        "`#[storage(..)]` applies only to a `fifo`, `mem`, or `rom` field",
     );
     compile_err(
         "struct Q { #[storage(flash)] q: fifo<u8, 4>, }

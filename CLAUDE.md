@@ -219,7 +219,9 @@ the functional surface is the only one.)
   - **Memory** (MEM1–MEM2, §9.6) — `mem<T, N, R>` synchronous block RAM with
     `R` read ports (array `raddr` / `value()` when `R > 1`) and a `u1` or
     byte-lane-mask write enable, `value()` / `next(raddr, we, waddr, wdata)`,
-    READ_FIRST, zero-init.
+    READ_FIRST, zero-init. `#[storage(regs|lutram|bram)]` on a `mem` / `rom` /
+    `fifo` field is a placement hint (STOR1, §9.15): `ir::Mem::storage` →
+    the array's Yosys `ram_style`, ignored by the simulators.
   - **ROM** (ROM1, §9.7) — `rom<T, N>` read-only, `value()` / `next(raddr)`,
     contents from an inline array literal or `include_hex!("f.hex")`.
   - **Option** (O1–O2, §6.5 / §9.4) — `Option<T>`, `Some` / `None`, `match`, and

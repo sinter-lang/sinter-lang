@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use sinter_syntax::ast::{BinOp, CastMode, Type, UnaryOp};
 
-use crate::ir::{self, Expr, ExprKind, Module};
+use crate::ir::{self, Expr, ExprKind, Module, Storage};
 
 /// Emit the SystemVerilog text for a module. The caller writes it to
 /// `<module.name>.sv` (filename matches the module name, per the skill).
@@ -388,9 +388,16 @@ fn emit_decls(out: &mut String, m: &Module) {
         for mem in &m.mems {
             // `logic [W-1:0] name [0:depth-1];` — an indexed array; Yosys infers
             // block RAM, kept out of the async-reset block so inference survives.
+            // A `#[storage]` hint (STOR1) becomes Yosys's `ram_style`.
+            let style = match mem.storage {
+                Storage::Auto => "",
+                Storage::Regs => "(* ram_style = \"logic\" *) ",
+                Storage::Lutram => "(* ram_style = \"distributed\" *) ",
+                Storage::Bram => "(* ram_style = \"block\" *) ",
+            };
             let _ = writeln!(
                 out,
-                "    logic {} {} [0:{}];",
+                "    {style}logic {} {} [0:{}];",
                 net_type(mem.elem_ty),
                 mem.name,
                 mem.depth - 1

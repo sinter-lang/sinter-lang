@@ -46,7 +46,7 @@ elsewhere:
   `Receiver`, `Push`, `sync`, `pulse`, `mailbox`, and `async_fifo` when
   followed by `<`.
 
-Avoid naming a register or port after a SystemVerilog keyword (`logic`,
+Avoid naming a register, memory, or port after a SystemVerilog keyword (`logic`,
 `begin`, `end`, and so on): the compiler rejects it, because the name would
 appear in the generated Verilog.
 

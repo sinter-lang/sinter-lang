@@ -1,0 +1,48 @@
+// STOR1 (DESIGN §9.15): memory placement hints.
+//
+// `#[storage(..)]` on a `mem` or `rom` field says where synthesis should put
+// it: `lutram` (distributed RAM), `bram` (block RAM), or `regs` (flip-flops).
+// It is a hint only: the simulator is unchanged, and the Verilog array gets a
+// Yosys `ram_style` attribute. Here a 4-read-port register bank goes to LUT
+// RAM, a 1024-word table to block RAM, and a small scratch memory to
+// flip-flops.
+struct Banks {
+    #[storage(lutram)]
+    temps: mem<u36, 32, 4> = 0,
+    #[storage(bram)]
+    lut: mem<u18, 1024> = 0,
+    #[storage(regs)]
+    scratch: mem<u8, 16> = 0,
+}
+
+impl Banks {
+    #[clock(domain = sys)]
+    fn tick(
+        self,
+        ra: u5,
+        rb: u5,
+        rc: u5,
+        rd: u5,
+        we: u1,
+        wa: u5,
+        wd: u36,
+        ta: u10,
+        twe: u1,
+        twa: u10,
+        twd: u18,
+        sa: u4,
+        swe: u1,
+        swd: u8,
+    ) -> (Banks, (u36, u36, u36, u36, u18, u8)) {
+        let t = self.temps.value();
+        let out = (t[0], t[1], t[2], t[3], self.lut.value(), self.scratch.value());
+        (
+            Banks {
+                temps: self.temps.next([ra, rb, rc, rd], we, wa, wd),
+                lut: self.lut.next(ta, twe, twa, twd),
+                scratch: self.scratch.next(sa, swe, sa, swd),
+            },
+            out,
+        )
+    }
+}

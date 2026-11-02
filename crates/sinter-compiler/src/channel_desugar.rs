@@ -49,6 +49,7 @@ use sinter_syntax::ast::{
 use sinter_syntax::parse_program;
 
 use crate::error::CompileError;
+use crate::ir;
 
 const CTX: &str = "channel";
 
@@ -91,6 +92,9 @@ struct Mono {
     cbits: u32,
     /// A `fifo` held in block RAM (CHAN4) rather than registers.
     bram: bool,
+    /// A `bram` fifo whose `mem` is placed in LUT RAM (`#[storage(lutram)]`,
+    /// STOR1).
+    lutram: bool,
 }
 
 /// The depth from which a `fifo` defaults to block-RAM storage (CHAN4).
@@ -254,17 +258,19 @@ fn rewrite_fifo_fields(
                 depth,
             } = &f.ty
             else {
-                if storage.is_some() {
+                // A `mem` / `rom` takes the hint as is (STOR1); `elaborate`
+                // carries it to the IR.
+                if storage.is_some() && !matches!(f.ty, TypeRef::Mem { .. }) {
                     return Err(sem(
                         f.pos,
-                        "`#[storage(..)]` applies only to a `fifo` field",
+                        "`#[storage(..)]` applies only to a `fifo`, `mem`, or `rom` field",
                     ));
                 }
                 continue;
             };
             let mut m = build_mono(ChannelKind::Fifo, elem, depth, f.pos)?;
-            if let Some(bram) = storage {
-                m = with_storage(m, bram);
+            if let Some(storage) = storage {
+                m = with_storage(m, storage);
             }
             f.ty = TypeRef::Named(m.name.clone());
             monos.entry(m.name.clone()).or_insert(m);
@@ -273,30 +279,37 @@ fn rewrite_fifo_fields(
     Ok(())
 }
 
-/// A field's `#[storage(regs | bram)]`: `Some(true)` for BRAM.
-fn storage_attr(f: &sinter_syntax::ast::StructField) -> Result<Option<bool>, CompileError> {
+/// A field's `#[storage(regs | lutram | bram)]`.
+fn storage_attr(f: &sinter_syntax::ast::StructField) -> Result<Option<ir::Storage>, CompileError> {
     let Some(attr) = f.attrs.iter().find(|a| a.name == "storage") else {
         return Ok(None);
     };
     match attr.args.as_slice() {
-        [arg] if arg.value.is_none() && arg.key == "regs" => Ok(Some(false)),
-        [arg] if arg.value.is_none() && arg.key == "bram" => Ok(Some(true)),
+        [arg] if arg.value.is_none() && arg.key == "regs" => Ok(Some(ir::Storage::Regs)),
+        [arg] if arg.value.is_none() && arg.key == "lutram" => Ok(Some(ir::Storage::Lutram)),
+        [arg] if arg.value.is_none() && arg.key == "bram" => Ok(Some(ir::Storage::Bram)),
         _ => Err(sem(
             f.pos,
-            "`#[storage(..)]` takes `regs` or `bram`, e.g. `#[storage(bram)]`",
+            "`#[storage(..)]` takes `regs`, `lutram`, or `bram`, e.g. `#[storage(bram)]`",
         )),
     }
 }
 
-/// `m` re-targeted at register (`false`) or block-RAM (`true`) storage.
-fn with_storage(m: Mono, bram: bool) -> Mono {
-    let name = format!(
-        "{}Fifo_{}_{}",
-        if bram { "B" } else { "" },
-        mangle(&m.elem_src),
-        m.n
-    );
-    Mono { name, bram, ..m }
+/// `m` re-targeted at register, LUT-RAM, or block-RAM storage. A LUT-RAM
+/// `fifo` is the `mem`-backed one with its `mem` placed in LUT RAM.
+fn with_storage(m: Mono, storage: ir::Storage) -> Mono {
+    let (prefix, bram, lutram) = match storage {
+        ir::Storage::Regs | ir::Storage::Auto => ("", false, false),
+        ir::Storage::Lutram => ("L", true, true),
+        ir::Storage::Bram => ("B", true, false),
+    };
+    let name = format!("{prefix}Fifo_{}_{}", mangle(&m.elem_src), m.n);
+    Mono {
+        name,
+        bram,
+        lutram,
+        ..m
+    }
 }
 
 /// Replace `t` (and any channel type inside it) with its synthesized struct
@@ -490,6 +503,7 @@ fn mono_for(kind: ChannelKind, elem_src: String, n: usize) -> Mono {
         n,
         cbits,
         bram,
+        lutram: false,
     }
 }
 
@@ -788,10 +802,15 @@ fn gen_bram_fifo_source(m: &Mono) -> String {
     let n = *n;
     let abits = n.trailing_zeros();
     let e = mangle(ts);
+    let hint = if m.lutram {
+        "#[storage(lutram)]\n    "
+    } else {
+        ""
+    };
     format!(
         "\
 struct {name} {{
-    ram: mem<{ts}, {n}> = 0,
+    {hint}ram: mem<{ts}, {n}> = 0,
     rd: u{abits} = 0,
     count: u{cbits} = 0,
     out: {ts} = 0,

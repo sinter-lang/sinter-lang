@@ -141,6 +141,12 @@ const EXAMPLES: &[Example] = &[
         name: "fn_fifo_bram",
         source: include_str!("../../../examples/fn_fifo_bram.snt"),
     },
+    // STOR1: `#[storage(lutram | bram | regs)]` placement hints on three
+    // memories. Hints change only the Verilog's `ram_style`, never behaviour.
+    Example {
+        name: "fn_storage",
+        source: include_str!("../../../examples/fn_storage.snt"),
+    },
     // CLK1 (DESIGN §6.7 / §9.14): two clock domains with coprime periods (3, 7)
     // and no crossing. The sim and the Verilator harness replay the same edge
     // schedule, including both edges at once.

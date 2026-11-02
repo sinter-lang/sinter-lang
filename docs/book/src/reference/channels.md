@@ -95,8 +95,9 @@ impl Queue {
 
 A `fifo` with 64 or more entries is built from block RAM; a smaller one from
 registers. `#[storage(regs)]` or `#[storage(bram)]` on the field overrides the
-choice. The two behave identically, cycle for cycle: `front()` is available in
-the same cycle either way.
+choice, and `#[storage(lutram)]` builds it on a memory in LUT RAM (at most 256
+entries; see [Placement](storage.md#placement)). They all behave identically,
+cycle for cycle: `front()` is available in the same cycle either way.
 
 ```sinter,ignore
 #[storage(bram)]
