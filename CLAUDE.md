@@ -59,7 +59,9 @@ the devcontainer, and CI (`just ci` reproduces the GitHub pipeline step for step
   crates package and build from their packages (CI runs it).
 
 The `sinter` CLI has three subcommands (a `.snt` path is compiled as the root of
-a possibly-multi-file project — sibling `mod`s are pulled in automatically):
+a possibly-multi-file project — sibling `mod`s are pulled in automatically).
+Each takes `-D NAME=VALUE` / `--defines F` to override an integer `pub const`
+(DEF1, `defines.rs`, applied just before `const_fold`):
 
 - `sinter check <file.snt>` — parse + type-check, report errors.
 - `sinter build <file.snt> --emit verilog|harness|rust|all [--out DIR] [--pins F.pins

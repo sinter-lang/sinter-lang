@@ -1,0 +1,15 @@
+// DEF1: a parameter in a submodule is overridden by its path, `setup::N`.
+mod setup;
+
+use setup::N;
+
+struct Top {
+    pub v: u8 = 0,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self) -> Top {
+        Top { v: N }
+    }
+}

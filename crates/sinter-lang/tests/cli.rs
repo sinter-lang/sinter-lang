@@ -108,3 +108,67 @@ fn an_unknown_constraints_extension_is_rejected() {
         "stderr: {stderr}"
     );
 }
+
+const PARAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/fn_params.snt");
+
+/// `-D` overrides a `pub const` on `check`, `build`, and `sim`, and
+/// `--defines` reads a file of them, with a `-D` winning (DEF1).
+#[test]
+fn defines_override_a_pub_const() {
+    let dir = scratch("cli-defines");
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_sinter"))
+            .args(args)
+            .output()
+            .expect("run sinter")
+    };
+    let out = dir.to_str().expect("utf-8 path");
+    let built = run(&[
+        "build", PARAMS, "--emit", "verilog", "--out", out, "-D", "DEPTH=64",
+    ]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let sv = std::fs::read_to_string(dir.join("Params.sv")).expect("read sv");
+    assert!(sv.contains("ram [0:63]"), "{sv}");
+
+    let file = dir.join("wide.defs");
+    std::fs::write(&file, "# wide build\nDEPTH = 32\nLANES = 8\n").expect("write defines");
+    let file = file.to_str().expect("utf-8 path");
+    let built = run(&[
+        "build",
+        PARAMS,
+        "--emit",
+        "verilog",
+        "--out",
+        out,
+        "--defines",
+        file,
+        "-D",
+        "DEPTH=128",
+    ]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let sv = std::fs::read_to_string(dir.join("Params.sv")).expect("read sv");
+    assert!(sv.contains("ram [0:127]") && sv.contains("lanes_7"), "{sv}");
+
+    let sim = run(&["sim", PARAMS, "--cycles", "2", "-D", "STEP=9"]);
+    assert!(
+        sim.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sim.stderr)
+    );
+
+    let bad = run(&["check", PARAMS, "-D", "NOPE=1"]);
+    assert!(!bad.status.success());
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        stderr.contains("-D NOPE=1: no constant `NOPE`"),
+        "stderr: {stderr}"
+    );
+}

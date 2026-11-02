@@ -16,6 +16,7 @@ pub mod board;
 pub mod cdc_desugar;
 pub mod channel_desugar;
 pub mod const_fold;
+pub mod defines;
 pub mod elaborate;
 pub mod error;
 pub mod eval;
@@ -40,6 +41,7 @@ pub mod vcd;
 pub mod verilator;
 pub mod verilog;
 
+pub use defines::Define;
 pub use error::CompileError;
 pub use fault_latch::FaultMode;
 pub use ir::{Design, Module};
@@ -64,9 +66,22 @@ pub fn compile_str(source: &str) -> Result<Design, CompileError> {
 /// # Errors
 /// Returns a [`CompileError`] on a parse or semantic error.
 pub fn compile_str_faults(source: &str, faults: FaultMode) -> Result<Design, CompileError> {
+    compile_str_with(source, faults, &[])
+}
+
+/// Like [`compile_str_faults`], with build-time constant overrides applied
+/// (DEF1, DESIGN §9.15).
+///
+/// # Errors
+/// Returns a [`CompileError`] on a parse or semantic error, or a bad override.
+pub fn compile_str_with(
+    source: &str,
+    faults: FaultMode,
+    defines: &[Define],
+) -> Result<Design, CompileError> {
     let program = sinter_syntax::parse_program(source)?;
     // No source directory, so `include_hex!` has nowhere to resolve against.
-    compile_program(program, None, faults)
+    compile_program(program, None, faults, defines)
 }
 
 /// Parse, resolve, and check a multi-file project rooted at `root` (DESIGN §10).
@@ -91,11 +106,26 @@ pub fn compile_project_faults(
     root: &std::path::Path,
     faults: FaultMode,
 ) -> Result<Design, CompileError> {
+    compile_project_with(root, faults, &[])
+}
+
+/// Like [`compile_project_faults`], with build-time constant overrides
+/// applied (DEF1, DESIGN §9.15); a submodule's constant is named by its path
+/// (`setup::N_MUL`).
+///
+/// # Errors
+/// Returns a [`CompileError`] on a load, resolution, or semantic error, or a
+/// bad override.
+pub fn compile_project_with(
+    root: &std::path::Path,
+    faults: FaultMode,
+    defines: &[Define],
+) -> Result<Design, CompileError> {
     let (tree, files) = sinter_syntax::load_project_sources(root)?;
     let located = |e: CompileError| e.with_sources(&files);
     let program = resolve::resolve_project(&tree).map_err(located)?;
     // `include_hex!` paths resolve against the root source file's directory.
-    compile_program(program, root.parent(), faults).map_err(located)
+    compile_program(program, root.parent(), faults, defines).map_err(located)
 }
 
 /// Check and lower an already-resolved [`Design`] from a flat program. `base` is
@@ -114,12 +144,14 @@ fn compile_program(
     program: sinter_syntax::ast::Program,
     base: Option<&std::path::Path>,
     faults: FaultMode,
+    defines: &[Define],
 ) -> Result<Design, CompileError> {
     surface::check_attributes(&program)?;
     surface::check_pub_internal_state(&program)?;
     surface::check_no_reset(&program)?;
     let mut program = program;
     struct_update::expand(&mut program)?;
+    defines::apply(&mut program, defines)?;
     const_fold::fold(&mut program)?;
     include_expand::expand_includes(&mut program, base)?;
     // Lower channel fields (`fifo`/`ring`/`flow`) to synthesized struct + impl

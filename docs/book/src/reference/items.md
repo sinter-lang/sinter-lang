@@ -28,6 +28,23 @@ constant must be a literal.
 A constant can be used anywhere an expression can, and as an array length,
 repeat count, memory depth, or bit-slice bound.
 
+### Build-time parameters
+
+An integer `pub const` is also a parameter of the build: `-D NAME=VALUE` on
+[`sinter check`, `build`, or `sim`](../tools/cli.md#build-time-parameters)
+replaces its value before anything reads it, so every use of it, and every
+constant computed from it, sees the new value:
+
+```text
+sinter build engine.snt -D N_MUL=2 -D DEPTH=64
+```
+
+A constant in another module is named by its path from the root module
+(`setup::N_MUL`). Only an integer `pub const` can be overridden, the value
+must fit its type, and the design must still check with it (a memory depth
+must stay a power of two, for example). The generated Verilog and Rust are
+specialized to the values given: they have no parameters of their own.
+
 ## Functions
 
 ```sinter

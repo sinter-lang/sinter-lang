@@ -15,7 +15,7 @@ use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use log::{error, info, warn};
 
 use sinter_compiler::ir::Module;
@@ -24,7 +24,7 @@ use sinter_compiler::sim::{gen_stimulus, run_reference_with_resets, Simulator};
 use sinter_compiler::stimulus::{format_value, Stimulus};
 use sinter_compiler::vcd::VcdWriter;
 use sinter_compiler::{
-    board, compile_project_faults, fault_latch, rust_sim, verilator, verilog, FaultMode,
+    board, compile_project_with, fault_latch, rust_sim, verilator, verilog, Define, FaultMode,
 };
 
 /// The Sinter HDL compiler.
@@ -41,12 +41,16 @@ enum Command {
     Check {
         /// Path to a `.snt` source file.
         file: PathBuf,
+        #[command(flatten)]
+        consts: ConstArgs,
     },
     /// Emit backend artifacts (SystemVerilog, a Verilator harness, a Rust
     /// simulator crate).
     Build {
         /// Path to a `.snt` source file.
         file: PathBuf,
+        #[command(flatten)]
+        consts: ConstArgs,
         /// Which artifacts to emit.
         #[arg(long, value_enum, default_value_t = Emit::All)]
         emit: Emit,
@@ -73,6 +77,8 @@ enum Command {
     Sim {
         /// Path to a `.snt` source file.
         file: PathBuf,
+        #[command(flatten)]
+        consts: ConstArgs,
         /// Number of cycles of random stimulus to simulate.
         #[arg(long, default_value_t = 16)]
         cycles: usize,
@@ -94,6 +100,34 @@ enum Command {
     },
 }
 
+/// Build-time constant overrides (DESIGN §9.15, DEF1).
+#[derive(Args)]
+struct ConstArgs {
+    /// Override an integer `pub const`, named by its path from the root
+    /// module (`N_MUL`, `setup::N_MUL`). Repeatable; applied after `--defines`.
+    #[arg(short = 'D', value_name = "NAME=VALUE")]
+    define: Vec<String>,
+    /// A file of overrides, one `NAME = VALUE` per line (`#` comments).
+    #[arg(long, value_name = "FILE")]
+    defines: Option<PathBuf>,
+}
+
+impl ConstArgs {
+    /// The overrides: the file's first, then each `-D`, so a `-D` wins.
+    fn parse(&self) -> Result<Vec<Define>> {
+        let mut out = Vec::new();
+        if let Some(path) = &self.defines {
+            let text = fs::read_to_string(path)
+                .with_context(|| format!("reading defines `{}`", path.display()))?;
+            out.extend(Define::parse_file(&text, &path.display().to_string())?);
+        }
+        for spec in &self.define {
+            out.push(Define::parse(spec)?);
+        }
+        Ok(out)
+    }
+}
+
 #[derive(Copy, Clone, ValueEnum)]
 enum Emit {
     /// SystemVerilog only.
@@ -113,9 +147,10 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Check { file } => cmd_check(&file),
+        Command::Check { file, consts } => cmd_check(&file, &consts.parse()?),
         Command::Build {
             file,
+            consts,
             emit,
             out,
             pins,
@@ -123,6 +158,7 @@ fn main() -> Result<()> {
             faults,
         } => cmd_build(
             &file,
+            &consts.parse()?,
             emit,
             &out,
             pins.as_deref(),
@@ -131,6 +167,7 @@ fn main() -> Result<()> {
         ),
         Command::Sim {
             file,
+            consts,
             cycles,
             seed,
             stimulus,
@@ -138,6 +175,7 @@ fn main() -> Result<()> {
             vcd,
         } => cmd_sim(
             &file,
+            &consts.parse()?,
             cycles,
             seed,
             stimulus.as_deref(),
@@ -151,8 +189,8 @@ fn main() -> Result<()> {
 /// `mod` declarations pull in sibling files, names resolve across modules, and
 /// the result lowers to the same flat IR as the equivalent single file (DESIGN
 /// §10). A file with no `mod`s compiles exactly as before.
-fn read_and_compile(file: &Path, faults: FaultMode) -> Result<Vec<Module>> {
-    let design = compile_project_faults(file, faults)
+fn read_and_compile(file: &Path, faults: FaultMode, defines: &[Define]) -> Result<Vec<Module>> {
+    let design = compile_project_with(file, faults, defines)
         .with_context(|| format!("compiling `{}`", file.display()))?;
     Ok(design.modules)
 }
@@ -180,8 +218,8 @@ impl Stdout {
     }
 }
 
-fn cmd_check(file: &Path) -> Result<()> {
-    let modules = read_and_compile(file, FaultMode::Off)?;
+fn cmd_check(file: &Path, defines: &[Define]) -> Result<()> {
+    let modules = read_and_compile(file, FaultMode::Off, defines)?;
     let mut stdout = Stdout::default();
     for m in &modules {
         stdout.line(format_args!(
@@ -206,6 +244,7 @@ fn cmd_check(file: &Path) -> Result<()> {
 
 fn cmd_build(
     file: &Path,
+    defines: &[Define],
     emit: Emit,
     out: &Path,
     pins: Option<&Path>,
@@ -217,7 +256,7 @@ fn cmd_build(
     } else {
         FaultMode::Off
     };
-    let modules = read_and_compile(file, mode)?;
+    let modules = read_and_compile(file, mode, defines)?;
     fs::create_dir_all(out).with_context(|| format!("creating output dir `{}`", out.display()))?;
 
     // The first module is the top; the rest are its `#[module]` children.
@@ -370,13 +409,14 @@ fn emit_board(
 
 fn cmd_sim(
     file: &Path,
+    defines: &[Define],
     cycles: usize,
     seed: u64,
     stimulus: Option<&Path>,
     trace: Option<&Path>,
     vcd: Option<&Path>,
 ) -> Result<()> {
-    let modules = read_and_compile(file, FaultMode::Off)?;
+    let modules = read_and_compile(file, FaultMode::Off, defines)?;
     let module = modules
         .first()
         .context("source contains no modules to simulate")?;

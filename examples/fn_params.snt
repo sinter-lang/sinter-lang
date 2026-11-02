@@ -1,0 +1,37 @@
+// DEF1 (DESIGN §9.15): build-time parameters.
+//
+// A `pub const` is a parameter of the build: `-D NAME=VALUE` on `sinter
+// check`, `build`, or `sim` replaces its value before anything reads it, so
+// the array below has `LANES` registers, the memory `DEPTH` words, and the
+// step is `STEP`, whatever the source says. The Verilog is specialized to the
+// values, with no parameters of its own:
+//
+//     sinter build fn_params.snt -D LANES=8 -D DEPTH=64 -D STEP=5
+pub const LANES: u8 = 4;
+pub const DEPTH: u16 = 16;
+pub const STEP: u8 = 3;
+
+// The last lane, computed from the parameter.
+const LAST: u8 = (LANES - 1) as u8 wrap;
+
+struct Params {
+    lanes: [u8; LANES] = [0; LANES],
+    ptr: u8 = 0,
+    ram: mem<u8, DEPTH> = 0,
+}
+
+impl Params {
+    #[clock(domain = sys)]
+    fn tick(self, x: u8, a: u8, we: u1) -> (Params, (u8, u8)) {
+        let v = (x + STEP) as u8 wrap;
+        let next_ptr: u8 = if self.ptr == LAST { 0 } else { (self.ptr + 1) as u8 wrap };
+        (
+            Params {
+                lanes: self.lanes.set(self.ptr, v),
+                ptr: next_ptr,
+                ram: self.ram.next(a, we, a, v),
+            },
+            (self.lanes[self.ptr], self.ram.value()),
+        )
+    }
+}

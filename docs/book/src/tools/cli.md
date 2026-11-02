@@ -1,14 +1,31 @@
 # The `sinter` command
 
 ```text
-sinter check <FILE>
-sinter build <FILE> [--emit verilog|harness|rust|all] [--out DIR] [--pins FILE [--constraints FILE]] [--faults]
-sinter sim   <FILE> [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE]
+sinter check <FILE> [-D NAME=VALUE]... [--defines FILE]
+sinter build <FILE> [-D NAME=VALUE]... [--defines FILE] [--emit verilog|harness|rust|all] [--out DIR] [--pins FILE [--constraints FILE]] [--faults]
+sinter sim   <FILE> [-D NAME=VALUE]... [--defines FILE] [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE]
 ```
 
 `<FILE>` is a `.snt` file, compiled as the root of its project: `mod`
 declarations in it pull in the other files (see
 [Modules](../reference/items.md#modules)).
+
+## Build-time parameters
+
+On every command, `-D NAME=VALUE` overrides an integer `pub const`
+([Build-time parameters](../reference/items.md#build-time-parameters)), and
+`--defines FILE` reads overrides from a file, one `NAME = VALUE` per line
+with `#` comments:
+
+```text
+# wide.defs
+N_MUL = 2
+setup::DEPTH = 64
+```
+
+A value is decimal (negative for a signed constant), `0x` hex, or `0b`
+binary. The file's overrides come first and each `-D` after them, so a `-D`
+wins over the file.
 
 ## `sinter check`
 

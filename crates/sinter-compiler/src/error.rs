@@ -36,6 +36,16 @@ pub enum CompileError {
     /// item that has one.
     #[error("{}", render_all(.0))]
     Multiple(Vec<CompileError>),
+
+    /// A bad build-time constant override (DEF1, DESIGN §9.15): from `-D`, or
+    /// a line of a `--defines` file.
+    #[error("{origin}: {msg}")]
+    Define {
+        /// Where the override came from: `-D NAME=VALUE`, or `file:line`.
+        origin: String,
+        /// Human-readable message.
+        msg: String,
+    },
 }
 
 /// The errors one after another, then how many there were.
