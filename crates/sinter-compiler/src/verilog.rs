@@ -604,7 +604,18 @@ fn emit_instances(out: &mut String, m: &Module) {
         conns.extend(inst.inputs.iter().map(|(p, w)| (p.as_str(), w.as_str())));
         conns.extend(inst.outputs.iter().map(|(p, w)| (p.as_str(), w.as_str())));
         let width = conns.iter().map(|(p, _)| p.len()).max().unwrap_or(0);
-        let _ = writeln!(out, "    {} {} (", inst.module, inst.name);
+        if inst.params.is_empty() {
+            let _ = writeln!(out, "    {} {} (", inst.module, inst.name);
+        } else {
+            // `#[params]` (EXT2): named parameter overrides.
+            let pw = inst.params.iter().map(|(p, _)| p.len()).max().unwrap_or(0);
+            let _ = writeln!(out, "    {} #(", inst.module);
+            for (i, (name, value)) in inst.params.iter().enumerate() {
+                let comma = if i + 1 < inst.params.len() { "," } else { "" };
+                let _ = writeln!(out, "        .{name:pw$} ({value}){comma}");
+            }
+            let _ = writeln!(out, "    ) {} (", inst.name);
+        }
         for (i, (port, wire)) in conns.iter().enumerate() {
             let comma = if i + 1 < conns.len() { "," } else { "" };
             let _ = writeln!(out, "        .{port:width$} ({wire}){comma}");

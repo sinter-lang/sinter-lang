@@ -81,6 +81,12 @@ const KNOWN: &[Known] = &[
         usage: "`#[no_reset]` on a state field",
     },
     Known {
+        name: "params",
+        site: Site::Struct,
+        keys: None,
+        usage: "`#[params(NAME = value, ...)]` on a `#[verilog]` struct",
+    },
+    Known {
         name: "module",
         site: Site::Struct,
         keys: Some(&[]),
@@ -163,6 +169,14 @@ pub fn check_attributes(program: &Program) -> Result<(), CompileError> {
             Item::Struct(s) => {
                 check(&s.attrs, Site::Struct, &s.name)?;
                 let has = |n: &str| s.attrs.iter().find(|a| a.name == n);
+                if let (Some(p), None) = (has("params"), has("verilog")) {
+                    return Err(sem(
+                        &s.name,
+                        p.pos,
+                        "`#[params(..)]` sets a `#[verilog]` module's parameters; this struct \
+                         isn't bound to one",
+                    ));
+                }
                 if let (Some(m), Some(_)) = (has("module"), has("verilog")) {
                     return Err(sem(
                         &s.name,

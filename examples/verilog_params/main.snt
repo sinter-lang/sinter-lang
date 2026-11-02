@@ -1,0 +1,48 @@
+// Verilog parameters (DESIGN §6.15 / §9.15, EXT2).
+//
+// `MulPipe` binds the parameterized `mul_pipe` module in rtl/mul_pipe.v.
+// `#[params(..)]` sets its Verilog parameters, `#(.STAGES(..))` in the
+// emitted instance: here from the `pub const` `STAGES`, which the model reads
+// too, so `sinter build main.snt -D STAGES=3` moves both together. The
+// model must agree with the parameters it is given; the oracle checks it
+// against the real module.
+pub const STAGES: u8 = 2;
+
+// The model's last delay slot.
+const LAST: u8 = (STAGES - 1) as u8 wrap;
+
+#[verilog(module = "mul_pipe", src = "rtl/mul_pipe.v")]
+#[params(STAGES = STAGES)]
+struct MulPipe {
+    // A ring of the last STAGES products; `ptr` is the oldest.
+    ring: [u16; STAGES] = [0; STAGES],
+    ptr: u8 = 0,
+}
+
+struct MulPipeOut {
+    p: u16,
+}
+
+impl MulPipe {
+    // One clock of `mul_pipe`: the oldest product leaves as this cycle's
+    // takes its slot.
+    fn step(self, a: u8, b: u8) -> (MulPipe, MulPipeOut) {
+        let next_ptr: u8 = if self.ptr == LAST { 0 } else { (self.ptr + 1) as u8 wrap };
+        (
+            MulPipe { ring: self.ring.set(self.ptr, a * b), ptr: next_ptr },
+            MulPipeOut { p: self.ring[self.ptr] },
+        )
+    }
+}
+
+struct Top {
+    mul: MulPipe,
+}
+
+impl Top {
+    #[clock(domain = sys)]
+    fn tick(self, a: u8, b: u8) -> (Top, u16) {
+        let (mul, o) = self.mul.step(a, b);
+        (Top { mul: mul }, o.p)
+    }
+}

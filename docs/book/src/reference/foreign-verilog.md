@@ -109,6 +109,38 @@ A binding with state gets the enclosing domain's clock and reset connected to
 its `clk` and `rst_n` ports. A binding with **no** fields is combinational:
 it gets no clock or reset, and each call is a separate instance.
 
+## Verilog parameters
+
+`#[params(NAME = value, ...)]` beside `#[verilog]` sets the module's Verilog
+parameters. A value is an integer, a string, or the name of an integer
+constant (in the binding's own module, or the root module). Without it, the
+module is instantiated with its defaults.
+
+```sinter,ignore
+pub const STAGES: u8 = 2;
+
+#[verilog(module = "mul_pipe", src = "rtl/mul_pipe.v")]
+#[params(STAGES = STAGES, MODE = "FAST")]
+struct MulPipe {
+    // ...
+}
+```
+
+The instance gets named overrides:
+
+```text
+mul_pipe #(
+    .STAGES (2),
+    .MODE   ("FAST")
+) u_mul (
+```
+
+The model must agree with the parameters it is given: a parameter that adds
+a register stage adds one to the model too. Taking both from one `pub const`
+keeps them together, also under a [build-time override](items.md#build-time-parameters)
+(`-D STAGES=3`). The oracle checks the model against the module at whatever
+values it is built with; `examples/verilog_params/` is a complete example.
+
 ## Rules
 
 - A stateful binding must be stepped **exactly once per cycle**, through its
@@ -117,8 +149,6 @@ it gets no clock or reset, and each call is a separate instance.
   cycle; to make it hold, give it inputs that make it hold.
 - Nothing outside the model may read the model's fields (`self.acc.acc` from
   `Top` is an error): they don't exist in hardware. Use the module's outputs.
-- Verilog parameters (`#(...)`) can't be overridden yet; the module is
-  instantiated with its defaults.
 
 ## In the generated Verilog
 

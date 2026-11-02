@@ -14,6 +14,7 @@ name, an integer, or a string, or `key` alone.
 | `#[storage(regs)]`, `#[storage(lutram)]`, `#[storage(bram)]` | a `mem`, `rom`, or `fifo` field | place it in flip-flops, LUT RAM, or block RAM ([Memories](storage.md#placement), [Channels](channels.md#storage)) |
 | `#[module]` | a struct | make it a Verilog module of its own, instantiated by its parent ([Hierarchy](hierarchy.md)) |
 | `#[verilog(module = "m", ...)]` | a struct | bind the struct to Verilog module `m` ([Foreign Verilog](foreign-verilog.md)) |
+| `#[params(NAME = value, ...)]` | a `#[verilog]` struct | set the module's Verilog parameters ([Foreign Verilog](foreign-verilog.md#verilog-parameters)) |
 
 Any other attribute, an attribute in the wrong place, or an argument it
 doesn't take is an error, so a misspelling can't go unnoticed:
@@ -32,5 +33,5 @@ struct Queue {
 ```
 
 ```text
-error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `no_reset`, `module`, `verilog`
+error: unknown attribute `#[storag]`; the attributes are `clock`, `domain`, `encoding`, `storage`, `no_reset`, `params`, `module`, `verilog`
 ```

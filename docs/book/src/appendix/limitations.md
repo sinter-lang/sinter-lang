@@ -45,9 +45,8 @@ What Sinter doesn't do yet, gathered in one place. Most of these are planned.
   gating.
 - `pipeline` and `multiplex` functions, the fault latch (`--faults`), and
   pin maps work only in single-clock designs.
-- Foreign Verilog bindings have scalar ports only, and can't override Verilog
-  parameters. Clock-generating modules (PLLs) belong in a hand-written top
-  level.
+- Foreign Verilog bindings have scalar ports only. Clock-generating modules
+  (PLLs) belong in a hand-written top level.
 
 ## Tools
 

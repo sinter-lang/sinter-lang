@@ -2076,6 +2076,75 @@ impl Elaborator<'_> {
         }
     }
 
+    /// A binding's `#[params]` (EXT2) rendered as Verilog: an integer as a
+    /// decimal number (sized past 32 bits), a string quoted, and a constant's
+    /// folded value, looked up in the binding struct's own module first.
+    fn render_params(
+        &self,
+        binding: &Binding,
+        type_name: &str,
+        pos: Pos,
+    ) -> Result<Vec<(String, String)>, CompileError> {
+        let decimal = |v: i128, w: u32| {
+            if (-(1i128 << 31)..(1i128 << 31)).contains(&v) {
+                v.to_string()
+            } else if v < 0 {
+                format!("-{w}'sd{}", -v)
+            } else {
+                format!("{w}'d{v}")
+            }
+        };
+        binding
+            .params
+            .iter()
+            .map(|(name, value)| {
+                let text = match value {
+                    AttrValue::Literal(v) => {
+                        let v = i128::try_from(*v)
+                            .ok()
+                            .filter(|v| *v < 1i128 << MAX_WIDTH)
+                            .ok_or_else(|| {
+                                err(
+                                    &self.ctx,
+                                    pos,
+                                    format!("`#[params]` value of `{name}` is wider than 64 bits"),
+                                )
+                            })?;
+                        decimal(v, MAX_WIDTH)
+                    }
+                    AttrValue::Str(v) => format!("\"{v}\""),
+                    AttrValue::Ident(c) => {
+                        let local = type_name
+                            .rsplit_once("::")
+                            .map(|(module, _)| format!("{module}::{c}"));
+                        let (bits, ty) = local
+                            .and_then(|l| self.consts.get(&l))
+                            .or_else(|| self.consts.get(c))
+                            .copied()
+                            .ok_or_else(|| {
+                                err(
+                                    &self.ctx,
+                                    pos,
+                                    format!(
+                                        "`#[params]` value of `{name}`: `{c}` names no integer \
+                                         constant"
+                                    ),
+                                )
+                            })?;
+                        let w = ty.width();
+                        let v = if ty.is_signed() && w < 128 && (bits >> (w - 1)) & 1 == 1 {
+                            i128::from(bits) - (1i128 << w)
+                        } else {
+                            i128::from(bits)
+                        };
+                        decimal(v, w)
+                    }
+                };
+                Ok((name.clone(), text))
+            })
+            .collect()
+    }
+
     /// The `#[verilog]` binding on struct `name`, if any (DESIGN §6.15).
     fn binding(&self, name: &str, pos: Pos) -> Result<Option<Binding>, CompileError> {
         let Some(s) = self.tables.structs.get(name) else {
@@ -2401,7 +2470,9 @@ impl Elaborator<'_> {
         let state = rename_leaves(&state, "", &renamed);
         model_lets.extend(body_wires);
 
+        let params = self.render_params(binding, type_name, pos)?;
         self.instances.borrow_mut().push(ir::Instance {
+            params,
             domain: self.cur_domain.get(),
             name: inst,
             module: binding.module.clone(),

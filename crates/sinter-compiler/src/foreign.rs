@@ -21,6 +21,9 @@ use crate::ir;
 /// The attribute that binds a struct to a Verilog module.
 pub(crate) const ATTR: &str = "verilog";
 
+/// The attribute that sets a bound module's Verilog parameters (EXT2).
+pub(crate) const PARAMS_ATTR: &str = "params";
+
 /// A parsed `#[verilog(module = "...", src = "...", clk = "...", rst_n = "...")]`.
 #[derive(Debug, Clone)]
 pub(crate) struct Binding {
@@ -34,6 +37,9 @@ pub(crate) struct Binding {
     pub rst_n: Option<String>,
     /// A `#[module]` struct: Sinter generates the module from the model.
     pub generated: bool,
+    /// `#[params(NAME = value, ...)]` overrides (EXT2), in source order: an
+    /// integer or string literal, or the name of an integer constant.
+    pub params: Vec<(String, AttrValue)>,
 }
 
 /// The attribute that makes a struct its own Verilog module.
@@ -53,6 +59,15 @@ pub(crate) fn module_name(name: &str) -> String {
 pub(crate) fn binding_of(s: &StructItem) -> Result<Option<Binding>, CompileError> {
     let generated = s.attrs.iter().find(|a| a.name == MODULE_ATTR);
     let foreign = s.attrs.iter().find(|a| a.name == ATTR);
+    let params = s.attrs.iter().find(|a| a.name == PARAMS_ATTR);
+    if let (Some(p), None) = (params, foreign) {
+        return Err(CompileError::semantic(
+            &s.name,
+            p.pos,
+            "`#[params(..)]` sets a `#[verilog]` module's parameters; this struct isn't bound to \
+             one",
+        ));
+    }
     if let (Some(g), Some(_)) = (generated, foreign) {
         return Err(CompileError::semantic(
             &s.name,
@@ -68,6 +83,7 @@ pub(crate) fn binding_of(s: &StructItem) -> Result<Option<Binding>, CompileError
             clk: "clk".to_string(),
             rst_n: Some("rst_n".to_string()),
             generated: true,
+            params: Vec::new(),
         }));
     }
     let Some(attr) = foreign else {
@@ -81,6 +97,7 @@ pub(crate) fn binding_of(s: &StructItem) -> Result<Option<Binding>, CompileError
         clk: "clk".to_string(),
         rst_n: Some("rst_n".to_string()),
         generated: false,
+        params: Vec::new(),
     };
     for arg in &attr.args {
         let text = match &arg.value {
@@ -112,6 +129,29 @@ pub(crate) fn binding_of(s: &StructItem) -> Result<Option<Binding>, CompileError
     binding.module = module.ok_or_else(|| {
         bad("`#[verilog]` needs the Verilog module name: `module = \"...\"`".to_string())
     })?;
+    if let Some(p) = params {
+        let bad = |msg: String| CompileError::semantic(&s.name, p.pos, msg);
+        for arg in &p.args {
+            let Some(value) = &arg.value else {
+                return Err(bad(format!(
+                    "`#[params]` argument `{}` needs a value: an integer, a string, or a \
+                     constant, e.g. `{} = 4`",
+                    arg.key, arg.key
+                )));
+            };
+            if binding.params.iter().any(|(k, _)| *k == arg.key) {
+                return Err(bad(format!("`#[params]` sets `{}` twice", arg.key)));
+            }
+            if let AttrValue::Str(v) = value {
+                if v.contains(['"', '\\']) {
+                    return Err(bad(format!(
+                        "`#[params]` string `{v}` can't contain a quote or a backslash"
+                    )));
+                }
+            }
+            binding.params.push((arg.key.clone(), value.clone()));
+        }
+    }
     Ok(Some(binding))
 }
 

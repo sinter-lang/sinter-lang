@@ -270,6 +270,9 @@ pub struct Instance {
     pub model_mems: Vec<String>,
     /// The read-data registers of `model_mems` (simulator only).
     pub model_mem_regs: Vec<String>,
+    /// Verilog parameter overrides `(name, value)` (EXT2), the value already
+    /// rendered as Verilog: a decimal number or a quoted string.
+    pub params: Vec<(String, String)>,
 }
 
 impl Module {

@@ -298,7 +298,10 @@ the functional surface is the only one.)
   Verilog backend skips the model-only regs/wires and emits the instance.
   `foreign.rs` parses the binding and rejects any non-model logic that reads
   model state. The oracle adds `src` to the Yosys / Verilator runs, so it checks
-  the model against the real module (`examples/verilog_acc/`).
+  the model against the real module (`examples/verilog_acc/`). EXT2 (§9.15):
+  `#[params(NAME = value, ..)]` beside the binding becomes `#(.NAME(value))`
+  (`ir::Instance::params`, rendered in `elaborate::render_params`); a value
+  may name an integer `const`, so `-D` reaches it (`examples/verilog_params/`).
 - **RV32 cores** (§9.12 steps 5–6) — `examples/rv32/`: two root files sharing
   `decode.snt` / `alu.snt` / `lsu.snt` / `prog.hex`. `mini.snt` is the fetch-ahead core,
   `pipe.snt` the 5-stage pipeline. `tests/rv32.rs` carries a test-only RV32I

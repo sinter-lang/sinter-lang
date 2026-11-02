@@ -337,6 +337,17 @@ const PROJECTS: &[Project] = &[
         ),
         cycles: CYCLES,
     },
+    // EXT2: a `#[verilog]` binding with `#[params]`: `mul_pipe`'s STAGES
+    // comes from a `pub const` its model reads too (more values in
+    // `tests/verilog_params.rs`).
+    Project {
+        name: "verilog_params",
+        root: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/verilog_params/main.snt"
+        ),
+        cycles: CYCLES,
+    },
     // RV32 cores (DESIGN §9.12), sharing examples/rv32's decoder, ALU, and
     // program (Fibonacci to the output port). `mini` is the fetch-ahead
     // stepping stone (step 5), `pipe` the 5-stage pipeline with forwarding and
