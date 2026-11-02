@@ -5,6 +5,47 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [1.0.0-rc.2] — 2026-11-02
+
+Board and build controls asked for by pico-gs v2 (DESIGN §9.15). Not
+published to crates.io.
+
+### Added
+
+- **Memory placement**: `#[storage(regs | lutram | bram)]` on a `mem` or
+  `rom` field (it already applied to a `fifo`) gives the Verilog array a
+  Yosys `ram_style`, so a small multi-port register bank can go to LUT RAM.
+  `lutram` is limited to 256 words. The simulators ignore it
+  (`examples/fn_storage.snt`).
+- **ECP5 constraints**: `sinter build --pins F.pins --constraints F.lpf`
+  writes an LPF (`LOCATE COMP`, `IOBUF ... IO_TYPE`, `FREQUENCY PORT`); the
+  format follows the extension, so `.pcf` still gives the nextpnr-ice40
+  file. A pin map line takes `io_type=LVCMOS33` and, on a clock,
+  `freq=25MHz` (`examples/go_board_ecp5.pins`).
+- **Registers without a reset**: `#[no_reset]` on a state field gives every
+  register under it (and a memory's read registers) a power-on value only,
+  so the reset net reaches the control state alone. The Verilog uses an
+  `initial` block and a reset-less `always_ff`. The generated simulator has
+  `step_in_reset()`, a CSV stimulus can assert an active-low `rst_n` column
+  mid-run, and the oracle checks both (`examples/fn_no_reset.snt`).
+- **Build-time constants**: `-D NAME=VALUE` and `--defines FILE` on `check`,
+  `build`, and `sim` override an integer `pub const` (`mod::NAME` for one in
+  a submodule) before constant folding (`examples/fn_params.snt`).
+- **Verilog parameters**: `#[params(NAME = value, ..)]` beside a `#[verilog]`
+  binding instantiates the module with `#(.NAME(value))`; a value can name an
+  integer `const`, so `-D` reaches it (`examples/verilog_params/`).
+- **`sinter sim --cosim`** also runs the emitted Verilog under Verilator over
+  the same stimulus and reports the first output that differs (cycle, port,
+  both values), with the build in `--cosim-dir` (default `build/cosim`).
+  `verilator.f` at the repository root has the same flags for your own
+  builds.
+
+### Fixed
+
+- A memory named after a SystemVerilog keyword (`table`, say) is rejected
+  like a register or port of that name; it used to give Verilog that
+  Verilator couldn't parse.
+
 ## [1.0.0-rc.1] — 2026-10-26
 
 A version to build a real project with before 1.0 is frozen. Not published

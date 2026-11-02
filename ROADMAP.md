@@ -199,6 +199,20 @@ nothing goes to crates.io.
 - [x] Book, CHANGELOG, and examples updated; release `v1.0.0-rc.1` as a
       GitHub pre-release.
 
+## v1.0.0-rc.2 — board and build controls ✅
+
+Release: tag `v1.0.0-rc.2` on the "release: v1.0.0-rc.2" commit.
+
+What pico-gs v2 asked for after building with rc.1 (DESIGN §9.15), released
+as a GitHub pre-release.
+
+- [x] `#[storage(regs | lutram | bram)]` on `mem` / `rom` (STOR1).
+- [x] ECP5 LPF constraints with `IO_TYPE` and `FREQUENCY` (LPF1).
+- [x] `#[no_reset]` power-on registers and mid-run reset in stimulus (RST1).
+- [x] `-D NAME=VALUE` / `--defines` build-time constants (DEF1).
+- [x] `#[params(..)]` on `#[verilog]` bindings (EXT2).
+- [x] `sinter sim --cosim` (COSIM1).
+
 ## 1.0 exit criteria
 
 - [ ] The RV32 core and at least one outside design run on real hardware
