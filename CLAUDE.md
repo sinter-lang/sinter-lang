@@ -47,7 +47,9 @@ the devcontainer, and CI (`just ci` reproduces the GitHub pipeline step for step
   Programs land in `target/tmp/fuzz/seed-<seed>.snt`; rerun one with
   `SINTER_FUZZ_FILE=<path>`. Add a reduced copy of anything it finds to
   `FUZZ_REGRESSIONS` in `conformance.rs`. The oracle's tool runners are shared
-  in `tests/support/oracle.rs`.
+  in `tests/support/oracle.rs`; its Verilator build and run are the library's
+  `cosim.rs` (behind `sinter sim --cosim`), whose `VERILATOR_FLAGS` must match
+  the repo-root `verilator.f` (`tests/cosim.rs` checks).
 - `just verilog` — emit SystemVerilog for every example into `build/verilog/`
   (git-ignored); `just board` emits the board-top wrapper + nextpnr PCF (or
   an ECP5 LPF for a map with `io_type=` / `freq=`, LPF1).
@@ -71,7 +73,8 @@ Each takes `-D NAME=VALUE` / `--defines F` to override an integer `pub const`
 - `sinter sim <file.snt> [--cycles N --seed S | --stimulus F.csv] [--trace
   trace.bin] [--vcd F.vcd]` — run the cycle-accurate reference simulator over
   random or directed CSV stimulus (`stimulus.rs`); `expect.<output>` columns
-  are checked; `--vcd` dumps a waveform (`vcd.rs`).
+  are checked; `--vcd` dumps a waveform (`vcd.rs`); `--cosim` also runs the
+  emitted Verilog under Verilator and diffs every output (`cosim.rs`).
 
 ## Compiler pipeline (source → IR)
 

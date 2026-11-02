@@ -172,3 +172,56 @@ fn defines_override_a_pub_const() {
         "stderr: {stderr}"
     );
 }
+
+fn verilator_present() -> bool {
+    let present = Command::new("verilator")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if std::env::var("SINTER_REQUIRE_TOOLS").is_ok_and(|v| v == "1") {
+        assert!(present, "SINTER_REQUIRE_TOOLS=1 but verilator is missing");
+    }
+    present
+}
+
+/// `sinter sim --cosim` passes on an example with a foreign module, and
+/// reports a reference model that disagrees with it (COSIM1).
+#[test]
+fn cosim_reports_a_broken_foreign_model() {
+    if !verilator_present() {
+        return;
+    }
+    let example =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/verilog_acc");
+    let sim = |main: &std::path::Path, dir: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_sinter"))
+            .arg("sim")
+            .arg(main)
+            .args(["--cycles", "40", "--cosim", "--cosim-dir"])
+            .arg(dir)
+            .output()
+            .expect("run sinter")
+    };
+    let good = sim(&example.join("main.snt"), &scratch("cli-cosim-good"));
+    let stderr = String::from_utf8_lossy(&good.stderr);
+    assert!(good.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("the Verilog matches the simulator over 40 cycle(s)"),
+        "{stderr}"
+    );
+
+    let dir = scratch("cli-cosim-broken");
+    std::fs::create_dir_all(dir.join("rtl")).expect("create rtl dir");
+    std::fs::copy(example.join("rtl/acc16.v"), dir.join("rtl/acc16.v")).expect("copy acc16.v");
+    let main = std::fs::read_to_string(example.join("main.snt")).expect("read main.snt");
+    let wrong = main.replace("sum: self.acc", "sum: next");
+    assert_ne!(main, wrong, "the mutation must apply");
+    std::fs::write(dir.join("main.snt"), wrong).expect("write main.snt");
+    let bad = sim(&dir.join("main.snt"), &dir.join("cosim"));
+    let stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(!bad.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("co-simulation mismatch (cycle ") && stderr.contains("in the Verilog"),
+        "{stderr}"
+    );
+}

@@ -3,7 +3,7 @@
 ```text
 sinter check <FILE> [-D NAME=VALUE]... [--defines FILE]
 sinter build <FILE> [-D NAME=VALUE]... [--defines FILE] [--emit verilog|harness|rust|all] [--out DIR] [--pins FILE [--constraints FILE]] [--faults]
-sinter sim   <FILE> [-D NAME=VALUE]... [--defines FILE] [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE]
+sinter sim   <FILE> [-D NAME=VALUE]... [--defines FILE] [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE] [--cosim [--cosim-dir DIR]]
 ```
 
 `<FILE>` is a `.snt` file, compiled as the root of its project: `mod`
@@ -73,10 +73,36 @@ the inputs left of `||`, the outputs right of it.
 | `--stimulus FILE` | use the inputs, and check the expected outputs, in a CSV file ([Stimulus files](stimulus.md)); replaces `--cycles` and `--seed` |
 | `--vcd FILE` | write a waveform of the inputs, outputs, registers, and named wires |
 | `--trace FILE` | write the raw output trace used by Sinter's conformance tests |
+| `--cosim` | also run the generated Verilog under Verilator over the same inputs, and fail on the first output that differs |
+| `--cosim-dir DIR` | where `--cosim` builds (default `build/cosim`) |
 
 The simulation starts from the reset state, at cycle 0. A failed
 [assertion](../reference/faults.md) or expectation is logged and makes the
 command fail after the run.
+
+### Co-simulation
+
+`--cosim` checks the compiler, not the design: the Verilog `sinter build`
+would write must produce exactly the simulator's outputs, cycle for cycle.
+It writes the SystemVerilog (with its `#[module]` children and any
+`#[verilog]` sources) and a Verilator harness into `DIR/<Module>/`, builds
+them, replays the same inputs, including a stimulus file's `rst_n` resets,
+and compares every output of every cycle:
+
+```text
+sinter sim engine.snt --stimulus engine.csv --cosim
+[INFO  sinter] co-simulation: the Verilog matches the simulator over 400 cycle(s)
+```
+
+A difference is reported with its cycle and output, and fails the command:
+
+```text
+[ERROR sinter] co-simulation mismatch (cycle 3): `sum` is 7 in the simulator but 4 in the Verilog
+```
+
+It needs `verilator` on the `PATH`. A mismatch in a design that binds
+existing Verilog usually means its [reference model](../reference/foreign-verilog.md)
+is wrong; otherwise, it is a compiler bug worth reporting.
 
 In the VCD file, signals are grouped into `in`, `out`, `reg`, and `wire`
 scopes, cycle *k* starts at a rising clock edge at 10*k* ns, and values are

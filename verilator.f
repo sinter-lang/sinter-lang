@@ -7,7 +7,10 @@
 # the conformance harness writes its own binary trace for the bit-for-bit diff,
 # not a Verilator FST waveform.
 #
-# This file drives the build / co-simulation step. The lint-clean guarantee
+# The compiler's co-simulation runner (crates/sinter-compiler/src/cosim.rs,
+# behind the oracle and `sinter sim --cosim`) carries the same flags as
+# `VERILATOR_FLAGS`; tests/cosim.rs fails if the two lists differ. They drive
+# the build / co-simulation step. The lint-clean guarantee
 # (claude-skill-verilog) is enforced separately by a strict `--lint-only -Wall`
 # pass with warnings fatal (this file keeps -Wno-fatal to match pico-gs's run).
 

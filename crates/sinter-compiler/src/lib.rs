@@ -16,6 +16,7 @@ pub mod board;
 pub mod cdc_desugar;
 pub mod channel_desugar;
 pub mod const_fold;
+pub mod cosim;
 pub mod defines;
 pub mod elaborate;
 pub mod error;

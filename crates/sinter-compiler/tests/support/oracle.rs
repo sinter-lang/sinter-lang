@@ -1,6 +1,8 @@
 //! The oracle's tool runners, shared by `conformance.rs` and `fuzz.rs`:
 //! Yosys synthesis, Verilator lint and co-simulation against the reference
-//! model, and the generated Rust simulators (DESIGN §7.2 / §7.4).
+//! model, and the generated Rust simulators (DESIGN §7.2 / §7.4). The
+//! Verilator build and run are the library's (`sinter_compiler::cosim`, also
+//! behind `sinter sim --cosim`); these wrappers panic on failure.
 
 #![allow(dead_code)]
 
@@ -9,7 +11,7 @@ use std::process::Command;
 
 use sinter_compiler::ir::Module;
 use sinter_compiler::sim::{resets_to_bytes, run_reference_with_resets, stimulus_to_bytes};
-use sinter_compiler::{rust_sim, verilator, verilog};
+use sinter_compiler::{cosim, rust_sim, verilog};
 
 /// How strict the Verilator lint pass is.
 #[derive(Clone, Copy)]
@@ -22,9 +24,9 @@ pub enum Lint {
     Design,
 }
 
-/// Shared Verilator flag file mirroring the downstream pico-gs config (repo-root
-/// `verilator.f`); drives the build / co-simulation step.
-pub const VERILATOR_FLAGS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../verilator.f");
+/// The repository's Verilator flag file, mirroring the downstream pico-gs
+/// config; `cosim::VERILATOR_FLAGS` must list the same flags.
+pub const VERILATOR_FLAGS_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../verilator.f");
 
 pub fn tool_available(tool: &str) -> bool {
     Command::new(tool)
@@ -48,14 +50,7 @@ pub fn workdir(name: &str) -> PathBuf {
 /// The Verilog sources of a module's `#[verilog]` instances (DESIGN §6.15),
 /// which every tool below reads alongside the emitted SV.
 pub fn foreign_sources(module: &Module) -> Vec<PathBuf> {
-    let mut srcs: Vec<PathBuf> = module
-        .instances
-        .iter()
-        .filter_map(|i| i.src.clone())
-        .collect();
-    srcs.sort();
-    srcs.dedup();
-    srcs
+    cosim::foreign_sources(module)
 }
 
 /// Synthesize with Yosys to confirm the emitted SV is synthesizable.
@@ -128,63 +123,8 @@ pub fn run_verilator_with_resets(
     cycles: usize,
     resets: Option<&Path>,
 ) -> Vec<u8> {
-    let obj = dir.join("obj");
-    let build_once = || {
-        let _ = std::fs::remove_dir_all(&obj);
-        Command::new("verilator")
-            .args(["--cc", "--exe", "--build", "-f", VERILATOR_FLAGS])
-            .arg("--top-module")
-            .arg(top)
-            .arg("--Mdir")
-            .arg(&obj)
-            .arg("-o")
-            .arg("sim")
-            .arg(sv)
-            .args(extra)
-            .arg(harness)
-            .output()
-            .expect("spawn verilator")
-    };
-    let mut build = build_once();
-    if !build.status.success() {
-        // Verilator 5.020's parallel build (`-j 0`) fails now and then with
-        // nothing wrong (about 1 build in 100); one clean retry tells that
-        // apart from a real failure.
-        eprintln!(
-            "verilator build failed for {top} ({}); retrying once",
-            build.status
-        );
-        build = build_once();
-    }
-    if !build.status.success() {
-        // The error comes last, after any (non-fatal) warnings.
-        let log = format!(
-            "{}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let lines: Vec<&str> = log.lines().collect();
-        let tail = lines[lines.len().saturating_sub(40)..].join("\n");
-        panic!(
-            "verilator build failed for {top} ({}; last 40 lines):\n{tail}",
-            build.status
-        );
-    }
-
-    let trace = dir.join("dut_trace.bin");
-    let run = Command::new(obj.join("sim"))
-        .arg(stim)
-        .arg(&trace)
-        .arg(cycles.to_string())
-        .args(resets)
-        .output()
-        .expect("run verilated sim");
-    assert!(
-        run.status.success(),
-        "verilated sim failed for {top}:\n{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    std::fs::read(&trace).expect("read dut trace")
+    let exe = cosim::verilate(dir, sv, extra, harness, top).unwrap_or_else(|e| panic!("{e}"));
+    cosim::run_harness(dir, &exe, stim, cycles, resets).unwrap_or_else(|e| panic!("{top}: {e}"))
 }
 
 /// Which external tools this run uses; enforces `SINTER_REQUIRE_TOOLS=1`.
@@ -243,20 +183,11 @@ pub fn co_simulate_with_resets(
     lint: Lint,
 ) {
     let dir = workdir(name);
+    let reference = run_reference_with_resets(module, stimulus, resets);
 
-    // Emit artifacts.
+    // The emitted SV, for Yosys and the lint.
     let sv = dir.join(format!("{}.sv", module.name));
     std::fs::write(&sv, verilog::emit_module(module)).expect("write sv");
-    let harness = dir.join(format!("{}_tb.cpp", module.name));
-    std::fs::write(&harness, verilator::emit_cpp_harness(module)).expect("write harness");
-
-    // Stimulus + reference trace.
-    let stim_path = dir.join("stimulus.bin");
-    std::fs::write(&stim_path, stimulus_to_bytes(stimulus)).expect("write stimulus");
-    let reference = run_reference_with_resets(module, stimulus, resets);
-    let resets_path = dir.join("resets.bin");
-    std::fs::write(&resets_path, resets_to_bytes(resets)).expect("write resets");
-
     let mut extra = foreign_sources(module);
     for child in children {
         let path = dir.join(format!("{}.sv", child.name));
@@ -272,28 +203,19 @@ pub fn co_simulate_with_resets(
     if tools.verilator {
         // Strict lint first (warnings fatal), then the pico-gs-flagged co-sim.
         lint_verilator(&sv, &extra, &module.name, lint);
-        let dut = run_verilator_with_resets(
-            &dir,
-            &sv,
-            &extra,
-            &harness,
-            &module.name,
-            &stim_path,
-            stimulus.len(),
-            (!resets.is_empty()).then_some(resets_path.as_path()),
-        );
+        let dut = cosim::run(&dir, module, children, stimulus, resets)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(
             dut.len(),
             reference.len(),
             "trace length mismatch for `{name}`"
         );
-        // Find the first differing 8-byte word for a useful message.
-        for (cycle, (a, b)) in reference
-            .chunks_exact(8)
-            .zip(dut.chunks_exact(8))
-            .enumerate()
-        {
-            assert_eq!(a, b, "trace mismatch for `{name}` at output word {cycle}");
+        if let Some(m) = cosim::first_mismatch(module, &reference, &dut) {
+            panic!(
+                "trace mismatch for `{name}` at cycle {}: `{}` is {} in the simulator, {} in \
+                 the Verilog",
+                m.cycle, m.port, m.expected, m.actual
+            );
         }
     }
 }

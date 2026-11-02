@@ -24,7 +24,8 @@ use sinter_compiler::sim::{gen_stimulus, run_reference_with_resets, Simulator};
 use sinter_compiler::stimulus::{format_value, Stimulus};
 use sinter_compiler::vcd::VcdWriter;
 use sinter_compiler::{
-    board, compile_project_with, fault_latch, rust_sim, verilator, verilog, Define, FaultMode,
+    board, compile_project_with, cosim, fault_latch, rust_sim, verilator, verilog, Define,
+    FaultMode,
 };
 
 /// The Sinter HDL compiler.
@@ -97,7 +98,28 @@ enum Command {
         /// and wires; viewable in GTKWave / Surfer).
         #[arg(long)]
         vcd: Option<PathBuf>,
+        /// Also build the emitted SystemVerilog with Verilator, run it over
+        /// the same stimulus, and fail on the first output that differs from
+        /// the simulator (DESIGN §9.15, COSIM1). Needs `verilator` on the PATH.
+        #[arg(long)]
+        cosim: bool,
+        /// Where `--cosim` writes the Verilog, the harness, and the build.
+        #[arg(
+            long,
+            value_name = "DIR",
+            default_value = "build/cosim",
+            requires = "cosim"
+        )]
+        cosim_dir: PathBuf,
     },
+}
+
+/// What `sinter sim` writes besides its table.
+struct SimOutputs<'a> {
+    trace: Option<&'a Path>,
+    vcd: Option<&'a Path>,
+    /// The `--cosim` directory, when co-simulating.
+    cosim: Option<&'a Path>,
 }
 
 /// Build-time constant overrides (DESIGN §9.15, DEF1).
@@ -173,14 +195,19 @@ fn main() -> Result<()> {
             stimulus,
             trace,
             vcd,
+            cosim,
+            cosim_dir,
         } => cmd_sim(
             &file,
             &consts.parse()?,
             cycles,
             seed,
             stimulus.as_deref(),
-            trace.as_deref(),
-            vcd.as_deref(),
+            &SimOutputs {
+                trace: trace.as_deref(),
+                vcd: vcd.as_deref(),
+                cosim: cosim.then_some(cosim_dir.as_path()),
+            },
         ),
     }
 }
@@ -407,15 +434,57 @@ fn emit_board(
     Ok(())
 }
 
+/// `--cosim`: run the Verilog over `rows` (and `resets`) under Verilator in
+/// `dir/<module>`, and report whether its outputs match the simulator's.
+fn co_simulate(modules: &[Module], rows: &[Vec<u64>], resets: &[bool], dir: &Path) -> Result<bool> {
+    let Some((module, children)) = modules.split_first() else {
+        return Ok(true);
+    };
+    if !cosim::verilator_available() {
+        bail!("`--cosim` needs `verilator` on the PATH");
+    }
+    let dir = dir.join(&module.name);
+    info!(
+        "co-simulating the Verilog with Verilator in {}",
+        dir.display()
+    );
+    let dut = cosim::run(&dir, module, children, rows, resets).context("co-simulation")?;
+    let reference = run_reference_with_resets(module, rows, resets);
+    match cosim::first_mismatch(module, &reference, &dut) {
+        None => {
+            info!(
+                "co-simulation: the Verilog matches the simulator over {} cycle(s)",
+                rows.len()
+            );
+            Ok(true)
+        }
+        Some(m) => {
+            let ty = module
+                .outputs()
+                .find(|p| p.name == m.port)
+                .map_or(sinter_syntax::ast::Type::Uint(64), |p| p.ty);
+            error!(
+                "co-simulation mismatch (cycle {}): `{}` is {} in the simulator but {} in the \
+                 Verilog",
+                m.cycle,
+                m.port,
+                format_value(m.expected, ty),
+                format_value(m.actual, ty)
+            );
+            Ok(false)
+        }
+    }
+}
+
 fn cmd_sim(
     file: &Path,
     defines: &[Define],
     cycles: usize,
     seed: u64,
     stimulus: Option<&Path>,
-    trace: Option<&Path>,
-    vcd: Option<&Path>,
+    writes: &SimOutputs,
 ) -> Result<()> {
+    let (trace, vcd) = (writes.trace, writes.vcd);
     let modules = read_and_compile(file, FaultMode::Off, defines)?;
     let module = modules
         .first()
@@ -568,6 +637,11 @@ fn cmd_sim(
     }
     if !mismatches.is_empty() {
         problems.push(format!("{} expectation mismatch(es)", mismatches.len()));
+    }
+    if let Some(dir) = writes.cosim {
+        if !co_simulate(&modules, &rows, resets, dir)? {
+            problems.push("a co-simulation mismatch".to_string());
+        }
     }
     if !problems.is_empty() {
         bail!("{}; see the log above", problems.join(" and "));
