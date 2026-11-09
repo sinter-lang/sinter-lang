@@ -3,7 +3,7 @@
 ```text
 sinter check <FILE> [-D NAME=VALUE]... [--defines FILE]
 sinter build <FILE> [-D NAME=VALUE]... [--defines FILE] [--emit verilog|harness|rust|all] [--out DIR] [--pins FILE [--constraints FILE]] [--faults]
-sinter sim   <FILE> [-D NAME=VALUE]... [--defines FILE] [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE] [--cosim [--cosim-dir DIR]]
+sinter sim   <FILE> [-D NAME=VALUE]... [--defines FILE] [--cycles N] [--seed S] [--stimulus FILE] [--vcd FILE] [--trace FILE] [--cosim [--cosim-dir DIR]] [--quiet] [--interpret | --sim-dir DIR]
 ```
 
 `<FILE>` is a `.snt` file, compiled as the root of its project: `mod`
@@ -75,10 +75,41 @@ the inputs left of `||`, the outputs right of it.
 | `--trace FILE` | write the raw output trace used by Sinter's conformance tests |
 | `--cosim` | also run the generated Verilog under Verilator over the same inputs, and fail on the first output that differs |
 | `--cosim-dir DIR` | where `--cosim` builds (default `build/cosim`) |
+| `-q`, `--quiet` | don't print the table; failures and the summary are still logged |
+| `--interpret` | run the interpreter instead of the compiled simulator |
+| `--sim-dir DIR` | where the compiled simulator is built (default `build/sim`) |
 
 The simulation starts from the reset state, at cycle 0. A failed
 [assertion](../reference/faults.md) or expectation is logged and makes the
 command fail after the run.
+
+### Compiled and interpreted simulation
+
+By default `sim` compiles the design. It writes the design's
+[generated Rust simulator](generated-rust.md) into `DIR/<Module>/` (a cargo
+workspace of its own), builds its runner with `cargo build --release`, and
+runs it over the inputs:
+
+```text
+[INFO  sinter] building the compiled simulator in build/sim/Pipe
+[INFO  sinter] built in 21.36ms
+[INFO  sinter] simulated 1000000 cycle(s) in 50.41ms
+```
+
+The first build of a design takes a while (seconds; longer for a large
+design), but the directory is kept, and only files whose contents change
+are rewritten, so running an unchanged design again costs cargo's
+up-to-date check alone. A `--vcd` run builds the runner with every signal
+probed, once.
+
+`--interpret` runs the interpreter instead: no build step, but about 40×
+slower per cycle (on `examples/rv32/pipe.snt`). It needs no Rust toolchain;
+without `cargo` on the `PATH`, `sim` warns and interprets. The two compute
+the same thing, so they print the same table and find the same failures.
+
+On a long run, printing the table costs more than simulating; `--quiet`
+skips it, and the expectations, assertions, `--trace`, and `--vcd` still
+apply.
 
 ### Co-simulation
 

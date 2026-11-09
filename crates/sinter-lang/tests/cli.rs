@@ -10,7 +10,8 @@ const COUNTER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/fn_co
 #[test]
 fn sim_stops_quietly_when_stdout_closes() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_sinter"))
-        .args(["sim", COUNTER, "--cycles", "200000"])
+        .args(["sim", COUNTER, "--cycles", "200000", "--sim-dir"])
+        .arg(scratch("cli-sim-closed"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -30,6 +31,79 @@ fn sim_stops_quietly_when_stdout_closes() {
         "status {:?}, stderr: {stderr}",
         out.status
     );
+}
+
+/// By default `sim` builds and runs the compiled simulator, which prints
+/// the same table and finds the same failures as `--interpret`; `--quiet`
+/// drops the table.
+#[test]
+fn compiled_sim_matches_the_interpreter() {
+    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let dir = scratch("cli-sim-compiled");
+    let sim = |args: &[&str], extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_sinter"))
+            .arg("sim")
+            .args(args)
+            .args(extra)
+            .current_dir(&examples)
+            .output()
+            .expect("run sinter")
+    };
+    let sim_dir = dir.to_str().expect("utf-8 path");
+    for args in [
+        &["fn_no_reset.snt", "--stimulus", "fn_no_reset.csv"][..],
+        &["fn_two_clocks.snt", "--cycles", "30"],
+        &["rv32/pipe.snt", "--cycles", "120"],
+    ] {
+        let compiled = sim(args, &["--sim-dir", sim_dir]);
+        let interpreted = sim(args, &["--interpret"]);
+        let stderr = String::from_utf8_lossy(&compiled.stderr);
+        assert!(compiled.status.success(), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("building the compiled simulator"),
+            "{stderr}"
+        );
+        assert!(interpreted.status.success(), "{args:?}");
+        assert!(!compiled.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&interpreted.stdout),
+            "{args:?}"
+        );
+        let quiet = sim(args, &["--sim-dir", sim_dir, "--quiet"]);
+        assert!(
+            quiet.status.success() && quiet.stdout.is_empty(),
+            "{args:?}"
+        );
+    }
+
+    // An assert that fires fails the run, with the same report.
+    let fires = dir.join("fires.snt");
+    std::fs::write(
+        &fires,
+        "struct C { pub value: u4 = 0, }\n\
+         impl C {\n\
+         \x20   #[clock]\n\
+         \x20   fn tick(self, en: u1) -> C {\n\
+         \x20       assert!(self.value != 5, \"value hit five\");\n\
+         \x20       C { value: if en == 1 { (self.value + 1) as u4 wrap } else { self.value } }\n\
+         \x20   }\n\
+         }\n",
+    )
+    .expect("write source");
+    let fires = fires.to_str().expect("utf-8 path");
+    let failures = |out: &std::process::Output| {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|l| l.contains("assert failed"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    let compiled = sim(&[fires, "--cycles", "60", "-q"], &["--sim-dir", sim_dir]);
+    let interpreted = sim(&[fires, "--cycles", "60", "-q"], &["--interpret"]);
+    assert!(!compiled.status.success() && !interpreted.status.success());
+    assert!(!failures(&compiled).is_empty());
+    assert_eq!(failures(&compiled), failures(&interpreted));
 }
 
 const GO_BOARD: &str = concat!(
@@ -157,7 +231,15 @@ fn defines_override_a_pub_const() {
     let sv = std::fs::read_to_string(dir.join("Params.sv")).expect("read sv");
     assert!(sv.contains("ram [0:127]") && sv.contains("lanes_7"), "{sv}");
 
-    let sim = run(&["sim", PARAMS, "--cycles", "2", "-D", "STEP=9"]);
+    let sim = run(&[
+        "sim",
+        PARAMS,
+        "--cycles",
+        "2",
+        "-D",
+        "STEP=9",
+        "--interpret",
+    ]);
     assert!(
         sim.status.success(),
         "{}",
@@ -199,6 +281,8 @@ fn cosim_reports_a_broken_foreign_model() {
             .arg(main)
             .args(["--cycles", "40", "--cosim", "--cosim-dir"])
             .arg(dir)
+            .arg("--sim-dir")
+            .arg(dir.join("sim"))
             .output()
             .expect("run sinter")
     };

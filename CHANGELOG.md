@@ -5,6 +5,28 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
+## [Unreleased]
+
+### Changed
+
+- **`sinter sim` is compiled by default.** It generates the design's Rust
+  simulator crate (`--emit rust`), builds its new runner binary with cargo
+  in release mode in `--sim-dir` (default `build/sim/<Module>/`, reused
+  between runs so an unchanged design isn't rebuilt), and streams the run
+  back: the same table, expectations, assert failures, `--trace`, `--vcd`,
+  and `--cosim` as before, about 40× faster than the interpreter on
+  `examples/rv32/pipe.snt`. `--interpret` keeps the interpreter (no build
+  step); without `cargo` on the `PATH`, `sim` warns and interprets.
+
+### Added
+
+- **`sinter sim --quiet`** (`-q`) skips the per-cycle table, which on a long
+  run costs more than the simulation.
+- **The generated crate's runner**: `src/main.rs`, a `[[bin]]` that replays a
+  raw stimulus file and streams each step, and a `probe` feature whose
+  `step_probed` also returns every input, register, and wire (for `--vcd`).
+  The library API is unchanged.
+
 ## [1.0.0-rc.2] — 2026-11-02
 
 Board and build controls asked for by pico-gs v2 (DESIGN §9.15). Not

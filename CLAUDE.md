@@ -71,10 +71,16 @@ Each takes `-D NAME=VALUE` / `--defines F` to override an integer `pub const`
   — emit backend artifacts (default out dir `build/`); `rust` is a standalone
   simulator crate, `<out>/<module>-sim/` (`rust_sim.rs`, `docs/generated-rust.md`).
 - `sinter sim <file.snt> [--cycles N --seed S | --stimulus F.csv] [--trace
-  trace.bin] [--vcd F.vcd]` — run the cycle-accurate reference simulator over
-  random or directed CSV stimulus (`stimulus.rs`); `expect.<output>` columns
-  are checked; `--vcd` dumps a waveform (`vcd.rs`); `--cosim` also runs the
-  emitted Verilog under Verilator and diffs every output (`cosim.rs`).
+  trace.bin] [--vcd F.vcd] [-q]` — simulate over random or directed CSV
+  stimulus (`stimulus.rs`); `expect.<output>` columns are checked; `--vcd`
+  dumps a waveform (`vcd.rs`); `--cosim` also runs the emitted Verilog under
+  Verilator and diffs every output (`cosim.rs`). By default it is compiled
+  (`native_sim.rs`): the `--emit rust` crate's runner (`src/main.rs`, built
+  with its `probe` feature for `--vcd`) is built with cargo in
+  `--sim-dir` (default `build/sim/<Module>/`, unchanged files not rewritten)
+  and streams each step back; `--interpret` (or no cargo) runs the
+  interpreter, `sim.rs`. Both feed one per-step `Report` in the CLI, and
+  `tests/native_sim.rs` checks the runner against the interpreter.
 
 ## Compiler pipeline (source → IR)
 

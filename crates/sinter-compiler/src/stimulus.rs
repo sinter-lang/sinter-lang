@@ -293,15 +293,27 @@ impl Stimulus {
         cycle: usize,
         outputs: &HashMap<String, u64>,
     ) -> Vec<Mismatch> {
+        let raw: Vec<u64> = module
+            .outputs()
+            .map(|p| outputs.get(&p.name).copied().unwrap_or(0))
+            .collect();
+        self.check_cycle_raw(module, cycle, &raw)
+    }
+
+    /// [`Stimulus::check_cycle`], with the outputs as raw values in port
+    /// order (a missing one reads 0).
+    #[must_use]
+    pub fn check_cycle_raw(&self, module: &Module, cycle: usize, outputs: &[u64]) -> Vec<Mismatch> {
         let Some(expects) = self.expects.get(cycle) else {
             return Vec::new();
         };
         module
             .outputs()
             .zip(expects)
-            .filter_map(|(p, exp)| {
+            .enumerate()
+            .filter_map(|(k, (p, exp))| {
                 let expected = (*exp)?;
-                let actual = mask(outputs.get(&p.name).copied().unwrap_or(0), p.ty.width());
+                let actual = mask(outputs.get(k).copied().unwrap_or(0), p.ty.width());
                 (actual != expected).then(|| Mismatch {
                     cycle,
                     line: self.lines[cycle],

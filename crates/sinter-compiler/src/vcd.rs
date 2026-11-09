@@ -147,8 +147,30 @@ impl<W: Write> VcdWriter<W> {
     /// # Errors
     /// Returns any I/O error from writing to the underlying writer.
     pub fn cycle(&mut self, sim: &Simulator<'_>, outputs: &HashMap<String, u64>) -> io::Result<()> {
+        let values: Vec<u64> = self
+            .signals
+            .iter()
+            .map(|s| {
+                match &s.source {
+                    Source::Env(name) => sim.signal(name),
+                    Source::Output(name) => outputs.get(name).copied(),
+                }
+                .unwrap_or(0)
+            })
+            .collect();
+        self.cycle_raw(sim.time(), sim.ticking(), &values)
+    }
+
+    /// Record one step from raw values: the edge `time` and the `ticking`
+    /// domains (as [`Simulator::time`] / [`Simulator::ticking`] give them),
+    /// and one value per dumped signal in declaration order — the input
+    /// ports, the output ports, the registers, then the wires.
+    ///
+    /// # Errors
+    /// Returns any I/O error from writing to the underlying writer.
+    pub fn cycle_raw(&mut self, time: u64, ticking: &[bool], values: &[u64]) -> io::Result<()> {
         if !self.clocks.is_empty() {
-            return self.multi_clock_step(sim, outputs);
+            return self.multi_clock_step(time, ticking, values);
         }
         let t = self.cycles * 2 * HALF_PERIOD;
         writeln!(self.out, "#{t}")?;
@@ -156,7 +178,7 @@ impl<W: Write> VcdWriter<W> {
             writeln!(self.out, "$dumpvars")?;
         }
         writeln!(self.out, "1{}", self.clk_id)?;
-        self.write_values(sim, outputs)?;
+        self.write_values(values)?;
         if self.cycles == 0 {
             writeln!(self.out, "$end")?;
         }
@@ -167,17 +189,9 @@ impl<W: Write> VcdWriter<W> {
     }
 
     /// Write each signal whose value changed since it was last written.
-    fn write_values(
-        &mut self,
-        sim: &Simulator<'_>,
-        outputs: &HashMap<String, u64>,
-    ) -> io::Result<()> {
-        for s in &mut self.signals {
-            let raw = match &s.source {
-                Source::Env(name) => sim.signal(name),
-                Source::Output(name) => outputs.get(name).copied(),
-            };
-            let v = mask(raw.unwrap_or(0), s.width);
+    fn write_values(&mut self, values: &[u64]) -> io::Result<()> {
+        for (k, s) in self.signals.iter_mut().enumerate() {
+            let v = mask(values.get(k).copied().unwrap_or(0), s.width);
             if s.last != Some(v) {
                 writeln!(self.out, "{}", value_change(v, s.width, &s.id))?;
                 s.last = Some(v);
@@ -188,19 +202,17 @@ impl<W: Write> VcdWriter<W> {
 
     /// One scheduler step of a multi-clock design: the falls due before it,
     /// then the ticking domains' rising edges and every changed value.
-    fn multi_clock_step(
-        &mut self,
-        sim: &Simulator<'_>,
-        outputs: &HashMap<String, u64>,
-    ) -> io::Result<()> {
-        let t = 2 * sim.time();
+    fn multi_clock_step(&mut self, time: u64, ticking: &[bool], values: &[u64]) -> io::Result<()> {
+        let t = 2 * time;
         self.write_falls_before(t + 1)?;
         writeln!(self.out, "#{t}")?;
         if self.cycles == 0 {
             writeln!(self.out, "$dumpvars")?;
         }
-        for (d, &tick) in sim.ticking().iter().enumerate() {
-            let (id, period) = &self.clocks[d];
+        for (d, &tick) in ticking.iter().enumerate() {
+            let Some((id, period)) = self.clocks.get(d) else {
+                continue;
+            };
             if tick {
                 writeln!(self.out, "1{id}")?;
                 self.falls.push((t + period, d));
@@ -208,7 +220,7 @@ impl<W: Write> VcdWriter<W> {
                 writeln!(self.out, "0{id}")?;
             }
         }
-        self.write_values(sim, outputs)?;
+        self.write_values(values)?;
         if self.cycles == 0 {
             writeln!(self.out, "$end")?;
         }

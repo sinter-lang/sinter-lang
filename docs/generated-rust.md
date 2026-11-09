@@ -4,10 +4,11 @@
 cycle-accurate simulator of the design as a standalone Rust crate, for
 testbenches written in Rust. It computes exactly what the emitted Verilog
 computes: the conformance oracle runs every example through it, the
-interpreter behind `sinter sim`, and Verilator, and requires all three traces
-to match bit for bit. It is about 60× faster than `sinter sim`'s interpreter
+interpreter (`sinter sim --interpret`), and Verilator, and requires all three
+traces to match bit for bit. It is about 60× faster than the interpreter
 (31 million cycles per second for the pipelined RV32 core in
-`examples/rv32/pipe.snt`, on one core).
+`examples/rv32/pipe.snt`, on one core). `sinter sim` builds and runs this
+crate's runner by default (see [The runner](#the-runner)).
 
 From 1.0 this interface is stable; until then it may change, and any
 change will be listed in the [CHANGELOG](https://github.com/sinter-lang/sinter-lang/blob/master/CHANGELOG.md). See
@@ -22,6 +23,7 @@ For `struct Counter` with a `#[clock]` method, the crate is
 counter-sim/
   Cargo.toml       package `counter-sim`, no dependencies, publish = false
   src/lib.rs       the model
+  src/main.rs      the runner `sinter sim` uses (a binary; see below)
   src/runtime.rs   Sinter's value arithmetic, shared with the compiler
 ```
 
@@ -132,6 +134,23 @@ writes a crate for the top module, which simulates the whole design, and one
 for each `#[module]` struct (`delay-sim` for `Delay`), which simulates that
 block on its own, with its ports as `Inputs` and `Outputs`. Use those to
 test a block without the rest of the design.
+
+## The runner
+
+`src/main.rs` is a binary target, named like the crate, that `sinter sim`
+builds and runs; a crate depending on the library doesn't build it. It reads
+a stimulus file (8 little-endian bytes per input, in `Inputs::NAMES` order,
+row by row) and writes each step to standard output as 8-byte little-endian
+words: the edge time, a 0/1 word per clock domain, and the outputs. After the
+last step come the assert failures. Run it as
+`counter-sim <stimulus.bin> <cycles> [--resets <resets.bin>] [--probe]`,
+where the reset file holds one byte per step (`1`: `rst_n` low).
+
+The **`probe` feature** adds `step_probed(&Inputs, in_reset, &mut [u64;
+PROBE_LEN]) -> Outputs`, a step that also writes the held inputs, the
+registers before the edge, and every named wire, in that order. The runner's
+`--probe` streams them too; `sinter sim --vcd` uses it. Leave the feature
+off otherwise: it compiles a second copy of the step.
 
 ## Several clock domains
 

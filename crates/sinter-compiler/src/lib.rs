@@ -29,6 +29,7 @@ pub mod include_expand;
 pub mod ir;
 pub mod ir_cse;
 pub mod multiplex_desugar;
+pub mod native_sim;
 pub mod pinmap;
 pub mod pipeline_desugar;
 pub mod resolve;

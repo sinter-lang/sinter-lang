@@ -4,8 +4,9 @@
 //! - `check` — parse and semantically check a `.snt` source.
 //! - `build` — emit SystemVerilog, a Verilator C++ harness, and a compiled Rust
 //!   simulator crate per module.
-//! - `sim`   — run the cycle-accurate reference model over random or directed
-//!   (CSV) stimulus, checking any expected outputs.
+//! - `sim`   — simulate over random or directed (CSV) stimulus, checking any
+//!   expected outputs: by default by building and running the generated Rust
+//!   simulator (`native_sim`), or with `--interpret` the interpreter.
 
 #![forbid(unsafe_code)]
 
@@ -13,19 +14,20 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use log::{error, info, warn};
 
-use sinter_compiler::ir::Module;
+use sinter_compiler::ir::{Module, Port};
 use sinter_compiler::pinmap::PinMap;
-use sinter_compiler::sim::{gen_stimulus, run_reference_with_resets, Simulator};
-use sinter_compiler::stimulus::{format_value, Stimulus};
+use sinter_compiler::sim::{gen_stimulus, AssertFailure, Simulator};
+use sinter_compiler::stimulus::{format_value, Mismatch as StimulusMismatch, Stimulus};
 use sinter_compiler::vcd::VcdWriter;
 use sinter_compiler::{
-    board, compile_project_with, cosim, fault_latch, rust_sim, verilator, verilog, Define,
-    FaultMode,
+    board, compile_project_with, cosim, fault_latch, native_sim, rust_sim, verilator, verilog,
+    Define, FaultMode,
 };
 
 /// The Sinter HDL compiler.
@@ -73,8 +75,8 @@ enum Command {
         #[arg(long)]
         faults: bool,
     },
-    /// Run the cycle-accurate reference simulator over random or directed
-    /// stimulus.
+    /// Simulate the design, cycle-accurately, over random or directed
+    /// stimulus (compiled with cargo unless `--interpret`).
     Sim {
         /// Path to a `.snt` source file.
         file: PathBuf,
@@ -111,15 +113,25 @@ enum Command {
             requires = "cosim"
         )]
         cosim_dir: PathBuf,
+        /// Don't print the per-cycle table; failures and the summary still
+        /// go to the log.
+        #[arg(short, long)]
+        quiet: bool,
+        /// Interpret the design instead of building the compiled simulator:
+        /// no build step, but much slower per cycle.
+        #[arg(long)]
+        interpret: bool,
+        /// Where the compiled simulator is generated and built, in
+        /// `<DIR>/<module>/` (kept between runs, so an unchanged design isn't
+        /// rebuilt).
+        #[arg(
+            long,
+            value_name = "DIR",
+            default_value = "build/sim",
+            conflicts_with = "interpret"
+        )]
+        sim_dir: PathBuf,
     },
-}
-
-/// What `sinter sim` writes besides its table.
-struct SimOutputs<'a> {
-    trace: Option<&'a Path>,
-    vcd: Option<&'a Path>,
-    /// The `--cosim` directory, when co-simulating.
-    cosim: Option<&'a Path>,
 }
 
 /// Build-time constant overrides (DESIGN §9.15, DEF1).
@@ -197,16 +209,21 @@ fn main() -> Result<()> {
             vcd,
             cosim,
             cosim_dir,
+            quiet,
+            interpret,
+            sim_dir,
         } => cmd_sim(
             &file,
             &consts.parse()?,
             cycles,
             seed,
             stimulus.as_deref(),
-            &SimOutputs {
+            &SimOptions {
                 trace: trace.as_deref(),
                 vcd: vcd.as_deref(),
                 cosim: cosim.then_some(cosim_dir.as_path()),
+                sim_dir: (!interpret).then_some(sim_dir.as_path()),
+                quiet,
             },
         ),
     }
@@ -435,8 +452,15 @@ fn emit_board(
 }
 
 /// `--cosim`: run the Verilog over `rows` (and `resets`) under Verilator in
-/// `dir/<module>`, and report whether its outputs match the simulator's.
-fn co_simulate(modules: &[Module], rows: &[Vec<u64>], resets: &[bool], dir: &Path) -> Result<bool> {
+/// `dir/<module>`, and report whether its outputs match `reference`, the
+/// simulator's output trace.
+fn co_simulate(
+    modules: &[Module],
+    rows: &[Vec<u64>],
+    resets: &[bool],
+    reference: &[u8],
+    dir: &Path,
+) -> Result<bool> {
     let Some((module, children)) = modules.split_first() else {
         return Ok(true);
     };
@@ -449,8 +473,7 @@ fn co_simulate(modules: &[Module], rows: &[Vec<u64>], resets: &[bool], dir: &Pat
         dir.display()
     );
     let dut = cosim::run(&dir, module, children, rows, resets).context("co-simulation")?;
-    let reference = run_reference_with_resets(module, rows, resets);
-    match cosim::first_mismatch(module, &reference, &dut) {
+    match cosim::first_mismatch(module, reference, &dut) {
         None => {
             info!(
                 "co-simulation: the Verilog matches the simulator over {} cycle(s)",
@@ -476,15 +499,263 @@ fn co_simulate(modules: &[Module], rows: &[Vec<u64>], resets: &[bool], dir: &Pat
     }
 }
 
+/// What `sinter sim` does with each step, whichever engine runs it: print
+/// the table row, check the directed expectations, and record the output
+/// trace (`--trace`, and the reference `--cosim` compares against).
+struct Report<'a> {
+    module: &'a Module,
+    inputs: Vec<&'a Port>,
+    outputs: Vec<&'a Port>,
+    rows: &'a [Vec<u64>],
+    resets: &'a [bool],
+    directed: Option<&'a Stimulus>,
+    multi: bool,
+    /// The per-step table's destination; `None` with `--quiet`.
+    table: Option<Stdout>,
+    /// The inputs in effect: a domain's hold between its edges.
+    held: Vec<u64>,
+    mismatches: Vec<StimulusMismatch>,
+    trace: Option<BufWriter<fs::File>>,
+    reference: Option<Vec<u8>>,
+}
+
+impl<'a> Report<'a> {
+    fn new(
+        module: &'a Module,
+        rows: &'a [Vec<u64>],
+        resets: &'a [bool],
+        directed: Option<&'a Stimulus>,
+        opts: &SimOptions,
+    ) -> Result<Self> {
+        let inputs: Vec<&Port> = module.inputs().collect();
+        let outputs: Vec<&Port> = module.outputs().collect();
+        let multi = module.is_multi_clock();
+        let table = if opts.quiet {
+            None
+        } else {
+            let names = |ports: &[&Port]| {
+                ports
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let mut stdout = Stdout::default();
+            // With several clock domains a row is an edge time: show the time
+            // and which domains ticked (DESIGN §6.7).
+            if multi {
+                stdout.line(format_args!(
+                    " step |  time | ticks | {} || {}",
+                    names(&inputs),
+                    names(&outputs)
+                ))?;
+            } else {
+                stdout.line(format_args!(
+                    "cycle | {} || {}",
+                    names(&inputs),
+                    names(&outputs)
+                ))?;
+            }
+            Some(stdout)
+        };
+        let trace = match opts.trace {
+            Some(path) => Some(BufWriter::new(
+                fs::File::create(path)
+                    .with_context(|| format!("creating trace `{}`", path.display()))?,
+            )),
+            None => None,
+        };
+        Ok(Report {
+            module,
+            held: vec![0; inputs.len()],
+            inputs,
+            outputs,
+            rows,
+            resets,
+            directed,
+            multi,
+            table,
+            mismatches: Vec::new(),
+            trace,
+            reference: opts.cosim.map(|_| Vec::new()),
+        })
+    }
+
+    /// Step `k`: its edge `time`, the `ticking` domains, and the `outputs`
+    /// it sampled (in port order).
+    fn step(&mut self, k: usize, time: u64, ticking: &[bool], outputs: &[u64]) -> Result<()> {
+        let row = self.rows.get(k).map_or(&[][..], Vec::as_slice);
+        for (i, p) in self.inputs.iter().enumerate() {
+            if ticking.get(p.domain).copied().unwrap_or(true) {
+                self.held[i] = row.get(i).copied().unwrap_or(0);
+            }
+        }
+        if let Some(stdout) = &mut self.table {
+            let in_str = self
+                .inputs
+                .iter()
+                .zip(&self.held)
+                .map(|(p, &v)| format_value(v, p.ty))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let out_str = self
+                .outputs
+                .iter()
+                .zip(outputs)
+                .map(|(p, &v)| format_value(v, p.ty))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if self.multi {
+                let ticks: Vec<&str> = self
+                    .module
+                    .domains
+                    .iter()
+                    .zip(ticking)
+                    .filter(|(_, &t)| t)
+                    .map(|(d, _)| d.name.as_str())
+                    .collect();
+                stdout.line(format_args!(
+                    "{k:5} | {time:5} | {:5} | {in_str} || {out_str}",
+                    ticks.join(",")
+                ))?;
+            } else {
+                let in_reset = self.resets.get(k).copied().unwrap_or(false);
+                let mark = if in_reset { "  (in reset)" } else { "" };
+                stdout.line(format_args!("{k:5} | {in_str} || {out_str}{mark}"))?;
+            }
+        }
+        if let Some(stim) = self.directed {
+            self.mismatches
+                .extend(stim.check_cycle_raw(self.module, k, outputs));
+        }
+        if let Some(t) = &mut self.trace {
+            for v in outputs {
+                t.write_all(&v.to_le_bytes()).context("writing the trace")?;
+            }
+        }
+        if let Some(r) = &mut self.reference {
+            for v in outputs {
+                r.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// How `sinter sim` runs and what it writes besides its table.
+struct SimOptions<'a> {
+    trace: Option<&'a Path>,
+    vcd: Option<&'a Path>,
+    /// The `--cosim` directory, when co-simulating.
+    cosim: Option<&'a Path>,
+    /// Where to build the compiled simulator; `None` interprets.
+    sim_dir: Option<&'a Path>,
+    quiet: bool,
+}
+
+/// The VCD writer `sinter sim --vcd` streams into.
+type Wave = VcdWriter<BufWriter<fs::File>>;
+
+/// Run the interpreter over `rows`, returning its assertion failures.
+fn run_interpreted(
+    module: &Module,
+    rows: &[Vec<u64>],
+    resets: &[bool],
+    report: &mut Report,
+    mut wave: Option<&mut Wave>,
+) -> Result<Vec<AssertFailure>> {
+    let input_names: Vec<String> = module.inputs().map(|p| p.name.clone()).collect();
+    let output_names: Vec<&str> = module.outputs().map(|p| p.name.as_str()).collect();
+    let mut sim = Simulator::new(module);
+    let started = Instant::now();
+    for (k, row) in rows.iter().enumerate() {
+        let in_map: HashMap<String, u64> = input_names
+            .iter()
+            .cloned()
+            .zip(row.iter().copied())
+            .collect();
+        let out = if resets.get(k).copied().unwrap_or(false) {
+            sim.step_in_reset(&in_map)
+        } else {
+            sim.step(&in_map)
+        };
+        let outs: Vec<u64> = output_names
+            .iter()
+            .map(|n| out.get(*n).copied().unwrap_or(0))
+            .collect();
+        report.step(k, sim.time(), sim.ticking(), &outs)?;
+        if let Some(w) = &mut wave {
+            w.cycle(&sim, &out).context("writing VCD")?;
+        }
+    }
+    info!(
+        "interpreted {} cycle(s) in {:.2?}",
+        rows.len(),
+        started.elapsed()
+    );
+    Ok(sim.assert_failures().to_vec())
+}
+
+/// Build the compiled simulator in `dir` and run it over `rows`, returning
+/// its assertion failures. With `--vcd` it is built with every signal probed.
+fn run_compiled(
+    module: &Module,
+    dir: &Path,
+    rows: &[Vec<u64>],
+    resets: &[bool],
+    report: &mut Report,
+    mut wave: Option<&mut Wave>,
+) -> Result<Vec<AssertFailure>> {
+    let probe = wave.is_some();
+    info!("building the compiled simulator in {}", dir.display());
+    let started = Instant::now();
+    let exe = native_sim::build(dir, module, probe).context("building the compiled simulator")?;
+    info!("built in {:.2?}", started.elapsed());
+    let ni = module.inputs().count();
+    let mut values = Vec::new();
+    let mut failed = None;
+    let started = Instant::now();
+    let run = native_sim::run(&exe, dir, module, rows, resets, probe, |step| {
+        let mut record = || -> Result<()> {
+            report.step(step.index, step.time, step.ticking, step.outputs)?;
+            if let Some(w) = &mut wave {
+                // The VCD's order: inputs, outputs, registers, wires.
+                let (ins, rest) = step.probe.split_at(ni.min(step.probe.len()));
+                values.clear();
+                values.extend_from_slice(ins);
+                values.extend_from_slice(step.outputs);
+                values.extend_from_slice(rest);
+                w.cycle_raw(step.time, step.ticking, &values)
+                    .context("writing VCD")?;
+            }
+            Ok(())
+        };
+        record().map_err(|e| {
+            let err = std::io::Error::other(format!("{e:#}"));
+            failed = Some(e);
+            err
+        })
+    });
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    let failures = run.context("running the compiled simulator")?;
+    info!(
+        "simulated {} cycle(s) in {:.2?}",
+        rows.len(),
+        started.elapsed()
+    );
+    Ok(failures)
+}
+
 fn cmd_sim(
     file: &Path,
     defines: &[Define],
     cycles: usize,
     seed: u64,
     stimulus: Option<&Path>,
-    writes: &SimOutputs,
+    opts: &SimOptions,
 ) -> Result<()> {
-    let (trace, vcd) = (writes.trace, writes.vcd);
     let modules = read_and_compile(file, FaultMode::Off, defines)?;
     let module = modules
         .first()
@@ -511,43 +782,9 @@ fn cmd_sim(
         Some(stim) => stim.inputs.clone(),
         None => gen_stimulus(module, cycles, seed),
     };
-
     let resets: &[bool] = directed.as_ref().map_or(&[], |s| s.resets.as_slice());
-    if let Some(path) = trace {
-        let bytes = run_reference_with_resets(module, &rows, resets);
-        fs::write(path, &bytes).with_context(|| format!("writing trace `{}`", path.display()))?;
-        info!("wrote {} ({} bytes)", path.display(), bytes.len());
-    }
 
-    // Print a human-readable per-cycle table to stdout.
-    let inputs: Vec<_> = module.inputs().collect();
-    let outputs: Vec<_> = module.outputs().collect();
-    let names = |ports: &[&sinter_compiler::ir::Port]| {
-        ports
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    // With several clock domains a row is an edge time: show the time and
-    // which domains ticked (DESIGN §6.7).
-    let multi = module.is_multi_clock();
-    let mut stdout = Stdout::default();
-    if multi {
-        stdout.line(format_args!(
-            " step |  time | ticks | {} || {}",
-            names(&inputs),
-            names(&outputs)
-        ))?;
-    } else {
-        stdout.line(format_args!(
-            "cycle | {} || {}",
-            names(&inputs),
-            names(&outputs)
-        ))?;
-    }
-
-    let mut wave = match vcd {
+    let mut wave = match opts.vcd {
         Some(path) => {
             let f = fs::File::create(path)
                 .with_context(|| format!("creating VCD `{}`", path.display()))?;
@@ -556,66 +793,40 @@ fn cmd_sim(
         None => None,
     };
 
-    let mut sim = Simulator::new(module);
-    let mut mismatches = Vec::new();
-    for (k, row) in rows.iter().enumerate() {
-        let in_map: HashMap<String, u64> = inputs
-            .iter()
-            .map(|p| p.name.clone())
-            .zip(row.iter().copied())
-            .collect();
-        let in_reset = resets.get(k).copied().unwrap_or(false);
-        let out = if in_reset {
-            sim.step_in_reset(&in_map)
-        } else {
-            sim.step(&in_map)
-        };
-        // The inputs in effect: a domain's hold between its edges.
-        let in_str = inputs
-            .iter()
-            .zip(row)
-            .map(|(p, &v)| {
-                format_value(
-                    if multi {
-                        sim.signal(&p.name).unwrap_or(v)
-                    } else {
-                        v
-                    },
-                    p.ty,
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        let out_str = outputs
-            .iter()
-            .map(|p| format_value(out.get(&p.name).copied().unwrap_or(0), p.ty))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if multi {
-            let ticks: Vec<&str> = module
-                .domains
-                .iter()
-                .zip(sim.ticking())
-                .filter(|(_, &t)| t)
-                .map(|(d, _)| d.name.as_str())
-                .collect();
-            stdout.line(format_args!(
-                "{k:5} | {:5} | {:5} | {in_str} || {out_str}",
-                sim.time(),
-                ticks.join(",")
-            ))?;
-        } else {
-            let mark = if in_reset { "  (in reset)" } else { "" };
-            stdout.line(format_args!("{k:5} | {in_str} || {out_str}{mark}"))?;
+    // The compiled simulator, unless `--interpret` or there's no cargo.
+    let sim_dir = match opts.sim_dir {
+        Some(_) if !native_sim::cargo_available() => {
+            warn!(
+                "`cargo` isn't available, so the design is interpreted (much slower); \
+                 install a Rust toolchain for the compiled simulator, or pass `--interpret`"
+            );
+            None
         }
-        if let Some(stim) = &directed {
-            mismatches.extend(stim.check_cycle(module, k, &out));
-        }
-        if let Some(w) = &mut wave {
-            w.cycle(&sim, &out).context("writing VCD")?;
-        }
+        dir => dir,
+    };
+    let mut report = Report::new(module, &rows, resets, directed.as_ref(), opts)?;
+    let failures = match sim_dir {
+        Some(dir) => run_compiled(
+            module,
+            &dir.join(&module.name),
+            &rows,
+            resets,
+            &mut report,
+            wave.as_mut(),
+        )?,
+        None => run_interpreted(module, &rows, resets, &mut report, wave.as_mut())?,
+    };
+    let Report {
+        mismatches,
+        trace,
+        reference,
+        ..
+    } = report;
+    if let (Some(mut t), Some(path)) = (trace, opts.trace) {
+        t.flush().context("writing the trace")?;
+        info!("wrote {}", path.display());
     }
-    if let (Some(w), Some(path)) = (wave, vcd) {
+    if let (Some(w), Some(path)) = (wave, opts.vcd) {
         w.finish().context("writing VCD")?;
         info!("wrote {}", path.display());
     }
@@ -624,8 +835,7 @@ fn cmd_sim(
     // expectation mismatches are test-style failures: surface each (the
     // per-cycle table above went to stdout as program output; diagnostics go to
     // the log) and fail the command.
-    let failures = sim.assert_failures();
-    for f in failures {
+    for f in &failures {
         error!("assert failed (cycle {}): {} [{}]", f.cycle, f.msg, f.loc);
     }
     for m in &mismatches {
@@ -638,8 +848,8 @@ fn cmd_sim(
     if !mismatches.is_empty() {
         problems.push(format!("{} expectation mismatch(es)", mismatches.len()));
     }
-    if let Some(dir) = writes.cosim {
-        if !co_simulate(&modules, &rows, resets, dir)? {
+    if let (Some(dir), Some(reference)) = (opts.cosim, &reference) {
+        if !co_simulate(&modules, &rows, resets, reference, dir)? {
             problems.push("a co-simulation mismatch".to_string());
         }
     }
