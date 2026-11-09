@@ -213,6 +213,16 @@ as a GitHub pre-release.
 - [x] `#[params(..)]` on `#[verilog]` bindings (EXT2).
 - [x] `sinter sim --cosim` (COSIM1).
 
+## v1.0.0-rc.3 — compiled simulation ✅
+
+Release: tag `v1.0.0-rc.3` on the "release: v1.0.0-rc.3" commit.
+
+`sinter sim` was too slow for pico-gs v2's GPU, released as a GitHub
+pre-release.
+
+- [x] `sinter sim` builds and runs the generated Rust simulator by default;
+      `--interpret`, `--sim-dir`, and `--quiet` (SIM1).
+
 ## 1.0 exit criteria
 
 - [ ] The RV32 core and at least one outside design run on real hardware

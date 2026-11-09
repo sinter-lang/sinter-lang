@@ -5,7 +5,10 @@ All notable changes to Sinter are recorded here. The format follows
 minor release (`0.x`) may change the language or CLI incompatibly. See
 [`ROADMAP.md`](ROADMAP.md) for the path to 1.0.
 
-## [Unreleased]
+## [1.0.0-rc.3] — 2026-11-09
+
+A compiled `sinter sim`, asked for by pico-gs v2. Not published to
+crates.io.
 
 ### Changed
 
